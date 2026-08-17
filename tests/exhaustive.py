@@ -17,12 +17,13 @@ Usage:
 The expected results are precomputed with the reference oracle and written to
 a binary file; the C++ harness reads it and reports any mismatch.
 
-After RTL/reference changes, rebuild with FORCE_REBUILD=1 and delete the stale
-expected.bin files (the harness reports "truncated expected file" if the
-record layout or op count is out of sync).
+After RTL/reference/harness changes the stale expected.bin and binary are
+detected automatically via a content-hash stamp (expected.stamp) and rebuilt.
+FORCE_REBUILD=1 remains as a manual override.
 """
 
 import argparse
+import hashlib
 import os
 import struct
 import subprocess
@@ -41,6 +42,8 @@ RTL = [os.path.join(ROOT, "rtl", f) for f in
         "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_fma.sv", "fp_fma_e8m0.sv",
         "fp_minmax.sv", "fp_cmp.sv", "fp_totalorder.sv", "fp_roundint.sv",
         "fp_roundint_e8m0.sv", "fp_unit.sv")]
+REF = [os.path.join(HERE, "reference", f) for f in
+       ("formats.py", "rounding.py", "ops.py", "gen.py")]
 HARNESS = os.path.join(HERE, "exhaustive_main.cpp")
 BUILD_DIR = os.path.join(ROOT, "exhaustive_build")
 
@@ -48,6 +51,23 @@ BUILD_DIR = os.path.join(ROOT, "exhaustive_build")
 FORMATS_8BIT = [(1, 6), (2, 5), (3, 4), (4, 3), (5, 2), (6, 1), (7, 0)]
 
 N_OPS = 11  # add, sub, mul, div, sqrt, fma, min, max, cmp, rndint, totalorder
+
+
+def _stamp() -> str:
+    """Content hash over the RTL, the reference oracle, and this harness so a
+    stale expected.bin / stale binary is detected (the FORCE_REBUILD footgun)."""
+    h = hashlib.sha256()
+    for f in RTL + REF + [HARNESS, os.path.abspath(__file__)]:
+        with open(f, "rb") as fh:
+            h.update(fh.read())
+    return h.hexdigest()
+
+
+def _current_stamp(build_dir: str) -> str | None:
+    p = os.path.join(build_dir, "expected.stamp")
+    if not os.path.exists(p):
+        return None
+    return open(p).read().strip()
 
 
 def fma_c(fmt: BinFormat) -> int:
@@ -91,7 +111,9 @@ def build(wexp: int, wmant: int) -> str:
     build_dir = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}")
     os.makedirs(build_dir, exist_ok=True)
     binary = os.path.join(build_dir, "fp_exhaustive")
-    if os.path.exists(binary) and os.environ.get("FORCE_REBUILD", "0") != "1":
+    want = _stamp()
+    if (os.path.exists(binary) and os.environ.get("FORCE_REBUILD", "0") != "1"
+            and _current_stamp(build_dir) == want):
         return binary
     subprocess.check_call([
         "verilator", "--cc", "--exe", "--build", "--timing",
@@ -101,6 +123,8 @@ def build(wexp: int, wmant: int) -> str:
         "-o", "fp_exhaustive",
         *RTL, HARNESS,
     ])
+    with open(os.path.join(build_dir, "expected.stamp"), "w") as f:
+        f.write(want + "\n")
     return binary
 
 
@@ -109,7 +133,11 @@ def run(wexp: int, wmant: int, keep: bool) -> bool:
     build_dir = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}")
     os.makedirs(build_dir, exist_ok=True)
     expected = os.path.join(build_dir, "expected.bin")
-    if keep or not os.path.exists(expected):
+    want = _stamp()
+    # Regenerate the expected vectors when they are missing, when --keep forces
+    # it, or when the RTL/reference/harness content hash has changed (the stale
+    # expected.bin footgun).
+    if keep or _current_stamp(build_dir) != want or not os.path.exists(expected):
         print(f"  generating expected vectors for ({wexp},{wmant}) ...")
         generate_expected(fmt, expected)
     binary = build(wexp, wmant)

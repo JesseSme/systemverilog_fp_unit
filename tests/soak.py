@@ -20,11 +20,13 @@ boundary-biased operand pair, an op and a rounding mode are drawn from a
 seeded PRNG, and (a, b, y, flags, cmp) is written to a binary file.
 tests/soak_main.cpp replays the same vector stream through the DUT (no
 cocotb), so the whole soak runs at C++ speed after the Python expected
-generation (~200k vec/s). After RTL/reference changes: FORCE_REBUILD=1 and
-delete stale soak_build/*/expected.bin.
+generation (~200k vec/s). After RTL/reference/harness changes the stale
+expected.bin and binary are detected automatically via a content-hash stamp
+(expected.stamp) and rebuilt; FORCE_REBUILD=1 remains as a manual override.
 """
 
 import argparse
+import hashlib
 import os
 import random
 import struct
@@ -44,6 +46,8 @@ RTL = [os.path.join(ROOT, "rtl", f) for f in
         "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_fma.sv", "fp_fma_e8m0.sv",
         "fp_minmax.sv", "fp_cmp.sv", "fp_totalorder.sv", "fp_roundint.sv",
         "fp_roundint_e8m0.sv", "fp_unit.sv")]
+REF = [os.path.join(HERE, "reference", f) for f in
+       ("formats.py", "rounding.py", "ops.py", "gen.py")]
 HARNESS = os.path.join(HERE, "soak_main.cpp")
 BUILD_DIR = os.path.join(ROOT, "soak_build")
 
@@ -52,6 +56,16 @@ DEFAULT_WIDTHS = [(5, 10), (8, 7), (4, 3)]  # binary16, BF16, E4M3
 DEFAULT_VECTORS = 5_000_000
 
 N_OPS = 11  # add, sub, mul, div, sqrt, fma, min, max, cmp, rndint, totalorder
+
+
+def _stamp() -> str:
+    """Content hash over the RTL, reference oracle and this harness, so a stale
+    expected.bin or binary is detected after any relevant change."""
+    h = hashlib.sha256()
+    for f in RTL + REF + [HARNESS, os.path.abspath(__file__)]:
+        with open(f, "rb") as fh:
+            h.update(fh.read())
+    return h.hexdigest()
 
 
 def fma_c(fmt: BinFormat) -> int:
@@ -102,11 +116,24 @@ def generate_expected(fmt: BinFormat, path: str, n: int, seed: int) -> None:
             f.write(rec.pack(a, b, y, flags, cmp, op, rm))
 
 
+def _current_stamp(build_dir: str) -> str | None:
+    p = os.path.join(build_dir, "expected.stamp")
+    if not os.path.exists(p):
+        return None
+    return open(p).read().strip()
+
+
+def _write_stamp(build_dir: str) -> None:
+    with open(os.path.join(build_dir, "expected.stamp"), "w") as f:
+        f.write(_stamp() + "\n")
+
+
 def build(wexp: int, wmant: int) -> str:
     build_dir = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}")
     os.makedirs(build_dir, exist_ok=True)
     binary = os.path.join(build_dir, "fp_soak")
-    if os.path.exists(binary) and os.environ.get("FORCE_REBUILD", "0") != "1":
+    if (os.path.exists(binary) and os.environ.get("FORCE_REBUILD", "0") != "1"
+            and _current_stamp(build_dir) == _stamp()):
         return binary
     subprocess.check_call([
         "verilator", "--cc", "--exe", "--build", "--timing",
@@ -116,6 +143,7 @@ def build(wexp: int, wmant: int) -> str:
         "-o", "fp_soak",
         *RTL, HARNESS,
     ])
+    _write_stamp(build_dir)
     return binary
 
 
@@ -133,11 +161,16 @@ def run(wexp: int, wmant: int, n: int, seed: int, keep: bool) -> bool:
             stale = (mn != n) or (ms != seed)
         except (OSError, ValueError, IndexError):
             stale = True
+    # The content stamp (RTL/reference/harness hash) also invalidates the
+    # expected stream; n/seed above only cover the PRNG parameters.
+    if _current_stamp(build_dir) != _stamp():
+        stale = True
     if keep or stale:
         print(f"  generating {n:,} expected vectors for ({wexp},{wmant}) ...")
         generate_expected(fmt, expected, n, seed)
         with open(meta, "w") as f:
             f.write(f"n={n} seed={seed}\n")
+        _write_stamp(build_dir)
     binary = build(wexp, wmant)
     print(f"  running {binary} ...")
     proc = subprocess.run([binary, expected, str(fmt.width), str(fma_c(fmt))],

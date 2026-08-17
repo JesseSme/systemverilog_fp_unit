@@ -9,9 +9,11 @@ Usage:
 
 Notes:
   * Verilator 5.020 + cocotb 1.9.2 are used (see pyproject.toml). The sim is
-    slow (~2 s per transaction) and occasionally hangs at startup; each width
-    is therefore retried up to --retries times on timeout. A hang is detected
-    by a per-attempt wall-clock timeout (--timeout).
+    fast (~1 s for the whole matrix at FP_ITERS=100) but occasionally hangs at
+    startup; each width is therefore retried up to --retries times. A hang is
+    detected either by a per-attempt wall-clock timeout (--timeout, default
+    60 s) or by a startup watchdog that kills the sim after --startup-grace
+    seconds of no output.
 """
 
 from __future__ import annotations
@@ -66,8 +68,16 @@ def _sim_env(tests_dir: Path, wexp: int, wmant: int) -> dict:
     return env
 
 
-def _run_attempt(bin_path: Path, env: dict, timeout: int, test_module: str) -> tuple[int, str, str]:
-    """Run the sim binary once; returns (rc, log, sim-log tail)."""
+def _run_attempt(bin_path: Path, env: dict, timeout: int, test_module: str,
+                 startup_grace: int = 10) -> tuple[int, str, str]:
+    """Run the sim binary once; returns (rc, log, sim-log tail).
+
+    A wall-clock `timeout` guards the whole run, and a `startup_grace` watchdog
+    kills the process early if it produces no output at all within the first
+    few seconds (the cocotb 1.9.2 + Verilator 5.020 startup race hangs before
+    the sim prints anything). rc = 124 on either kind of hang, which the caller
+    turns into a retry.
+    """
     import tempfile
 
     with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False) as f:
@@ -75,14 +85,26 @@ def _run_attempt(bin_path: Path, env: dict, timeout: int, test_module: str) -> t
     run_env = dict(env)
     run_env["MODULE"] = test_module
     t0 = time.time()
-    try:
-        subprocess.run(
-            [str(bin_path)], cwd=str(bin_path.parent), env=run_env,
-            stdout=open(log_path, "w"), stderr=subprocess.STDOUT, timeout=timeout,
-        )
-        rc = 0
-    except subprocess.TimeoutExpired:
-        rc = 124
+    log_fh = open(log_path, "w")
+    proc = subprocess.Popen(
+        [str(bin_path)], cwd=str(bin_path.parent), env=run_env,
+        stdout=log_fh, stderr=subprocess.STDOUT,
+    )
+    start = time.time()
+    saw_output = False
+    rc = None
+    while proc.poll() is None:
+        if os.path.getsize(log_path) > 0:
+            saw_output = True
+        elapsed = time.time() - start
+        if elapsed > timeout or (not saw_output and elapsed > startup_grace):
+            proc.kill()
+            rc = 124
+            break
+        time.sleep(0.1)
+    if rc is None:
+        rc = proc.returncode
+    log_fh.close()
     elapsed = time.time() - t0
     log = Path(log_path).read_text(errors="replace")
     return rc, log, f"({elapsed:.0f}s)"
@@ -132,8 +154,8 @@ def main() -> int:
                     help="cocotb test module (default: test_fp_unit)")
     ap.add_argument("--retries", type=int, default=3,
                     help="attempts per width when the sim times out (default 3)")
-    ap.add_argument("--timeout", type=int, default=1800,
-                    help="per-attempt wall-clock timeout in seconds (default 1800)")
+    ap.add_argument("--timeout", type=int, default=60,
+                    help="per-attempt wall-clock timeout in seconds (default 60)")
     args = ap.parse_args()
 
     widths = [tuple(args.width)] if args.width else (WIDTHS_ALL if args.all else WIDTHS)

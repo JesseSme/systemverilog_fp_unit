@@ -10,7 +10,7 @@ OSS ?= /home/jesse/Documents/oss-cad-suite-linux-x64-20260813/oss-cad-suite
 regress:
 	uv run python tests/run_regression.py
 
-# Full 6-width matrix (slow: ~1.5-2 h on this toolchain).
+# Full 8-width matrix (adds the odd sizes 6/16 and 10/40; ~1 s at FP_ITERS=100).
 regress-all:
 	uv run python tests/run_regression.py --all
 
