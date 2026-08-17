@@ -1,0 +1,10 @@
+[project]
+name = "systemverilog-fp-unit"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    # 1.9.x required for Verilator 5.020 (cocotb 2.x needs Verilator >= 5.036).
+    "cocotb>=1.9.2,<2",
+]

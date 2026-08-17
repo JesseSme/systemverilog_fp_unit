@@ -1,0 +1,31 @@
+# SymbiYosys BMC property check of the E8M0 M6 datapaths at E7M0 (7,0).
+#
+# The dedicated roundToIntegral module plus the format-generic quiet
+# comparison and totalOrder at a microscaling (W_MANT = 0) width.
+# Run via:  sby -f bmc_m6_e7m0.sby
+
+[tasks]
+bmc
+
+[options]
+mode bmc
+depth 1
+expect pass
+
+[engines]
+smtbmc
+
+[script]
+read_verilog -sv fp_pkg.sv
+read_verilog -sv fp_cmp.sv
+read_verilog -sv fp_totalorder.sv
+read_verilog -sv fp_roundint_e8m0.sv
+read_verilog -sv fp_m6_props_e8m0.sv
+prep -top fp_m6_props_e7m0
+
+[files]
+rtl/fp_pkg.sv
+rtl/fp_cmp.sv
+rtl/fp_totalorder.sv
+rtl/fp_roundint_e8m0.sv
+formal/fp_m6_props_e8m0.sv

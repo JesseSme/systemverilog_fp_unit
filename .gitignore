@@ -1,0 +1,28 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# cocotb / verilator
+sim_build/
+obj_dir/
+exhaustive_build/
+soak_build/
+*.log
+
+# SymbiYosys work directories (sby -f produces <config>_<task>/ under <config>/)
+bmc_m6_*/
+bmc_*/
+
+# Vendored upstream source trees
+cocotb/
+verilator/
+
+# IEEE spec PDF
+754-2019.pdf

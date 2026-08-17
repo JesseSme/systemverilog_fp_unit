@@ -1,0 +1,34 @@
+# SymbiYosys BMC property check of the M6 datapaths at binary16 (5,10).
+#
+# The datapaths are combinational, so a depth-0 BMC run with the a/b/c/rm
+# inputs left free proves every property for all 2^32 (a, b) operand pairs
+# and all five rounding modes -- coverage the exhaustive 8-bit sweep cannot
+# reach. Run via:  sby -f bmc_m6_b16.sby
+
+[tasks]
+bmc
+
+[options]
+mode bmc
+depth 1
+expect pass
+
+[engines]
+smtbmc
+
+[script]
+read_verilog -sv fp_pkg.sv
+read_verilog -sv fp_cmp.sv
+read_verilog -sv fp_totalorder.sv
+read_verilog -sv fp_roundint.sv
+read_verilog -sv fp_minmax.sv
+read_verilog -sv fp_m6_props.sv
+prep -top fp_m6_props_b16
+
+[files]
+rtl/fp_pkg.sv
+rtl/fp_cmp.sv
+rtl/fp_totalorder.sv
+rtl/fp_roundint.sv
+rtl/fp_minmax.sv
+formal/fp_m6_props.sv
