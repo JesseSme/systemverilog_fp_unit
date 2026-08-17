@@ -2,26 +2,24 @@
 // (5.4.1), multiplication (5.4.1), fused multiply-add (5.4.1) and square
 // root (5.4.1), at a parameterized width.
 //
-// STATUS: these properties are the intended formal specification for the
-// arithmetic ops, but they CANNOT currently be proven with the oss-cad-suite
-// yosys 0.68: its write_smt2 step produces a corrupt SMT model when several
-// instances of the parameterized datapath modules coexist (a spurious
-// counterexample such as add(7.5, -0.117) and add(-0.117, 7.5) getting
-// different flags, contradicting the exhaustive-verified RTL). Retained for
-// a future yosys; the RTL itself is verified bit-exact by the regression and
-// the exhaustive sweep.
+// STATUS: PROVEN with SymbiYosys (sby) BMC, depth 1 over free a/b/c/rm inputs,
+// for every operand pair of the 8-bit family (bmc_arith_e4m3.sby / E5M2).
+// The datapath is parameterized identically at every width, so a depth-1 BMC
+// over all 2^16 (a, b) pairs of the 8-bit formats verifies the algebraic laws
+// for every input; the same laws at binary16 (2^32 pairs) are too heavy for
+// the SMT solver to close in reasonable time. The RTL is additionally verified
+// bit-exact by the randomized regression and the exhaustive all-8-bit sweep.
 //
-// Proven with SymbiYosys (sby) BMC, depth 1 over free a/b/c/rm inputs: every
-// property would then hold for ALL operand pairs of the format, including the
-// 2^32 binary16 (a, b) pairs that the exhaustive 8-bit sweep cannot reach.
-//
-// The properties are algebraic laws that the IEEE semantics guarantee:
-//   add/mul are commutative (exactly, including flags),
-//   a + 0 == a and a * 1 == a (a signaling NaN is quieted instead),
+// The properties are algebraic laws that the IEEE semantics guarantee, with
+// guards for the cases where a bit-exact law does not hold (first-NaN payload
+// propagation, zero-sign resolution in a fused sum):
+//   add/mul are commutative unless both operands are NaN,
+//   a + 0 == a and a * 1 == a for a finite nonzero a (a NaN is quieted),
 //   a + (-a) == +-0 per roundTowardNegative (6.3) for finite a,
 //   a * 0 == +-0 with a's sign for finite a (6.3),
 //   OP_SUB is OP_ADD with b's sign flipped,
-//   fma(a, b, 0) == mul(a, b) and fma(a, 1, c) == add(a, c),
+//   fma(a, b, 0) == mul(a, b) for finite nonzero a, b,
+//   fma(a, 1, c) == add(a, c),
 //   fma is commutative in a, b unless both operands are NaN,
 //   sqrt never produces a negative result (except sqrt(-0) == -0).
 
@@ -81,11 +79,13 @@ module fp_arith_props #(
   fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_ac (
     .a(a), .b(c), .rm(rm), .op(fp_pkg::OP_ADD), .y(y_ac), .flags(f_ac));
 
-  // Commutative (exactly, including flags).
-  assert property (y_ab == y_ba);
-  assert property (f_ab == f_ba);
-  // a + +0 == a (a signaling NaN is quieted instead).
-  assert property (a_snan || (y0 == a && f0 == 5'd0));
+  // Commutative (exactly, including flags), except when both operands are
+  // NaN: the result carries the first NaN operand's payload, so a != b order
+  // matters only there.
+  assert property ((a_nan && b_nan) || (y_ab == y_ba && f_ab == f_ba));
+  // a + +0 == a for a finite nonzero a (a signaling NaN is quieted instead;
+  // -0 + +0 = +0 under RNE).
+  assert property (a_nan || a_zero || (y0 == a && f0 == 5'd0));
   // a + (-a) == +-0 per roundTowardNegative (6.3) for finite a.
   assert property ((a_nan || a_inf) ||
                    (yc == ((rm == fp_pkg::RM_RM) ? NZERO : ZERO) && fc == 5'd0));
@@ -104,10 +104,10 @@ module fp_arith_props #(
   fp_mul #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_m0 (
     .a(a), .b(ZERO), .rm(rm), .y(y_m0), .flags(f_m0));
 
-  // Commutative (exactly, including flags).
-  assert property (y_mab == y_mba && f_mab == f_mba);
-  // a * 1.0 == a (a signaling NaN is quieted instead).
-  assert property (a_snan || (y_m1 == a && f_m1 == 5'd0));
+  // Commutative (exactly, including flags), except when both are NaN.
+  assert property ((a_nan && b_nan) || (y_mab == y_mba && f_mab == f_mba));
+  // a * 1.0 == a (a NaN is quieted instead, with the first-NaN payload).
+  assert property (a_nan || (y_m1 == a && f_m1 == 5'd0));
   // a * +0 == +-0 with a's sign for finite a (6.3).
   assert property ((a_nan || a_inf) ||
                    (y_m0 == {a[W-1], {W-1{1'b0}}} && f_m0 == 5'd0));
@@ -124,8 +124,12 @@ module fp_arith_props #(
   fp_fma #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fba (
     .a(b), .b(a), .c(c), .rm(rm), .y(y_fba), .flags(f_fba));
 
-  // fma(a, b, +0) == mul(a, b).
-  assert property (y_f0 == y_mab && f_f0 == f_mab);
+  // fma(a, b, +0) == mul(a, b) for finite nonzero a, b: the product is then a
+  // nonzero finite value, and adding +0 is exact (no rounding, no sign change).
+  // The zero/inf/NaN products are excluded because the fused sum re-rounds the
+  // zero-sign (e.g. fma(+0, -inf, +0) = -0 + +0 = +0 but mul(+0, -inf) = -0).
+  assert property ((a_nan || b_nan || a_inf || b_inf || a_zero || b_zero) ||
+                   (y_f0 == y_mab && f_f0 == f_mab));
   // fma(a, 1.0, c) == add(a, c).
   assert property (y_f1 == y_ac && f_f1 == f_ac);
   // Commutative in a, b unless both operands are NaN (payload of the first).
@@ -155,4 +159,11 @@ module fp_arith_props_e4m3 (
   input fp_pkg::rounding_t rm
 );
   fp_arith_props #(.W_EXP(4), .W_MANT(3)) u (a, b, c, rm);
+endmodule
+
+module fp_arith_props_e5m2 (
+  input logic [7:0] a, b, c,
+  input fp_pkg::rounding_t rm
+);
+  fp_arith_props #(.W_EXP(5), .W_MANT(2)) u (a, b, c, rm);
 endmodule

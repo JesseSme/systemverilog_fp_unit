@@ -1,0 +1,33 @@
+# SymbiYosys BMC property check of the arithmetic datapaths (add/mul/fma/sqrt)
+# at E5M2 (4,3). Depth-1 BMC over free a/b/c/rm inputs proves every
+# algebraic law for all 2^16 operand pairs.
+#
+# Run via:  sby -f bmc_arith_e4m3.sby
+
+[tasks]
+bmc
+
+[options]
+mode bmc
+depth 1
+expect pass
+
+[engines]
+smtbmc
+
+[script]
+read_verilog -sv fp_pkg.sv
+read_verilog -sv fp_add.sv
+read_verilog -sv fp_mul.sv
+read_verilog -sv fp_fma.sv
+read_verilog -sv fp_sqrt.sv
+read_verilog -sv fp_arith_props.sv
+prep -top fp_arith_props_e5m2
+
+[files]
+rtl/fp_pkg.sv
+rtl/fp_add.sv
+rtl/fp_mul.sv
+rtl/fp_fma.sv
+rtl/fp_sqrt.sv
+formal/fp_arith_props.sv

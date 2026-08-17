@@ -32,9 +32,11 @@ coverage:
 	verilator_coverage --annotate coverage_annotate --rank coverage.dat
 
 # Formal BMC property proofs of the M6 datapaths (comparisons, totalOrder,
-# roundToIntegral) at binary16, E4M3 and E7M0. Needs the oss-cad-suite.
+# roundToIntegral) at binary16/E4M3/E7M0, plus the arithmetic-op laws
+# (add/mul/fma/sqrt identities) at E4M3/E5M2 and the division laws at
+# E4M3/E5M2/binary16. Needs the oss-cad-suite.
 formal:
-	@export PATH="$(OSS)/bin:$(PATH)"; for f in bmc_m6_b16.sby bmc_m6_e4m3.sby bmc_m6_e7m0.sby; do \
+	@export PATH="$(OSS)/bin:$(PATH)"; for f in bmc_m6_b16.sby bmc_m6_e4m3.sby bmc_m6_e7m0.sby bmc_arith_e4m3.sby bmc_arith_e5m2.sby bmc_div_e4m3.sby bmc_div_e5m2.sby bmc_div_b16.sby; do \
 	  echo "=== $$f ==="; sby -f $$f || exit 1; done
 
 lint:

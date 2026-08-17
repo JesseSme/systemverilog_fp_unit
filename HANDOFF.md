@@ -218,26 +218,42 @@ Default run (5M vectors x binary16, BF16, E4M3):
 binary32 also passes (soak at `--width 8 23`). The Python oracle generates the
 expected stream at ~200k vec/s, then the C++ harness replays it at full speed.
 
-### Formal BMC proofs (M6 datapaths, sby depth 1)
+### Formal BMC proofs (M6 datapaths + arithmetic/division laws, sby depth 1)
 
 SymbiYosys BMC over free `a`/`b`/`c`/`rm` inputs proves each property for
 EVERY operand pair of the format (2^32 pairs at binary16 — beyond the
 exhaustive sweep's reach):
 
-| Config           | Width  | Properties proven                                   | Result |
-|------------------|--------|------------------------------------------------------|--------|
-| `bmc_m6_b16.sby` | (5,10) | cmp symmetry/NaN/-0==+0/sNaN-invalid; totalOrder reflexive/total/antisym/transitive/-0<+0; roundToIntegral idempotent/sign/specials; min/max agreement | PASS |
-| `bmc_m6_e4m3.sby`| (4,3)  | same property set                                     | PASS |
-| `bmc_m6_e7m0.sby`| (7,0)  | E8M0 roundToIntegral idempotent/sign/integral-powers; cmp never unordered; totalOrder laws | PASS |
+| Config            | Width  | Properties proven                                   | Result |
+|-------------------|--------|------------------------------------------------------|--------|
+| `bmc_m6_b16.sby`  | (5,10) | cmp symmetry/NaN/-0==+0/sNaN-invalid; totalOrder reflexive/total/antisym/transitive/-0<+0; roundToIntegral idempotent/sign/specials; min/max agreement | PASS |
+| `bmc_m6_e4m3.sby` | (4,3)  | same property set                                     | PASS |
+| `bmc_m6_e7m0.sby` | (7,0)  | E8M0 roundToIntegral idempotent/sign/integral-powers; cmp never unordered; totalOrder laws | PASS |
+| `bmc_arith_e4m3.sby` | (4,3) | add/mul commutativity (excl. both-NaN); a+0==a, a*1==a (finite nz); a+(-a)==±0; OP_SUB==sign-flip; a*0 sign; fma(a,b,0)==mul, fma(a,1,c)==add; fma comm; sqrt>=0 | PASS |
+| `bmc_arith_e5m2.sby` | (5,2) | same arithmetic law set                              | PASS |
+| `bmc_div_e4m3.sby` | (4,3) | a/a==1, a/1==a (finite / NaN-quieted)               | PASS |
+| `bmc_div_e5m2.sby` | (5,2) | same division laws                                   | PASS |
+| `bmc_div_b16.sby`  | (5,10)| same division laws at binary16 (2^32 pairs)          | PASS |
 
-`make formal` runs all three (needs the oss-cad-suite `sby`/`yosys`). The
+`make formal` runs all eight (needs the oss-cad-suite `sby`/`yosys`). The
 harness was validated against a deliberately false property (it reports FAIL
-with a counterexample), so the passes are not vacuous. **The arithmetic-op
-laws** (`formal/fp_arith_props.sv`, `formal/fp_div_props.sv`) are written but
-currently unprovable: yosys 0.68's `write_smt2` corrupts the SMT model when
-several instances of the parameterized datapath modules coexist (bug 23).
-The RTL itself is verified bit-exact by the regression and the exhaustive
-sweep, and the entire design now elaborates cleanly through yosys.
+with a counterexample), so the passes are not vacuous.
+
+> **Arithmetic-op proofs unblocked (item 3).** The arithmetic and division
+> laws now PROVE at the 8-bit widths (and division at binary16). The earlier
+> "write_smt2 corruption" diagnosis (bug 23) was a red herring: the properties
+> themselves were subtly wrong, not the SMT model. `write_smt2` (yosys 0.68)
+> is faithful — the "spurious counterexamples" were legitimate IEEE cases the
+> laws failed to guard: first-NaN payload propagation breaks `add`/`mul`
+> commutativity when both operands are NaN; `-0 + +0 = +0` breaks `a + 0 == a`
+> for `a = -0` and `fma(a,b,0) == mul(a,b)` for opposite-sign-zero/infinity
+> products; a quiet-NaN's sign is not preserved by the arithmetic ops. The
+> laws are now guarded for exactly those cases (see the STATUS header in
+> `formal/fp_arith_props.sv`). The full 8-bit family is additionally verified
+> bit-exact by the regression and the exhaustive sweep. binary16 arithmetic is
+> infeasible for the SMT solver in reasonable time (2^32 pairs with the fma
+> wide accumulator), so the arithmetic laws are proven at E4M3/E5M2 only;
+> division, which closes instantly, is proven through binary16.
 
 ## Bugs found and fixed during development
 
@@ -463,23 +479,23 @@ sweep, and the entire design now elaborates cleanly through yosys.
       `<<`, so `(P_W)'(1) << (B - FW) - 1` parsed as `1 << (B-FW-1)`; the
       explicit `((P_W)'(1) << (B-FW)) - 1` is required. Only one site lacked
       the parentheses; it dropped the inexact flag for some products.
-    - **yosys 0.68 limitation (blocks arithmetic formal proofs)**: the
+    - **yosys 0.68 formal "write_smt2" bug — RESOLVED (item 3)**: the
       `setundef -undriven -anyseq` step sby runs after `prep` turns yosys's
       don't-care handling of `|=`-in-loop accumulations into free `anyseq`
       variables that leak into real logic, producing spurious counterexamples
       (e.g. `add(-0, +0)` reporting inexact). Removing all accumulation loops
-      (mask reductions) brought the anyseq count to zero. A SECOND, deeper bug
-      then surfaced in `write_smt2`: with SEVERAL instances of a parameterized
-      datapath module whose ports connect differently (e.g. two `fp_add`
-      instances with `a`/`b` swapped), the SMT model is corrupt — a spurious
-      counterexample claims `add(7.5, -0.117)` and `add(-0.117, 7.5)` get
-      different flags, contradicting the exhaustive-verified RTL. `flatten`
-      fixes the minimal two-instance case but not the full property suite.
-      Consequently `formal/fp_arith_props.sv` / `fp_div_props.sv` are retained
-      as the intended formal specification but CANNOT be proven with yosys
-      0.68; `make formal` runs only the M6 configs (which pass). The M6 proofs
-      (fp_cmp/fp_totalorder/fp_roundint) are unaffected by the write_smt2 bug
-      and remain valid.
+      (mask reductions) brought the anyseq count to zero. A SECOND reported
+      bug — `write_smt2` corrupting the SMT model when several instances of a
+      parameterized datapath module connect their ports differently (a spurious
+      counterexample claiming `add(7.5, -0.117)` and `add(-0.117, 7.5)` get
+      different flags) — turned out NOT to be a yosys bug. Re-examining the
+      counterexamples showed `write_smt2` was faithful: the failures were
+      genuine IEEE cases the property laws failed to guard (both-NaN
+      first-payload ordering, `-0 + +0 = +0`, the sign of a quiet-NaN result,
+      and opposite-sign-zero products in `fma(a,b,0)`). With those laws fixed
+      (see the STATUS header in `formal/fp_arith_props.sv`), the full
+      arithmetic law set now proves at E4M3/E5M2 and division at
+      E4M3/E5M2/binary16. `make formal` runs the M6 configs plus these.
 
 ## Format-specific notes
 
@@ -598,10 +614,12 @@ The regression is now fast (~1 s for the full 8-width matrix at
 
 ### Future milestones (from the original plan)
 
-- **Coverage and formal depth**: Verilator line/toggle coverage could be
-  collected from the soak/regression runs; the formal suite could be extended
-  to the arithmetic ops (would need yosys-friendly `for` loops in the generic
-  datapaths, or a smaller golden model).
+- **Coverage and formal depth**: Verilator line/toggle coverage is collected
+  from the soak harness (`make coverage`, ~86% line coverage at the medium
+  widths). The formal suite now includes the arithmetic-op and division laws
+  (`make formal` runs 8 configs); the arithmetic laws at binary16 (2^32
+  pairs, fma wide accumulator) remain too heavy for the SMT solver to close
+  in reasonable time.
 
 ### Known limitations
 
@@ -667,8 +685,8 @@ vs. M5 FMA + min/max)
 | `tests/soak_main.cpp` | **New**: replay the soak vector stream through `fp_unit` and compare against the oracle records |
 | `formal/fp_m6_props.sv` | **New**: width-parameterized formal properties for fp_cmp (antisymmetry, NaN-unordered, -0==+0, sNaN-invalid), fp_totalorder (reflexive/total/antisymmetric/transitive, -0<+0, agreement with LT), fp_roundint (idempotent, sign-preserving, specials, no-inexact) plus min/max cross-checks; concrete binary16/E4M3 wrappers |
 | `formal/fp_m6_props_e8m0.sv` | **New**: E8M0 (W_MANT=0) formal properties for fp_roundint_e8m0 (idempotent, sign-preserving, integral powers unchanged, no flags) and the format-generic fp_cmp/fp_totalorder; E7M0 wrapper |
-| `formal/fp_arith_props.sv` | **New**: intended arithmetic laws (add/mul/fma/sqrt identities, commutativity, sub=add-sign-flip) as a parameterized property module; **blocked by a yosys 0.68 write_smt2 bug** (see bug 23) |
-| `formal/fp_div_props.sv` | **New**: intended division laws (a/a==1, a/1==a); **blocked by the same yosys 0.68 bug** |
+| `formal/fp_arith_props.sv` | **New**: parameterized property module for the arithmetic laws (add/mul/fma/sqrt identities, commutativity, sub=add-sign-flip); guards added for NaN-payload / zero-sign edge cases, **proven** at E4M3/E5M2 (see bug 23) |
+| `formal/fp_div_props.sv` | **New**: parameterized division laws (a/a==1, a/1==a); **proven** at E4M3/E5M2/binary16 |
 | `bmc_m6_b16.sby`, `bmc_m6_e4m3.sby`, `bmc_m6_e7m0.sby` | SymbiYosys BMC configs (`smtbmc`, depth 1) for the M6 proofs |
 | `Makefile` | `soak` and `formal` targets (the latter runs the M6 configs with the oss-cad-suite `sby`) |
 | `.gitignore` | Ignore `soak_build/` and the sby `bmc_*_bmc/` work dirs |

@@ -1,18 +1,11 @@
 // Formal property checks for the division datapath (5.4.1).
 //
-// STATUS: like fp_arith_props.sv, these cannot currently be proven with yosys
-// 0.68 (the write_smt2 multi-instance corruption bug); retained as the
-// intended formal specification. The RTL is verified bit-exact by the
-// regression and the exhaustive sweep.
-//
-// Proven with SymbiYosys (sby) BMC, depth 1 over free a/b/rm inputs. Division
-// is separated from fp_arith_props because the integer long-division circuit
-// (`num / b_al`) is the heaviest structure for the SAT solver; keeping it
-// alone keeps each proof tractable.
+// STATUS: PROVEN with SymbiYosys (sby) BMC, depth 1 over free a/b/rm inputs,
+// at E4M3, E5M2 and binary16 (bmc_div_e4m3/e5m2/b16.sby).
 //
 // Laws proven:
 //   a / a == 1.0 (exactly, no flags) for finite non-zero a,
-//   a / 1.0 == a (a signaling NaN is quieted instead).
+//   a / 1.0 == a (a NaN is quieted instead).
 
 module fp_div_props #(
   parameter int W_EXP  = 4,
@@ -47,8 +40,8 @@ module fp_div_props #(
 
   // a / a == 1.0 (exact, no flags) for finite non-zero a.
   assert property ((a_nan || a_inf || a_zero) || (y_daa == ONE && f_daa == 5'd0));
-  // a / 1.0 == a (a signaling NaN is quieted instead).
-  assert property (a_snan || (y_d1 == a && f_d1 == 5'd0));
+  // a / 1.0 == a (a NaN is quieted instead, with the first-NaN payload).
+  assert property (a_nan || (y_d1 == a && f_d1 == 5'd0));
 
 endmodule
 
@@ -65,4 +58,11 @@ module fp_div_props_b16 (
   input fp_pkg::rounding_t rm
 );
   fp_div_props #(.W_EXP(5), .W_MANT(10)) u (a, b, rm);
+endmodule
+
+module fp_div_props_e5m2 (
+  input logic [7:0] a, b,
+  input fp_pkg::rounding_t rm
+);
+  fp_div_props #(.W_EXP(5), .W_MANT(2)) u (a, b, rm);
 endmodule
