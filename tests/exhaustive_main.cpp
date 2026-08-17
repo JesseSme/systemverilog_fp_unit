@@ -33,6 +33,8 @@ int main(int argc, char** argv) {
 
     Verilated::commandArgs(argc, argv);
     Vfp_unit* top = new Vfp_unit;
+    top->clk = 0;
+    top->rst_n = 1;  // synchronous active-low reset released before vectors
 
     FILE* f = fopen(path, "rb");
     if (!f) {
@@ -53,7 +55,10 @@ int main(int argc, char** argv) {
                 for (int b = 0; b < A; b++) {
                     top->b = b;
                     top->c = C;
-                    top->eval();
+                    top->clk = 0;
+                    top->eval();  // combinational result settles (clk low)
+                    top->clk = 1;
+                    top->eval();  // posedge captures y/flags/cmp
                     const uint8_t y = top->y;
                     const uint8_t flags = top->flags;
                     const uint8_t cmp = top->cmp;

@@ -67,11 +67,15 @@ def _flag_names(f):
 
 
 async def check(dut, mode, rm, a, b, exp_y, exp_f, what, c=0, exp_cmp=0):
+    dut.rst_n.value = 1
     dut.mode.value = mode
     dut.rm.value = rm
     dut.a.value = a
     dut.b.value = b
     dut.c.value = c
+    dut.clk.value = 0
+    await Timer(1, units="ns")
+    dut.clk.value = 1   # posedge captures the combinational result into the registers
     await Timer(1, units="ns")
     y = int(dut.y.value)
     f = int(dut.flags.value)

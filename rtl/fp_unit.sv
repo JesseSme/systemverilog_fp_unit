@@ -28,8 +28,10 @@ module fp_unit #(
   parameter int W_EXP  = 8,
   parameter int W_MANT = 23
 ) (
-  input  fp_pkg::op_t        mode,
-  input  fp_pkg::rounding_t  rm,
+  input  logic                    clk,
+  input  logic                    rst_n,
+  input  fp_pkg::op_t             mode,
+  input  fp_pkg::rounding_t       rm,
   input  logic [1+W_EXP+W_MANT-1:0] a,
   input  logic [1+W_EXP+W_MANT-1:0] b,
   input  logic [1+W_EXP+W_MANT-1:0] c,
@@ -37,6 +39,12 @@ module fp_unit #(
   output logic [1:0]               cmp,
   output logic [4:0]               flags
 );
+
+  // Registered output interface (1-stage pipeline). The op datapaths are
+  // combinational; y/flags/cmp are sampled into the output registers on every
+  // rising edge of clk, so the result of the inputs present in a cycle is
+  // available on the cycle after the next posedge. rst_n is a synchronous
+  // active-low reset that clears all three outputs.
 
   logic [1+W_EXP+W_MANT-1:0] y_add;
   logic [4:0]                flags_add;
@@ -132,44 +140,60 @@ module fp_unit #(
     .y(y_tot), .cmp(cmp_tot), .flags(flags_tot)
   );
 
+  logic [1+W_EXP+W_MANT-1:0] y_c;
+  logic [4:0]                flags_c;
+  logic [1:0]                cmp_c;
+
   always_comb begin
     if (mode == fp_pkg::OP_MUL) begin
-      y     = y_mul;
-      flags = flags_mul;
+      y_c     = y_mul;
+      flags_c = flags_mul;
     end else if (mode == fp_pkg::OP_DIV) begin
-      y     = y_div;
-      flags = flags_div;
+      y_c     = y_div;
+      flags_c = flags_div;
     end else if (mode == fp_pkg::OP_SQRT) begin
-      y     = y_sqrt;
-      flags = flags_sqrt;
+      y_c     = y_sqrt;
+      flags_c = flags_sqrt;
     end else if (mode == fp_pkg::OP_FMA) begin
-      y     = y_fma;
-      flags = flags_fma;
+      y_c     = y_fma;
+      flags_c = flags_fma;
     end else if (mode == fp_pkg::OP_MIN || mode == fp_pkg::OP_MAX) begin
-      y     = y_mm;
-      flags = flags_mm;
+      y_c     = y_mm;
+      flags_c = flags_mm;
     end else if (mode == fp_pkg::OP_RNDINT) begin
-      y     = y_rnd;
-      flags = flags_rnd;
+      y_c     = y_rnd;
+      flags_c = flags_rnd;
     end else if (mode == fp_pkg::OP_CMP) begin
-      y     = y_cmp;
-      flags = flags_cmp;
+      y_c     = y_cmp;
+      flags_c = flags_cmp;
     end else if (mode == fp_pkg::OP_TOTALORDER) begin
-      y     = y_tot;
-      flags = flags_tot;
+      y_c     = y_tot;
+      flags_c = flags_tot;
     end else begin
-      y     = y_add;
-      flags = flags_add;
+      y_c     = y_add;
+      flags_c = flags_add;
     end
   end
 
   always_comb begin
     if (mode == fp_pkg::OP_CMP)
-      cmp = cmp_cmp;
+      cmp_c = cmp_cmp;
     else if (mode == fp_pkg::OP_TOTALORDER)
-      cmp = cmp_tot;
+      cmp_c = cmp_tot;
     else
-      cmp = 2'd0;
+      cmp_c = 2'd0;
+  end
+
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      y     <= '0;
+      flags <= 5'd0;
+      cmp   <= 2'd0;
+    end else begin
+      y     <= y_c;
+      flags <= flags_c;
+      cmp   <= cmp_c;
+    end
   end
 
 endmodule
