@@ -122,6 +122,7 @@ def build(wexp: int, wmant: int) -> str:
         return binary
     subprocess.check_call([
         "verilator", "--cc", "--exe", "--build", "--timing",
+        "--coverage", "--coverage-line", "--coverage-toggle",
         "--top-module", "fp_unit",
         f"-GW_EXP={wexp}", f"-GW_MANT={wmant}",
         "--Mdir", build_dir, "--prefix", "Vfp_unit",

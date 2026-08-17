@@ -17,9 +17,11 @@
 
 #include "Vfp_unit.h"
 #include "verilated.h"
+#include "verilated_cov.h"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 int main(int argc, char** argv) {
     if (argc < 4) {
@@ -91,6 +93,15 @@ int main(int argc, char** argv) {
                 (unsigned long long)expected, (unsigned long long)total);
 
     top->final();
+    // Write Verilator line/toggle coverage next to the expected file (the
+    // build dir for this width), so `make coverage` can merge the per-width
+    // exhaustive runs with the soak runs.
+    {
+        std::string p(argv[1]);
+        size_t slash = p.find_last_of('/');
+        std::string dir = (slash == std::string::npos) ? "." : p.substr(0, slash);
+        VerilatedCov::write((dir + "/coverage.dat").c_str());
+    }
     delete top;
 
     fprintf(stderr, "EXHAUSTIVE %llu vectors: %s (%llu mismatches)\n",

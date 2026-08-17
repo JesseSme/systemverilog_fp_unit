@@ -615,11 +615,15 @@ The regression is now fast (~1 s for the full 8-width matrix at
 ### Future milestones (from the original plan)
 
 - **Coverage and formal depth**: Verilator line/toggle coverage is collected
-  from the soak harness (`make coverage`, ~86% line coverage at the medium
-  widths). The formal suite now includes the arithmetic-op and division laws
-  (`make formal` runs 8 configs); the arithmetic laws at binary16 (2^32
-  pairs, fma wide accumulator) remain too heavy for the SMT solver to close
-  in reasonable time.
+  by `make coverage`, which runs a 1M-vector soak at the medium widths plus an
+  E8M0 soak and the full exhaustive all-8-bit-format sweep, then merges and
+  annotates every module. Combined line coverage is ~88%; the E8M0 datapaths
+  (`fp_*_e8m0`) are covered at 85-98%. The remaining gaps are defensive /
+  constant-generate paths unreachable even by the exhaustive sweep (e.g. the
+  `W_MANT > 0` guard inside the generic datapaths, which is always true when
+  they are instantiated). The formal suite runs 8 configs; the arithmetic laws
+  at binary16 (2^32 pairs, fma wide accumulator) remain too heavy for the SMT
+  solver to close in reasonable time.
 
 ### Known limitations
 

@@ -23,11 +23,15 @@ smoke:
 soak:
 	uv run python tests/soak.py
 
-# Verilator line/toggle coverage from a soak run (medium-width vector volume),
-# merged and annotated into coverage_annotate/ with a per-function summary.
+# Verilator line/toggle coverage from a soak run (medium-width vector volume)
+# plus the exhaustive all-8-bit-format sweep (which covers every edge path,
+# including the E8M0 datapaths and the degenerate exponent ranges), merged and
+# annotated into coverage_annotate/.
 coverage:
 	uv run python tests/soak.py --vectors 1000000
-	verilator_coverage -write coverage.dat soak_build/*/coverage.dat
+	uv run python tests/soak.py --width 8 0 --vectors 1000000
+	uv run python tests/exhaustive.py
+	verilator_coverage -write coverage.dat soak_build/*/coverage.dat exhaustive_build/*/coverage.dat
 	verilator_coverage -write-info coverage.info coverage.dat
 	verilator_coverage --annotate coverage_annotate --rank coverage.dat
 
