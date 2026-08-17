@@ -63,11 +63,16 @@ def _stamp() -> str:
     return h.hexdigest()
 
 
-def _current_stamp(build_dir: str) -> str | None:
-    p = os.path.join(build_dir, "expected.stamp")
+def _read_stamp(build_dir: str, name: str) -> str | None:
+    p = os.path.join(build_dir, name)
     if not os.path.exists(p):
         return None
     return open(p).read().strip()
+
+
+def _write_stamp(build_dir: str, name: str, val: str) -> None:
+    with open(os.path.join(build_dir, name), "w") as f:
+        f.write(val + "\n")
 
 
 def fma_c(fmt: BinFormat) -> int:
@@ -113,7 +118,7 @@ def build(wexp: int, wmant: int) -> str:
     binary = os.path.join(build_dir, "fp_exhaustive")
     want = _stamp()
     if (os.path.exists(binary) and os.environ.get("FORCE_REBUILD", "0") != "1"
-            and _current_stamp(build_dir) == want):
+            and _read_stamp(build_dir, "binary.stamp") == want):
         return binary
     subprocess.check_call([
         "verilator", "--cc", "--exe", "--build", "--timing",
@@ -123,8 +128,7 @@ def build(wexp: int, wmant: int) -> str:
         "-o", "fp_exhaustive",
         *RTL, HARNESS,
     ])
-    with open(os.path.join(build_dir, "expected.stamp"), "w") as f:
-        f.write(want + "\n")
+    _write_stamp(build_dir, "binary.stamp", want)
     return binary
 
 
@@ -137,9 +141,10 @@ def run(wexp: int, wmant: int, keep: bool) -> bool:
     # Regenerate the expected vectors when they are missing, when --keep forces
     # it, or when the RTL/reference/harness content hash has changed (the stale
     # expected.bin footgun).
-    if keep or _current_stamp(build_dir) != want or not os.path.exists(expected):
+    if keep or _read_stamp(build_dir, "expected.stamp") != want or not os.path.exists(expected):
         print(f"  generating expected vectors for ({wexp},{wmant}) ...")
         generate_expected(fmt, expected)
+        _write_stamp(build_dir, "expected.stamp", want)
     binary = build(wexp, wmant)
     print(f"  running {binary} ...")
     proc = subprocess.run([binary, expected, str(fmt.width), str(fma_c(fmt))],

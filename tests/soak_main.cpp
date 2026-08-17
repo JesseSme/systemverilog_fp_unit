@@ -14,9 +14,11 @@
 
 #include "Vfp_unit.h"
 #include "verilated.h"
+#include "verilated_cov.h"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 static uint64_t read_le(const uint8_t* p, int n) {
     uint64_t v = 0;
@@ -100,6 +102,14 @@ int main(int argc, char** argv) {
     fclose(f);
 
     top->final();
+    // Write Verilator line/toggle coverage next to the expected file (the
+    // build dir for this width), so `make coverage` can merge per-width runs.
+    {
+        std::string p(argv[1]);
+        size_t slash = p.find_last_of('/');
+        std::string dir = (slash == std::string::npos) ? "." : p.substr(0, slash);
+        VerilatedCov::write((dir + "/coverage.dat").c_str());
+    }
     delete top;
 
     fprintf(stderr, "SOAK %llu vectors: %s (%llu mismatches)\n",

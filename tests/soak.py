@@ -123,27 +123,36 @@ def _current_stamp(build_dir: str) -> str | None:
     return open(p).read().strip()
 
 
-def _write_stamp(build_dir: str) -> None:
-    with open(os.path.join(build_dir, "expected.stamp"), "w") as f:
-        f.write(_stamp() + "\n")
+def _read_stamp(build_dir: str, name: str) -> str | None:
+    p = os.path.join(build_dir, name)
+    if not os.path.exists(p):
+        return None
+    return open(p).read().strip()
+
+
+def _write_stamp(build_dir: str, name: str, val: str) -> None:
+    with open(os.path.join(build_dir, name), "w") as f:
+        f.write(val + "\n")
 
 
 def build(wexp: int, wmant: int) -> str:
     build_dir = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}")
     os.makedirs(build_dir, exist_ok=True)
     binary = os.path.join(build_dir, "fp_soak")
+    want = _stamp()
     if (os.path.exists(binary) and os.environ.get("FORCE_REBUILD", "0") != "1"
-            and _current_stamp(build_dir) == _stamp()):
+            and _read_stamp(build_dir, "binary.stamp") == want):
         return binary
     subprocess.check_call([
         "verilator", "--cc", "--exe", "--build", "--timing",
+        "--coverage", "--coverage-line", "--coverage-toggle",
         "--top-module", "fp_unit",
         f"-GW_EXP={wexp}", f"-GW_MANT={wmant}",
         "--Mdir", build_dir, "--prefix", "Vfp_unit",
         "-o", "fp_soak",
         *RTL, HARNESS,
     ])
-    _write_stamp(build_dir)
+    _write_stamp(build_dir, "binary.stamp", want)
     return binary
 
 
@@ -163,14 +172,15 @@ def run(wexp: int, wmant: int, n: int, seed: int, keep: bool) -> bool:
             stale = True
     # The content stamp (RTL/reference/harness hash) also invalidates the
     # expected stream; n/seed above only cover the PRNG parameters.
-    if _current_stamp(build_dir) != _stamp():
+    want = _stamp()
+    if _read_stamp(build_dir, "expected.stamp") != want:
         stale = True
     if keep or stale:
         print(f"  generating {n:,} expected vectors for ({wexp},{wmant}) ...")
         generate_expected(fmt, expected, n, seed)
         with open(meta, "w") as f:
             f.write(f"n={n} seed={seed}\n")
-        _write_stamp(build_dir)
+        _write_stamp(build_dir, "expected.stamp", want)
     binary = build(wexp, wmant)
     print(f"  running {binary} ...")
     proc = subprocess.run([binary, expected, str(fmt.width), str(fma_c(fmt))],

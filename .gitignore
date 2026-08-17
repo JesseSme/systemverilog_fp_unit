@@ -20,6 +20,11 @@ soak_build/
 bmc_m6_*/
 bmc_*/
 
+# Verilator coverage artifacts (soak_build/*/coverage.dat already ignored above)
+coverage.dat
+coverage.info
+coverage_annotate/
+
 # Vendored upstream source trees
 cocotb/
 verilator/

@@ -5,7 +5,7 @@ SIM ?= verilator
 # oss-cad-suite provides SymbiYosys (sby) + Yosys for formal verification.
 OSS ?= /home/jesse/Documents/oss-cad-suite-linux-x64-20260813/oss-cad-suite
 
-.PHONY: regress regress-all smoke soak formal lint clean
+.PHONY: regress regress-all smoke soak coverage formal lint clean
 
 regress:
 	uv run python tests/run_regression.py
@@ -22,6 +22,14 @@ smoke:
 # millions of vectors against the bit-exact oracle at C++ speed).
 soak:
 	uv run python tests/soak.py
+
+# Verilator line/toggle coverage from a soak run (medium-width vector volume),
+# merged and annotated into coverage_annotate/ with a per-function summary.
+coverage:
+	uv run python tests/soak.py --vectors 1000000
+	verilator_coverage -write coverage.dat soak_build/*/coverage.dat
+	verilator_coverage -write-info coverage.info coverage.dat
+	verilator_coverage --annotate coverage_annotate --rank coverage.dat
 
 # Formal BMC property proofs of the M6 datapaths (comparisons, totalOrder,
 # roundToIntegral) at binary16, E4M3 and E7M0. Needs the oss-cad-suite.
