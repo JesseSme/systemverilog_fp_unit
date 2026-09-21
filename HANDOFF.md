@@ -625,6 +625,36 @@ The regression is now fast (~1 s for the full 8-width matrix at
   at binary16 (2^32 pairs, fma wide accumulator) remain too heavy for the SMT
   solver to close in reasonable time.
 
+### Optimization pass (area/Fmax + measurement infra)
+
+`tests/metrics.py` (+ `make metrics-area|metrics-runtime|metrics-compare`)
+measures yosys `synth -noabc` generic-gate cell counts and `ltp` logic-level
+depth per format, and times the standard make targets. Baselines live in
+`metrics/area-baseline.json` / `metrics/runtime-baseline.json`; each
+optimization captures `metrics/area-after*.json` and diffs with
+`uv run python tests/metrics.py --compare BEFORE AFTER`. Notes:
+
+- `synth -noabc` is used because abc does not close on the combinational
+  divider/square root at binary32 (it ran >10 min on fp_sqrt alone).
+- Landed: `fp_sqrt` takes its sticky bit from the isqrt remainder instead of a
+  second squaring multiply (-25..28% cells); `fp_fma` normalize no longer
+  re-assigns `e_res` per branch.
+- Landed: `ITER_DIVSQRT` (default 0), selecting the shared multi-cycle
+  `fp_divsqrt_iter` engine in `fp_unit`/`fp_unit_axilite` with an
+  in_valid/out_valid handshake. binary32 unit: 63,685 -> 35,143 cells (-45%),
+  critical path from fp_div's 965 levels to fp_fma's 324; the engine itself is
+  3,824 cells / ltp 78. Verified bit-exact by `tests/exhaustive.py --iter`
+  (all 7 eight-bit formats), `tests/soak.py --iter` (binary16/BF16/E4M3) and
+  the AXI-Lite tests with `FP_ITER_DIVSQRT=1`.
+- Rejected after measurement: replacing `rem = num % b_al` with
+  `num - q_raw*b_al` (+14% cells) and an unrolled restoring divider for `/`
+  (+46% cells, +105 ltp levels). `$clog2`-based parallel leading-zero counts
+  are not viable on yosys 0.68 (non-constant `$clog2` is unsupported) and loop
+  accumulators are formal-hostile (see the fp_add notes).
+- Still open: `fp_fma`'s `ACC_W = 3*S_W+6` accumulator width (needs an
+  exactness proof), operand isolation/clock gating for power (needs a toggle
+  power proxy), and the E8M0 module duplication.
+
 ### Known limitations
 
 1. **Flaky startup hang**: the retry loop in `run_regression.py` handles it,
@@ -633,13 +663,16 @@ The regression is now fast (~1 s for the full 8-width matrix at
 2. **No CI**: the regression is run manually. A GitHub Actions workflow or
    `Makefile`-driven CI would automate the full matrix + exhaustive sweep.
 
-3. **No git baseline**: the repository has no commits yet; everything is
-   untracked. Consider an initial commit before further milestones.
+3. **Environment: GNU make must win over the Siemens Catapult make** on PATH
+   (`/usr/local/bin/Siemens_EDA/.../make`), otherwise verilator's `--build`
+   and the cocotb runner fail with "Process 'make' terminated with error 2".
+   `tests/metrics.py` pins `/usr/bin:/bin` ahead of PATH for its subprocesses;
+   interactive runs may need the same.
 
-4. **Exhaustive harness caching**: `exhaustive_build/*` caches the Verilator
-   binary and `expected.bin`; after RTL/reference changes, rebuild with
-   `FORCE_REBUILD=1` and delete the stale `expected.bin` files (the binary
-   reports "truncated expected file" when they are out of sync).
+4. **Harness caching**: `exhaustive_build/*` / `soak_build/*` cache Verilated
+   binaries and `expected.bin`, keyed by a content stamp over the RTL,
+   reference oracle and harness; `FORCE_REBUILD=1` remains as a manual
+   override. `--iter` builds live in separate `*_iter/` build dirs.
 
 ## File-level change summary (M5: FMA + min/max, vs. M4 square root)
 

@@ -1,0 +1,148 @@
+{
+  "area": {
+    "4x3": {
+      "modules": {
+        "fp_add": {
+          "cells": 1649,
+          "ltp": 144
+        },
+        "fp_cmp": {
+          "cells": 113,
+          "ltp": 26
+        },
+        "fp_div": {
+          "cells": 1096,
+          "ltp": 165
+        },
+        "fp_fma": {
+          "cells": 3175,
+          "ltp": 186
+        },
+        "fp_minmax": {
+          "cells": 143,
+          "ltp": 26
+        },
+        "fp_mul": {
+          "cells": 864,
+          "ltp": 88
+        },
+        "fp_roundint": {
+          "cells": 786,
+          "ltp": 88
+        },
+        "fp_sqrt": {
+          "cells": 1042,
+          "ltp": 139
+        },
+        "fp_totalorder": {
+          "cells": 82,
+          "ltp": 16
+        },
+        "fp_unit": {
+          "cells": 146,
+          "ltp": 11
+        }
+      },
+      "total_cells": 9096,
+      "yosys_seconds": 1.52
+    },
+    "5x10": {
+      "modules": {
+        "fp_add": {
+          "cells": 3122,
+          "ltp": 171
+        },
+        "fp_cmp": {
+          "cells": 197,
+          "ltp": 31
+        },
+        "fp_div": {
+          "cells": 3916,
+          "ltp": 397
+        },
+        "fp_fma": {
+          "cells": 6678,
+          "ltp": 241
+        },
+        "fp_minmax": {
+          "cells": 273,
+          "ltp": 31
+        },
+        "fp_mul": {
+          "cells": 2310,
+          "ltp": 115
+        },
+        "fp_roundint": {
+          "cells": 1252,
+          "ltp": 114
+        },
+        "fp_sqrt": {
+          "cells": 3509,
+          "ltp": 278
+        },
+        "fp_totalorder": {
+          "cells": 164,
+          "ltp": 20
+        },
+        "fp_unit": {
+          "cells": 218,
+          "ltp": 11
+        }
+      },
+      "total_cells": 21639,
+      "yosys_seconds": 3.46
+    },
+    "8x23": {
+      "modules": {
+        "fp_add": {
+          "cells": 5930,
+          "ltp": 218
+        },
+        "fp_cmp": {
+          "cells": 369,
+          "ltp": 36
+        },
+        "fp_div": {
+          "cells": 15047,
+          "ltp": 965
+        },
+        "fp_fma": {
+          "cells": 15168,
+          "ltp": 324
+        },
+        "fp_minmax": {
+          "cells": 535,
+          "ltp": 36
+        },
+        "fp_mul": {
+          "cells": 6685,
+          "ltp": 150
+        },
+        "fp_roundint": {
+          "cells": 2051,
+          "ltp": 140
+        },
+        "fp_sqrt": {
+          "cells": 12426,
+          "ltp": 621
+        },
+        "fp_totalorder": {
+          "cells": 326,
+          "ltp": 24
+        },
+        "fp_unit": {
+          "cells": 362,
+          "ltp": 11
+        }
+      },
+      "total_cells": 58899,
+      "yosys_seconds": 11.9
+    }
+  },
+  "generated": "2026-09-17T10:23:31+00:00",
+  "tools": {
+    "git_head": "3f7d60c",
+    "verilator": "Verilator 5.020 2024-01-01 rev (Debian 5.020-1)",
+    "yosys": "Yosys 0.68+58 (git sha1 edbc62a44-dirty, Release, Clang /usr/bin/clang++ 21.1.8)"
+  }
+}

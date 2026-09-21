@@ -25,12 +25,15 @@
 
 int main(int argc, char** argv) {
     if (argc < 4) {
-        fprintf(stderr, "usage: %s <expected.bin> <width> <c>\n", argv[0]);
+        fprintf(stderr, "usage: %s <expected.bin> <width> <c> [iter]\n", argv[0]);
         return 2;
     }
     const char* path = argv[1];
     const int w = atoi(argv[2]);
     const int C = atoi(argv[3]);
+    // iter=1: fp_unit was built with ITER_DIVSQRT=1; div (op 3) and sqrt
+    // (op 4) use the in_valid/busy/out_valid handshake.
+    const int iter = (argc > 4) ? atoi(argv[4]) : 0;
     const int A = 1 << w;  // values per operand
 
     Verilated::commandArgs(argc, argv);
@@ -57,10 +60,23 @@ int main(int argc, char** argv) {
                 for (int b = 0; b < A; b++) {
                     top->b = b;
                     top->c = C;
+                    top->in_valid = 1;
                     top->clk = 0;
                     top->eval();  // combinational result settles (clk low)
                     top->clk = 1;
                     top->eval();  // posedge captures y/flags/cmp
+                    top->clk = 0;
+                    top->in_valid = 0;
+                    top->eval();
+                    if (iter && (op == 3 || op == 4)) {
+                        long guard = 0;
+                        while (!top->out_valid && guard++ < 1024) {
+                            top->clk = 1;
+                            top->eval();
+                            top->clk = 0;
+                            top->eval();
+                        }
+                    }
                     const uint8_t y = top->y;
                     const uint8_t flags = top->flags;
                     const uint8_t cmp = top->cmp;

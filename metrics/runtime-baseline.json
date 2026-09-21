@@ -1,0 +1,52 @@
+{
+  "generated": "2026-09-17T10:13:04+00:00",
+  "runtime": {
+    "coverage": {
+      "command": "make coverage",
+      "last_line": "EXHAUSTIVE 3604480 vectors: PASS (0 mismatches)",
+      "rc": 0,
+      "seconds": 85.31
+    },
+    "exhaustive": {
+      "command": "uv run python tests/exhaustive.py",
+      "last_line": "EXHAUSTIVE 3604480 vectors: PASS (0 mismatches)",
+      "rc": 0,
+      "seconds": 41.42
+    },
+    "formal": {
+      "command": "make formal",
+      "last_line": "SBY 13:19:48 [bmc_div_b16_bmc] DONE (PASS, rc=0)",
+      "rc": 0,
+      "seconds": 166.29
+    },
+    "lint": {
+      "command": "make lint",
+      "last_line": "verilator --lint-only -Wall --timing rtl/fp_pkg.sv rtl/fp_add.sv rtl/fp_mul.sv rtl/fp_div.sv rtl/fp_sqrt.sv rtl/fp_fma.sv rtl/fp_minmax.sv rtl/fp_cmp.sv rtl/fp_totalorder.sv rtl/fp_roundint.sv rtl/fp_unit.sv rtl/fp_unit_axilite.sv",
+      "rc": 0,
+      "seconds": 0.39
+    },
+    "regress-all": {
+      "command": "make regress-all",
+      "last_line": "from cocotb.runner import get_runner  # cocotb 1.9.x",
+      "rc": 0,
+      "seconds": 19.51
+    },
+    "smoke": {
+      "command": "make smoke",
+      "last_line": "from cocotb.runner import get_runner  # cocotb 1.9.x",
+      "rc": 0,
+      "seconds": 5.45
+    },
+    "soak": {
+      "command": "make soak",
+      "last_line": "SOAK 5000000 vectors: PASS (0 mismatches)",
+      "rc": 0,
+      "seconds": 171.09
+    }
+  },
+  "tools": {
+    "git_head": "3f7d60c",
+    "verilator": "Verilator 5.020 2024-01-01 rev (Debian 5.020-1)",
+    "yosys": "Yosys 0.68+58 (git sha1 edbc62a44-dirty, Release, Clang /usr/bin/clang++ 21.1.8)"
+  }
+}

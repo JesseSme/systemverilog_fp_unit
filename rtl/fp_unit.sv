@@ -26,10 +26,19 @@
 
 module fp_unit #(
   parameter int W_EXP  = 8,
-  parameter int W_MANT = 23
+  parameter int W_MANT = 23,
+  // Selects the shared iterative (multi-cycle) division/square-root engine
+  // (fp_divsqrt_iter) instead of the combinational fp_div/fp_sqrt datapaths.
+  // With ITER_DIVSQRT = 1 a div/sqrt transaction is started by pulsing
+  // in_valid (ignored while `busy`); `out_valid` pulses one cycle with the
+  // registered result. All other operations keep the 1-cycle registered
+  // output. Only supported for W_MANT > 0: E8M0 always uses the dedicated
+  // combinational datapaths.
+  parameter int ITER_DIVSQRT = 0
 ) (
   input  logic                    clk,
   input  logic                    rst_n,
+  input  logic                    in_valid,
   input  fp_pkg::op_t             mode,
   input  fp_pkg::rounding_t       rm,
   input  logic [1+W_EXP+W_MANT-1:0] a,
@@ -37,7 +46,8 @@ module fp_unit #(
   input  logic [1+W_EXP+W_MANT-1:0] c,
   output logic [1+W_EXP+W_MANT-1:0] y,
   output logic [1:0]               cmp,
-  output logic [4:0]               flags
+  output logic [4:0]               flags,
+  output logic                    out_valid
 );
 
   // Registered output interface (1-stage pipeline). The op datapaths are
@@ -67,6 +77,32 @@ module fp_unit #(
   logic [4:0]                flags_tot;
   logic [1:0]                cmp_tot;
 
+  // Iterative div/sqrt engine and its handshake (only when selected and the
+  // format has a significand; otherwise tied off).
+  localparam int W = 1 + W_EXP + W_MANT;
+  logic [W-1:0] y_iter;
+  logic [4:0]   flags_iter;
+  logic         busy_iter, done_iter, iter_run, iter_start;
+
+  generate
+    if (ITER_DIVSQRT != 0 && W_MANT > 0) begin : g_divsqrt_iter
+      fp_divsqrt_iter #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_divsqrt (
+        .a(a), .b(b), .rm(rm), .is_sqrt(mode == fp_pkg::OP_SQRT),
+        .start(iter_start), .y(y_iter), .flags(flags_iter),
+        .clk(clk), .rst_n(rst_n), .busy(busy_iter), .done(done_iter)
+      );
+    end else begin : g_no_divsqrt_iter
+      assign y_iter     = '0;
+      assign flags_iter = 5'd0;
+      assign busy_iter  = 1'b0;
+      assign done_iter  = 1'b0;
+    end
+  endgenerate
+
+  assign iter_start = (ITER_DIVSQRT != 0 && W_MANT > 0) && in_valid
+                    && (mode == fp_pkg::OP_DIV || mode == fp_pkg::OP_SQRT)
+                    && !iter_run && !busy_iter;
+
   generate
     if (W_MANT > 0) begin : g_generic
       fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_add (
@@ -77,14 +113,22 @@ module fp_unit #(
         .a(a), .b(b), .rm(rm),
         .y(y_mul), .flags(flags_mul)
       );
-      fp_div #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_div (
-        .a(a), .b(b), .rm(rm),
-        .y(y_div), .flags(flags_div)
-      );
-      fp_sqrt #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_sqrt (
-        .a(a), .rm(rm),
-        .y(y_sqrt), .flags(flags_sqrt)
-      );
+      if (ITER_DIVSQRT != 0) begin : g_iter_divsqrt
+        // Registered engine outputs replace the combinational datapaths.
+        assign y_div      = y_iter;
+        assign flags_div  = flags_iter;
+        assign y_sqrt     = y_iter;
+        assign flags_sqrt = flags_iter;
+      end else begin : g_comb_divsqrt
+        fp_div #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_div (
+          .a(a), .b(b), .rm(rm),
+          .y(y_div), .flags(flags_div)
+        );
+        fp_sqrt #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_sqrt (
+          .a(a), .rm(rm),
+          .y(y_sqrt), .flags(flags_sqrt)
+        );
+      end
       fp_fma #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_fma (
         .a(a), .b(b), .c(c), .rm(rm),
         .y(y_fma), .flags(flags_fma)
@@ -186,13 +230,27 @@ module fp_unit #(
 
   always_ff @(posedge clk) begin
     if (!rst_n) begin
-      y     <= '0;
-      flags <= 5'd0;
-      cmp   <= 2'd0;
+      y        <= '0;
+      flags    <= 5'd0;
+      cmp      <= 2'd0;
+      out_valid <= 1'b0;
+      iter_run  <= 1'b0;
+    end else if (iter_run || done_iter) begin
+      // Iterative div/sqrt transaction in flight: hold the outputs until the
+      // engine's done pulse, then publish the result.
+      out_valid <= done_iter;
+      iter_run  <= iter_run && !done_iter;
+      if (done_iter) begin
+        y     <= y_iter;
+        flags <= flags_iter;
+        cmp   <= 2'd0;
+      end
     end else begin
-      y     <= y_c;
-      flags <= flags_c;
-      cmp   <= cmp_c;
+      y         <= y_c;
+      flags     <= flags_c;
+      cmp       <= cmp_c;
+      out_valid <= in_valid && !iter_start;
+      iter_run  <= iter_start;
     end
   end
 

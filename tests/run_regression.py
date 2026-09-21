@@ -35,9 +35,10 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent.parent
 RTL = [ROOT / "rtl" / f for f in ("fp_pkg.sv", "fp_add.sv", "fp_add_e8m0.sv",
        "fp_mul.sv", "fp_mul_e8m0.sv", "fp_div.sv", "fp_div_e8m0.sv",
-       "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_fma.sv", "fp_fma_e8m0.sv",
+       "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_divsqrt_iter.sv",
+       "fp_fma.sv", "fp_fma_e8m0.sv",
        "fp_minmax.sv", "fp_cmp.sv", "fp_totalorder.sv", "fp_roundint.sv",
-       "fp_roundint_e8m0.sv", "fp_unit.sv")]
+       "fp_roundint_e8m0.sv", "fp_unit.sv", "fp_unit_axilite.sv")]
 
 # (W_EXP, W_MANT) matrix: standard interchange formats plus FP8/BF16/E8M0.
 # Default = the formats the user exercises routinely; --all adds odd sizes.
@@ -152,6 +153,9 @@ def main() -> int:
                     help="run the full width matrix (6 widths)")
     ap.add_argument("--tests", default="test_fp_unit",
                     help="cocotb test module (default: test_fp_unit)")
+    ap.add_argument("--top", default="fp_unit",
+                    help="hdl toplevel DUT (default: fp_unit; fp_unit_axilite "
+                         "for the AXI-Lite wrapper tests)")
     ap.add_argument("--retries", type=int, default=3,
                     help="attempts per width when the sim times out (default 3)")
     ap.add_argument("--timeout", type=int, default=60,
@@ -162,22 +166,30 @@ def main() -> int:
     tests_dir = Path(__file__).resolve().parent
     _patch_verilator_helper()
 
+    # FP_ITER_DIVSQRT=1 builds the DUT with the iterative div/sqrt engine; the
+    # test must then honor the in_valid/out_valid handshake (the AXI-Lite
+    # wrapper does; test_fp_unit samples the 1-cycle combinational path and is
+    # only valid with the default 0).
+    iter_mode = int(os.environ.get("FP_ITER_DIVSQRT", "0"))
     failures = 0
     for wexp, wmant in widths:
         params = {"W_EXP": wexp, "W_MANT": wmant}
-        build_dir = ROOT / "sim_build" / f"exp{wexp}_mant{wmant}"
+        if iter_mode:
+            params["ITER_DIVSQRT"] = 1
+        build_dir = ROOT / "sim_build" / (
+            f"exp{wexp}_mant{wmant}" + ("_iter" if iter_mode else ""))
         env = _sim_env(tests_dir, wexp, wmant)
         print(f"=== width W_EXP={wexp} W_MANT={wmant} ===", flush=True)
         runner = get_runner("verilator")
         runner.build(
             sources=RTL,
-            hdl_toplevel="fp_unit",
+            hdl_toplevel=args.top,
             parameters=params,
             build_args=["--timing"],
             timescale=("1ns", "1ps"),
             build_dir=build_dir,
         )
-        bin_path = build_dir / "fp_unit"
+        bin_path = build_dir / args.top
         if not bin_path.exists():
             print(f"    ERROR: no simulator binary at {bin_path}", flush=True)
             failures += 1

@@ -304,6 +304,9 @@ module fp_fma #(
     // support `break` in for loops).
     for (int i = 0; i <= ACC_W; i++)
       if (acc[i]) p0 = i;
+    // e_res does not depend on which normalize branch is taken: assign it
+    // once, unconditionally (yosys's proc can otherwise turn branch-local
+    // assignments into don't-care anyseqs).
     e_res = (W_EXP+4)'(top) + (W_EXP+4)'($signed(p0) - PTOP);
     if (p0 > TARGET) begin
       norm = acc >> (p0 - TARGET);
@@ -313,15 +316,12 @@ module fp_fma #(
       // into a don't-care anyseq).
       norm_sticky = sticky_p | sticky_c
                   | |(acc & (((ACC_W+1)'(1) << (p0 - TARGET)) - 1));
-      e_res = (W_EXP+4)'(top) + (W_EXP+4)'($signed(p0) - PTOP);
     end else if (p0 < TARGET) begin
       norm = acc << (TARGET - p0);
       norm_sticky = sticky_p | sticky_c;
-      e_res = (W_EXP+4)'(top) + (W_EXP+4)'($signed(p0) - PTOP);
     end else begin
       norm = acc;
       norm_sticky = sticky_p | sticky_c;
-      e_res = (W_EXP+4)'(top) + (W_EXP+4)'($signed(p0) - PTOP);
     end
   end
 
