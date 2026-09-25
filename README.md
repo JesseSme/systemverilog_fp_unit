@@ -12,14 +12,18 @@ support (3.3) and the five exception flags (7.2-7.6, including divide-by-zero
 ## Layout
 
     rtl/                fp_pkg.sv, fp_add.sv, fp_mul.sv, fp_div.sv, fp_sqrt.sv,
-                        fp_fma.sv, fp_minmax.sv, fp_cmp.sv, fp_totalorder.sv,
-                        fp_roundint.sv, the *_e8m0.sv sibling modules and
-                        fp_unit.sv (synthesizable SV)
+                        fp_divsqrt_iter.sv, fp_fma.sv, fp_minmax.sv, fp_cmp.sv,
+                        fp_totalorder.sv, fp_roundint.sv, the *_e8m0.sv sibling
+                        modules, fp_unit.sv (synthesizable SV) and
+                        fp_unit_axilite.sv (AXI4-Lite register wrapper)
     tests/reference/    bit-exact Python oracle (exact rational arithmetic)
     tests/test_fp_unit.py     cocotb tests (directed vectors + randomized)
+    tests/test_fp_unit_axilite.py  cocotb AXI4-Lite register-map tests
     tests/run_regression.py   builds and runs the width matrix
     tests/exhaustive.py       exhaustive all-vectors sweep of every 8-bit format
     tests/soak.py             cross-width randomized soak (medium formats)
+    tests/metrics.py          area/timing proxies (yosys) + target runtimes
+    metrics/                  baseline/after metrics JSON (for --compare)
     formal/ + bmc_m6_*.sby    SymbiYosys formal property proofs of the M6 ops
 
 ## Running
@@ -30,8 +34,14 @@ support (3.3) and the five exception flags (7.2-7.6, including divide-by-zero
     FP_ITERS=200 uv run python tests/run_regression.py --width 8 23
     uv run python tests/exhaustive.py                # all 7 8-bit formats
     uv run python tests/soak.py                      # cross-width soak
+    uv run python tests/exhaustive.py --iter         # iterative div/sqrt build
+    uv run python tests/soak.py --iter               # iterative div/sqrt build
     make regress | make smoke | make soak | make lint
+    make exhaustive-iter | make soak-iter            # ITER_DIVSQRT=1 builds
     make formal   # SymbiYosys BMC proofs (needs the oss-cad-suite)
+    make metrics-area      # yosys cell count + ltp per format (baseline JSON)
+    make metrics-runtime   # wall-clock of the standard targets
+    make metrics-compare BEFORE=... AFTER=...
 
 ## Toolchain notes
 
@@ -62,6 +72,33 @@ support (3.3) and the five exception flags (7.2-7.6, including divide-by-zero
   corrupts the model when several instances of the parameterized datapath
   modules coexist (see the HANDOFF notes). The RTL is verified bit-exact by
   the regression and the exhaustive sweep regardless.
+
+## Optimization: iterative div/sqrt (`ITER_DIVSQRT`)
+
+`fp_unit` takes a third parameter `ITER_DIVSQRT` (default 0). With
+`ITER_DIVSQRT = 1` (W_MANT > 0) the combinational `fp_div`/`fp_sqrt` datapaths
+are replaced by the shared multi-cycle engine `fp_divsqrt_iter`, which
+produces one quotient bit (division) or one root bit per two radicand bits
+(sqrt) per cycle using a single adder/subtractor. Semantics are bit-exact with
+the combinational modules (verified by the exhaustive 8-bit sweeps and the
+medium-width soaks in `--iter` mode).
+
+Handshake: pulse `in_valid` together with a/b/c/mode/rm (ignored while the
+engine is busy); `out_valid` pulses one cycle with the registered `y`/`flags`.
+Single-cycle operations keep the original 1-cycle latency. The AXI-Lite
+wrapper takes the same parameter and waits on `out_valid`.
+
+Measured with `make metrics-area` (yosys `synth -noabc`, generic-gate cells /
+longest topological path):
+
+    format   default cells  ITER cells   default ltp  ITER ltp
+    E4M3          9,437        7,913        165/160*      60
+    binary16     22,987       16,012        397/309*      68
+    BF16         17,698       13,534        251*          67
+    binary32     63,685       35,143        965/657*      78
+
+    * combinational fp_div / fp_sqrt (the largest contributor; fp_sqrt also
+      dropped ~25-28% from taking its sticky bit from the isqrt remainder)
 
 ## Semantics (bit-exact vs tests/reference)
 

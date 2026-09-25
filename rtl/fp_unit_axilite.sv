@@ -31,15 +31,20 @@
 //
 // Operation flow: software writes DATA_A/B/C and OPCODE, then writes
 // CTRL.GO = 1. The wrapper latches the operands/opcode into working
-// registers, asserts STATUS.BUSY, and three clocks later publishes the
-// result in RESULT/RES_CMP and STATUS.flags with STATUS.VALID = 1 and
-// STATUS.BUSY = 0. Reads/writes outside the register map are answered with
+// registers, asserts STATUS.BUSY, and publishes the result in
+// RESULT/RES_CMP and STATUS.flags with STATUS.VALID = 1 and STATUS.BUSY = 0
+// when the FPU's out_valid pulses (the cycle after GO for single-cycle
+// operations; after the iterative div/sqrt engine finishes when
+// ITER_DIVSQRT = 1). Reads/writes outside the register map are answered with
 // DECERR; writes to read-only registers are ignored (OKAY).
 
 module fp_unit_axilite #(
-  parameter int W_EXP      = 8,
-  parameter int W_MANT     = 23,
-  parameter int ADDR_WIDTH = 6
+  parameter int W_EXP       = 8,
+  parameter int W_MANT      = 23,
+  parameter int ADDR_WIDTH  = 6,
+  // Passed through to fp_unit: 1 selects the iterative div/sqrt engine
+  // (in_valid/out_valid/busy handshake), 0 the combinational datapaths.
+  parameter int ITER_DIVSQRT = 0
 ) (
   input  logic                  s_axi_aclk,
   input  logic                  s_axi_aresetn,
@@ -188,17 +193,27 @@ module fp_unit_axilite #(
   logic              go_rise;
   assign go_rise = reg_ctrl[0] && !go_d;
 
-  localparam logic [1:0] S_IDLE = 2'd0, S_RUN1 = 2'd1, S_RUN2 = 2'd2, S_DONE = 2'd3;
+  localparam logic [1:0] S_IDLE = 2'd0, S_WAIT = 2'd1, S_DONE = 2'd2;
   logic [1:0] cstate;
 
   logic [W-1:0] fpu_y;
   logic [1:0]   fpu_cmp;
   logic [4:0]   fpu_flags;
+  logic         fpu_in_valid;
+  logic         fpu_out_valid;
+  logic         start_req;
+
+  // One-cycle start pulse for the FPU, issued in the first S_WAIT cycle so the
+  // operands latched on the S_IDLE -> S_WAIT edge are already stable. Single-
+  // cycle ops pulse out_valid the next cycle; div/sqrt under
+  // ITER_DIVSQRT = 1 when the iterative engine finishes.
+  assign fpu_in_valid = (cstate == S_WAIT) && start_req;
 
   always_ff @(posedge s_axi_aclk) begin
     if (!s_axi_aresetn) begin
       cstate     <= S_IDLE;
       go_d       <= 1'b0;
+      start_req  <= 1'b0;
       busy       <= 1'b0;
       valid      <= 1'b0;
       a_w        <= '0;
@@ -219,19 +234,22 @@ module fp_unit_axilite #(
             c_w    <= reg_c[W-1:0];
             mode_w <= fp_pkg::op_t'(reg_opcode[3:0]);
             rm_w   <= fp_pkg::rounding_t'(reg_opcode[6:4]);
+            start_req <= 1'b1;
             busy   <= 1'b1;
             valid  <= 1'b0;
-            cstate <= S_RUN1;
+            cstate <= S_WAIT;
           end
         end
-        S_RUN1: cstate <= S_RUN2;
-        S_RUN2: begin
-          reg_result <= {{(REG_W-W){1'b0}}, fpu_y};
-          reg_flags  <= fpu_flags;
-          reg_cmp    <= {30'd0, fpu_cmp};
-          valid      <= 1'b1;
-          busy       <= 1'b0;
-          cstate     <= S_DONE;
+        S_WAIT: begin
+          start_req <= 1'b0;
+          if (fpu_out_valid) begin
+            reg_result <= {{(REG_W-W){1'b0}}, fpu_y};
+            reg_flags  <= fpu_flags;
+            reg_cmp    <= {30'd0, fpu_cmp};
+            valid      <= 1'b1;
+            busy       <= 1'b0;
+            cstate     <= S_DONE;
+          end
         end
         S_DONE: cstate <= S_IDLE;
         default: cstate <= S_IDLE;
@@ -352,17 +370,19 @@ module fp_unit_axilite #(
   assign s_axi_rresp   = rdec.valid ? AXI_OKAY : AXI_DECERR;
 
   // ---- FPU core ---------------------------------------------------------------
-  fp_unit #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_unit (
-    .clk   (s_axi_aclk),
-    .rst_n (s_axi_aresetn),
-    .mode  (mode_w),
-    .rm    (rm_w),
-    .a     (a_w),
-    .b     (b_w),
-    .c     (c_w),
-    .y     (fpu_y),
-    .cmp   (fpu_cmp),
-    .flags (fpu_flags)
+  fp_unit #(.W_EXP(W_EXP), .W_MANT(W_MANT), .ITER_DIVSQRT(ITER_DIVSQRT)) u_fp_unit (
+    .clk       (s_axi_aclk),
+    .rst_n     (s_axi_aresetn),
+    .in_valid  (fpu_in_valid),
+    .mode      (mode_w),
+    .rm        (rm_w),
+    .a         (a_w),
+    .b         (b_w),
+    .c         (c_w),
+    .y         (fpu_y),
+    .cmp       (fpu_cmp),
+    .flags     (fpu_flags),
+    .out_valid (fpu_out_valid)
   );
 
 endmodule

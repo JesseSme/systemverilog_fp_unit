@@ -32,6 +32,7 @@ import random
 import struct
 import subprocess
 import sys
+from concurrent.futures import ProcessPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -43,7 +44,8 @@ ROOT = os.path.dirname(HERE)
 RTL = [os.path.join(ROOT, "rtl", f) for f in
        ("fp_pkg.sv", "fp_add.sv", "fp_add_e8m0.sv",
         "fp_mul.sv", "fp_mul_e8m0.sv", "fp_div.sv", "fp_div_e8m0.sv",
-        "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_fma.sv", "fp_fma_e8m0.sv",
+        "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_divsqrt_iter.sv",
+        "fp_fma.sv", "fp_fma_e8m0.sv",
         "fp_minmax.sv", "fp_cmp.sv", "fp_totalorder.sv", "fp_roundint.sv",
         "fp_roundint_e8m0.sv", "fp_unit.sv")]
 REF = [os.path.join(HERE, "reference", f) for f in
@@ -71,6 +73,12 @@ def _stamp() -> str:
 def fma_c(fmt: BinFormat) -> int:
     """The fixed c operand used for the soak FMA op (1.0)."""
     return encode_finite(0, fmt.bias, 0, fmt)
+
+
+def _run_width(job: tuple) -> bool:
+    """ProcessPool entry point (widths are independent and GIL-bound)."""
+    wexp, wmant, n, seed, keep, iter_mode = job
+    return run(wexp, wmant, n, seed, keep, iter_mode)
 
 
 def _pack_fmt(opbytes: int) -> str:
@@ -135,11 +143,14 @@ def _write_stamp(build_dir: str, name: str, val: str) -> None:
         f.write(val + "\n")
 
 
-def build(wexp: int, wmant: int) -> str:
-    build_dir = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}")
+def build(wexp: int, wmant: int, iter_mode: bool) -> str:
+    # Iterative mode gets its own build dir: the Verilator model differs
+    # (ITER_DIVSQRT=1), and sharing an Mdir would rebuild on every mode switch.
+    suffix = "_iter" if iter_mode else ""
+    build_dir = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}{suffix}")
     os.makedirs(build_dir, exist_ok=True)
     binary = os.path.join(build_dir, "fp_soak")
-    want = _stamp()
+    want = _stamp() + ("_iter" if iter_mode else "")
     if (os.path.exists(binary) and os.environ.get("FORCE_REBUILD", "0") != "1"
             and _read_stamp(build_dir, "binary.stamp") == want):
         return binary
@@ -148,6 +159,7 @@ def build(wexp: int, wmant: int) -> str:
         "--coverage", "--coverage-line", "--coverage-toggle",
         "--top-module", "fp_unit",
         f"-GW_EXP={wexp}", f"-GW_MANT={wmant}",
+        *(["-GITER_DIVSQRT=1"] if iter_mode else []),
         "--Mdir", build_dir, "--prefix", "Vfp_unit",
         "-o", "fp_soak",
         *RTL, HARNESS,
@@ -156,9 +168,10 @@ def build(wexp: int, wmant: int) -> str:
     return binary
 
 
-def run(wexp: int, wmant: int, n: int, seed: int, keep: bool) -> bool:
+def run(wexp: int, wmant: int, n: int, seed: int, keep: bool, iter_mode: bool) -> bool:
     fmt = BinFormat(wexp, wmant)
-    build_dir = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}")
+    suffix = "_iter" if iter_mode else ""
+    build_dir = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}{suffix}")
     os.makedirs(build_dir, exist_ok=True)
     expected = os.path.join(build_dir, "expected.bin")
     meta = os.path.join(build_dir, "expected.meta")
@@ -171,8 +184,9 @@ def run(wexp: int, wmant: int, n: int, seed: int, keep: bool) -> bool:
         except (OSError, ValueError, IndexError):
             stale = True
     # The content stamp (RTL/reference/harness hash) also invalidates the
-    # expected stream; n/seed above only cover the PRNG parameters.
-    want = _stamp()
+    # expected stream; n/seed above only cover the PRNG parameters. The
+    # expected results do not depend on the build mode.
+    want = _stamp() + ("_iter" if iter_mode else "")
     if _read_stamp(build_dir, "expected.stamp") != want:
         stale = True
     if keep or stale:
@@ -181,9 +195,10 @@ def run(wexp: int, wmant: int, n: int, seed: int, keep: bool) -> bool:
         with open(meta, "w") as f:
             f.write(f"n={n} seed={seed}\n")
         _write_stamp(build_dir, "expected.stamp", want)
-    binary = build(wexp, wmant)
+    binary = build(wexp, wmant, iter_mode)
     print(f"  running {binary} ...")
-    proc = subprocess.run([binary, expected, str(fmt.width), str(fma_c(fmt))],
+    proc = subprocess.run([binary, expected, str(fmt.width), str(fma_c(fmt)),
+                           "1" if iter_mode else "0"],
                           capture_output=True, text=True)
     sys.stderr.write(proc.stderr)
     return proc.returncode == 0
@@ -199,13 +214,27 @@ def main() -> int:
                     help="PRNG seed for the operand stream (default 0x50ac)")
     ap.add_argument("--keep", action="store_true",
                     help="keep previously generated expected files")
+    ap.add_argument("--iter", action="store_true",
+                    help="build with ITER_DIVSQRT=1 (iterative div/sqrt handshake)")
+    ap.add_argument("--jobs", type=int, default=0,
+                    help="widths to run concurrently (0 = auto: one per core)")
     args = ap.parse_args()
 
     widths = [tuple(args.width)] if args.width else DEFAULT_WIDTHS
-    ok = True
+    mode = " (iterative div/sqrt)" if args.iter else ""
     for wexp, wmant in widths:
-        print(f"=== soak W_EXP={wexp} W_MANT={wmant} ({args.vectors:,} vectors) ===")
-        ok &= run(wexp, wmant, args.vectors, args.seed, args.keep)
+        print(f"=== soak W_EXP={wexp} W_MANT={wmant} ({args.vectors:,} vectors){mode} ===",
+              flush=True)
+
+    jobs = args.jobs if args.jobs > 0 else min(len(widths), os.cpu_count() or 1)
+    work = [(wexp, wmant, args.vectors, args.seed, args.keep, args.iter)
+            for wexp, wmant in widths]
+    if jobs > 1 and len(widths) > 1:
+        with ProcessPoolExecutor(max_workers=jobs) as ex:
+            results = list(ex.map(_run_width, work))
+    else:
+        results = [_run_width(job) for job in work]
+    ok = all(results)
     print("ALL SOAK PASS" if ok else "SOME SOAK FAILED")
     return 0 if ok else 1
 

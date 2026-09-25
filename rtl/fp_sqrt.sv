@@ -153,8 +153,12 @@ module fp_sqrt #(
   end
 
   // Integer floor square root of the even-width radicand x, digit-by-digit
-  // (restoring): process two bits of x per root bit, MSB-first.
-  function automatic logic [FW-1:0] isqrt(input logic [R_W-1:0] x);
+  // (restoring): process two bits of x per root bit, MSB-first. The final
+  // remainder x - q^2 is returned through rem_out: it is exactly the sticky
+  // term (x is a perfect square iff the remainder is zero), so the caller
+  // does not need to square the root again.
+  function automatic logic [FW-1:0] isqrt(input logic [R_W-1:0] x,
+                                          output logic [R_W-1:0] rem_out);
     logic [R_W-1:0] rem;
     logic [FW-1:0]  q;
     logic [R_W-1:0] t;
@@ -170,22 +174,25 @@ module fp_sqrt #(
         q   = q << 1;
       end
     end
+    rem_out = rem;
     isqrt = q;
   endfunction
 
   // Scaled radicand X (sqrt(X)'s MSB at TARGET) and its floor square root.
+  // The isqrt remainder is the sticky: X - placed^2 > 0 iff X has no exact
+  // root (used only as a single sticky bit, so the exact magnitude is not
+  // needed).
   logic [R_W-1:0] X;
   logic [FW-1:0]  placed;
   logic           norm_sticky;
   logic signed [W_EXP+3:0] e_res;
   always_comb begin
     int S;
-    logic [R_W-1:0] qsq;
+    logic [R_W-1:0] rem;
     S = 2*TARGET + int'(e_a[0]) - int'(bitlen(s_a)) + 1;
     X = (R_W)'(s_a) << S;
-    placed = isqrt(X);
-    qsq = (R_W)'(placed) * (R_W)'(placed);
-    norm_sticky = |(X - qsq);
+    placed = isqrt(X, rem);
+    norm_sticky = |rem;
   end
   assign e_res = e_a >>> 1;  // floor(e_a / 2)
 

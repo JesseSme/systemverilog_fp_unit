@@ -1,0 +1,23 @@
+{
+  "generated": "2026-09-17T10:50:47+00:00",
+  "iter_divsqrt": false,
+  "runtime": {
+    "exhaustive": {
+      "command": "uv run python tests/exhaustive.py",
+      "last_line": "EXHAUSTIVE 3604480 vectors: PASS (0 mismatches)",
+      "rc": 0,
+      "seconds": 22.91
+    },
+    "soak": {
+      "command": "make soak",
+      "last_line": "SOAK 5000000 vectors: PASS (0 mismatches)",
+      "rc": 0,
+      "seconds": 85.59
+    }
+  },
+  "tools": {
+    "git_head": "3f7d60c",
+    "verilator": "Verilator 5.020 2024-01-01 rev (Debian 5.020-1)",
+    "yosys": "Yosys 0.68+58 (git sha1 edbc62a44-dirty, Release, Clang /usr/bin/clang++ 21.1.8)"
+  }
+}

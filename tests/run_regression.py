@@ -35,7 +35,8 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent.parent
 RTL = [ROOT / "rtl" / f for f in ("fp_pkg.sv", "fp_add.sv", "fp_add_e8m0.sv",
        "fp_mul.sv", "fp_mul_e8m0.sv", "fp_div.sv", "fp_div_e8m0.sv",
-       "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_fma.sv", "fp_fma_e8m0.sv",
+       "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_divsqrt_iter.sv",
+       "fp_fma.sv", "fp_fma_e8m0.sv",
        "fp_minmax.sv", "fp_cmp.sv", "fp_totalorder.sv", "fp_roundint.sv",
        "fp_roundint_e8m0.sv", "fp_unit.sv", "fp_unit_axilite.sv")]
 
@@ -165,10 +166,18 @@ def main() -> int:
     tests_dir = Path(__file__).resolve().parent
     _patch_verilator_helper()
 
+    # FP_ITER_DIVSQRT=1 builds the DUT with the iterative div/sqrt engine; the
+    # test must then honor the in_valid/out_valid handshake (the AXI-Lite
+    # wrapper does; test_fp_unit samples the 1-cycle combinational path and is
+    # only valid with the default 0).
+    iter_mode = int(os.environ.get("FP_ITER_DIVSQRT", "0"))
     failures = 0
     for wexp, wmant in widths:
         params = {"W_EXP": wexp, "W_MANT": wmant}
-        build_dir = ROOT / "sim_build" / f"exp{wexp}_mant{wmant}"
+        if iter_mode:
+            params["ITER_DIVSQRT"] = 1
+        build_dir = ROOT / "sim_build" / (
+            f"exp{wexp}_mant{wmant}" + ("_iter" if iter_mode else ""))
         env = _sim_env(tests_dir, wexp, wmant)
         print(f"=== width W_EXP={wexp} W_MANT={wmant} ===", flush=True)
         runner = get_runner("verilator")
