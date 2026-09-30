@@ -73,6 +73,8 @@ tests/
   exhaustive.py       Driver: reference expected vectors + build/run exhaustive
   soak_main.cpp       Standalone Verilator C++ harness (fast random soak)
   soak.py             Driver: seeded random soak at medium widths (make soak)
+  latency_main.cpp    Per-op in_valid -> out_valid cycle-count harness
+  latency.py          Driver: per-format latency table (make metrics-latency)
 formal/
   fp_m6_props.sv      Formal properties: comparison/totalOrder/roundToIntegral
   fp_m6_props_e8m0.sv Formal properties for the E8M0 M6 datapaths
@@ -673,11 +675,49 @@ optimization captures `metrics/area-after*.json` and diffs with
   failing endpoints, 6994 LUTs, 2625 FFs, 0 DSPs. The harnesses assert
   constant per-op latency on every vector; fp_exp_seq was re-sequenced to
   issue one operation at a time and wait for out_valid (~110 cycles per exp).
-- Still open: FMA margin is thin (+0.022 ns; split the F5 subnormal path for
-  more headroom if the board differs), `fp_fma`'s `ACC_W = 3*S_W+6`
-  accumulator width (needs an exactness proof), operand isolation/clock
-  gating for power (needs a toggle power proxy), and the E8M0 module
-  duplication (E8M0 ops remain 1-cycle combinational).
+- Landed (latency pass, 250 MHz re-closed on xcvu9p-flga2104-2L-e): the
+  fixed per-op latencies were cut while every stage stays inside the 4.000 ns
+  clock. New latencies (binary32): add/sub/mul 4, fma 8, div/sqrt 17, rndint
+  2, min/max/cmp/totalOrder 1 (binary64: mul 5, fma 9, div/sqrt 31; binary16
+  div/sqrt 10; E8M0 stays 1 cycle). Changes:
+  * add/sub 5 -> 4: normalize and round/encode are fused into one stage; the
+    subnormal candidate is shifted directly from the pre-normalization sum by
+    (e_max - EMIN), which is independent of the leading-one position, and is
+    computed/registered in the add stage, so the normalize/round stage only
+    carries the normal path.
+  * mul 5 -> 4 (W <= 32): fp_mul_core uses 2 stages for W <= 32 (the final
+    carry-propagate level is folded into the last tree stage) and keeps 3 for
+    binary64; FMA inherits the shorter core (8 cycles for W <= 32, 9 for
+    binary64).
+  * div/sqrt: one radix-4 digit per cycle (the digit-select compare, the
+    multiple mux and the remainder subtraction are fused into one registered
+    step) plus a publish cycle: latency K+4 with K = ceil((W_MANT+3)/2)
+    (binary32 29 -> 17, binary64 57 -> 31). The restoring recurrence is
+    unchanged, so bit-exactness is structural. The publish cycle rounds the
+    *registered* quotient/root and remainder: reading the step's next-state
+    values (q_b/rem_b) re-enters the digit-step path in static timing and cost
+    ~1 ns of slack in the first attempt.
+  * roundToIntegral 3 -> 2 (prepare/GRS/round fused); min/max/cmp/totalOrder
+    2 -> 1 (compare/select + a single register stage).
+  * New `tests/latency.py` + `tests/latency_main.cpp` (`make metrics-latency`):
+    per-op in_valid -> out_valid cycle probe over normal/subnormal/zero/inf/
+    NaN vectors; asserts a constant per-op latency and writes
+    metrics/latency-after.json (baseline: metrics/latency-before.json).
+  Measured: WNS +0.001 ns, 0 failing endpoints (3044), 6974 LUTs, 2301
+  registers, 0 DSPs. The critical path is now the add pipe's
+  normalize/round/encode stage (13 levels, 1 CARRY8, 69% routing); the former
+  FMA path is no longer critical. Verified after the pass: `make regress`,
+  `make regress-all` (8 widths), `make regress-axilite`, `make exhaustive-iter`
+  (all 7 eight-bit formats, 25.2M vectors), `make soak-iter` (15M vectors at
+  binary16/BF16/E4M3), plus the latency probe; every op keeps a constant
+  per-op latency across the streams.
+- Still open: the add normalize/round stage is the new critical path with a
+  thin +0.001 ns margin, so further latency cuts (3-cycle add/mul) would need
+  a restructured datapath (leading-zero anticipation / far-near split, or a
+  carry-save multiplier core) and a re-timing of that stage; `fp_fma`'s
+  `ACC_W = 3*S_W+6` accumulator width (needs an exactness proof);
+  operand isolation/clock gating for power (needs a toggle power proxy), and
+  the E8M0 module duplication (E8M0 ops remain 1-cycle combinational).
 
 ### Known limitations
 

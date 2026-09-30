@@ -1,16 +1,17 @@
-// Pipelined IEEE 754-2019 addition / subtraction (5 stages).
+// Pipelined IEEE 754-2019 addition / subtraction (4 stages).
 //
 // Semantics are bit-identical to fp_add.sv (same special cases, alignment,
 // GRS rounding, subnormal path, overflow/underflow rules); the datapath is
-// split into five registered stages so each stage has a short critical path:
+// split into four registered stages so each stage has a short critical path:
 //
 //   S1  unpack, classification, special cases, significands, exponents
 //   S2  align to the larger exponent (barrel shift) + sticky capture
-//   S3  sign-magnitude add / subtract
-//   S4  normalize (leading-one search + shift)
-//   S5  GRS rounding (normal + subnormal), overflow/underflow, encode
+//   S3  sign-magnitude add / subtract; subnormal placement (single shift of
+//       the pre-normalization sum, registered here)
+//   S4  normalize (leading-one search + shift), GRS rounding (normal +
+//       subnormal), overflow/underflow, encode
 //
-// Fixed latency: 5 cycles from `start` to `out_valid` for every input.
+// Fixed latency: 4 cycles from `start` to `out_valid` for every input.
 
 /* verilator lint_off WIDTHEXPAND */
 /* verilator lint_off WIDTHTRUNC */
@@ -42,7 +43,7 @@ module fp_add_pipe #(
   localparam int TARGET  = S_W + 2;              // MSB position of aligned significand
   localparam int FW      = S_W + 3;              // aligned fixed-point width
   localparam int SUM_W   = FW + 1;               // aligned sum width (carry bit)
-  localparam int NORM_W  = SUM_W + TARGET;       // normalized result width
+  localparam int NORM_W  = TARGET + 1;           // normalized result width (bits 0..TARGET)
   localparam int EXP_ALL = (1 << W_EXP) - 1;     // all-ones exponent field
   localparam int EXP_MAXF = (1 << W_EXP) - 2;    // exponent field of the largest finite
   localparam logic [MANT_W-1:0] QUIET = (MANT_W)'(1) << (MANT_W - 1);
@@ -293,6 +294,32 @@ module fp_add_pipe #(
   logic [2:0]       rm_s3;
   logic             v3;
 
+  // Subnormal placement, computed in the add stage and registered with the
+  // magnitude: the total shift applied to the pre-normalization sum by the
+  // subnormal path is (TARGET - p0) + (EMIN - e_res) = e_max - EMIN, which is
+  // independent of the leading-one position p0. Shifting the sum directly
+  // (instead of the normalized value) removes the lpos -> normalize-shift
+  // dependency from the subnormal path. sshift >= 0 shifts left (nothing
+  // dropped); sshift < 0 shifts right with the dropped bits accumulated into
+  // the sticky.
+  logic [NORM_W-1:0] sub_s3;
+  logic              sub_sticky_s3;
+  always_comb begin
+    int signed sshift;
+    sshift = int'(e_max_s2) - EMIN;
+    if (sshift >= 0) begin
+      sub_s3        = (NORM_W)'((mag_s3) << sshift);
+      sub_sticky_s3 = sticky_s2r;
+    end else begin
+      sub_s3        = (NORM_W)'((mag_s3) >> (-sshift));
+      sub_sticky_s3 = sticky_s2r
+                    | |(mag_s3 << ((-sshift >= SUM_W) ? 0 : (SUM_W + sshift)));
+    end
+  end
+
+  logic [NORM_W-1:0] sub_s3r;
+  logic              sub_sticky_s3r;
+
   always_ff @(posedge clk) begin
     if (!rst_n) begin
       mag_s3r          <= '0;
@@ -305,6 +332,8 @@ module fp_add_pipe #(
       special_s3       <= 1'b0;
       rm_s3            <= 3'd0;
       v3               <= 1'b0;
+      sub_s3r          <= '0;
+      sub_sticky_s3r   <= 1'b0;
     end else begin
       mag_s3r          <= mag_s3;
       rsign_s3r        <= rsign_s3;
@@ -316,11 +345,14 @@ module fp_add_pipe #(
       special_s3       <= special_s2;
       rm_s3            <= rm_s2;
       v3               <= v2;
+      sub_s3r          <= sub_s3;
+      sub_sticky_s3r   <= sub_sticky_s3;
     end
   end
 
   // ============================================================ stage 4
-  // normalize: leading-one position of the magnitude
+  // normalize + round/encode. Stages: S1 unpack, S2 align, S3 add/sub,
+  // S4 normalize (leading-one + shift) and GRS rounding/encoding.
   function automatic int unsigned lpos(input logic [SUM_W-1:0] x);
     lpos = 0;
     for (int i = 0; i < SUM_W; i++)
@@ -335,54 +367,20 @@ module fp_add_pipe #(
     p0_s4 = int'(lpos(mag_s3r));
     norm_sticky_s4 = align_sticky_s3r;  // sticky bits lost during operand alignment
     if (p0_s4 > TARGET) begin
-      norm_s4 = {(NORM_W-SUM_W+1)'(1'b0), mag_s3r} >> 1;
+      norm_s4 = (NORM_W)'(mag_s3r >> 1);
       norm_sticky_s4 = norm_sticky_s4 | mag_s3r[0];
       e_res_s4 = (W_EXP+4)'(e_max_s3) + 1;
     end else if (p0_s4 < TARGET) begin
-      norm_s4 = {(NORM_W-SUM_W)'(1'b0), mag_s3r} << (TARGET - p0_s4);
+      norm_s4 = (NORM_W)'(mag_s3r) << (TARGET - p0_s4);
       e_res_s4 = (W_EXP+4)'(e_max_s3) + (W_EXP+4)'($signed(p0_s4) - TARGET);
     end else begin
-      norm_s4 = {(NORM_W-SUM_W)'(1'b0), mag_s3r};
+      norm_s4 = (NORM_W)'(mag_s3r);
       e_res_s4 = (W_EXP+4)'(e_max_s3);
     end
   end
 
-  logic [NORM_W-1:0]    norm_s4r;
-  logic                 norm_sticky_s4r;
-  logic signed [W_EXP+3:0] e_res_s4r;
-  logic                 rsign_s4;
-  logic [W-1:0]         y_special_s4;
-  logic [4:0]           flags_special_s4;
-  logic                 special_s4;
-  logic [2:0]           rm_s4;
-  logic                 v4;
-
-  always_ff @(posedge clk) begin
-    if (!rst_n) begin
-      norm_s4r         <= '0;
-      norm_sticky_s4r  <= 1'b0;
-      e_res_s4r        <= '0;
-      rsign_s4         <= 1'b0;
-      y_special_s4     <= '0;
-      flags_special_s4 <= 5'd0;
-      special_s4       <= 1'b0;
-      rm_s4            <= 3'd0;
-      v4               <= 1'b0;
-    end else begin
-      norm_s4r         <= norm_s4;
-      norm_sticky_s4r  <= norm_sticky_s4;
-      e_res_s4r        <= e_res_s4;
-      rsign_s4         <= rsign_s3r;
-      y_special_s4     <= y_special_s3;
-      flags_special_s4 <= flags_special_s3;
-      special_s4       <= special_s3;
-      rm_s4            <= rm_s3;
-      v4               <= v3;
-    end
-  end
-
-  // ============================================================ stage 5
-  // rounding (normal + subnormal) and result encoding
+  // ============================================================ rounding
+  // (normal + subnormal) and result encoding, fused into stage 4.
   logic [S_W-1:0] sig;
   logic           g, r, s_bit, lsb, inexact, round_up, carry;
   /* verilator lint_off UNUSEDSIGNAL */
@@ -393,43 +391,43 @@ module fp_add_pipe #(
   logic [4:0]     flags_normal;
   always_comb begin
     logic [W_EXP-1:0] exp_fld;
-    sig     = norm_s4r[TARGET -: S_W];
-    g       = norm_s4r[2];
-    r       = norm_s4r[1];
-    s_bit   = norm_s4r[0] | norm_sticky_s4r;
+    sig     = norm_s4[TARGET -: S_W];
+    g       = norm_s4[2];
+    r       = norm_s4[1];
+    s_bit   = norm_s4[0] | norm_sticky_s4;
     lsb     = sig[0];
     inexact = g | r | s_bit;
-    case (rm_s4)
+    case (rm_s3)
       fp_pkg::RM_RNE: round_up = g & (r | s_bit) | (g & ~r & ~s_bit & lsb);
       fp_pkg::RM_RNA: round_up = g;
       fp_pkg::RM_RZ:  round_up = 1'b0;
-      fp_pkg::RM_RP:  round_up = ~rsign_s4 & inexact;
-      fp_pkg::RM_RM:  round_up = rsign_s4 & inexact;
+      fp_pkg::RM_RP:  round_up = ~rsign_s3r & inexact;
+      fp_pkg::RM_RM:  round_up = rsign_s3r & inexact;
       default:        round_up = 1'b0;
     endcase
     carry = round_up && (sig == {S_W{1'b1}});
     if (carry) begin
       sig_rnd = {1'b1, {W_MANT{1'b0}}};
-      e_rnd   = e_res_s4r + 1;
+      e_rnd   = e_res_s4 + 1;
     end else begin
       sig_rnd = sig + { {S_W-1{1'b0}}, round_up };
-      e_rnd   = e_res_s4r;
+      e_rnd   = e_res_s4;
     end
     exp_fld = e_rnd[W_EXP-1:0] + BIAS[W_EXP-1:0];
     if ($signed(e_rnd) > EMAX_S) begin
-      case (rm_s4)
+      case (rm_s3)
         fp_pkg::RM_RNE,
-        fp_pkg::RM_RNA: y_normal = {rsign_s4, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
-        fp_pkg::RM_RZ:  y_normal = {rsign_s4, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
-        fp_pkg::RM_RP:  y_normal = rsign_s4 ? {1'b1, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}}
+        fp_pkg::RM_RNA: y_normal = {rsign_s3r, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
+        fp_pkg::RM_RZ:  y_normal = {rsign_s3r, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
+        fp_pkg::RM_RP:  y_normal = rsign_s3r ? {1'b1, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}}
                                             : {1'b0, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
-        fp_pkg::RM_RM:  y_normal = rsign_s4 ? {1'b1, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}}
+        fp_pkg::RM_RM:  y_normal = rsign_s3r ? {1'b1, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}}
                                             : {1'b0, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
-        default:        y_normal = {rsign_s4, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
+        default:        y_normal = {rsign_s3r, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
       endcase
       flags_normal = (1 << fp_pkg::FLAG_OVERFLOW) | (1 << fp_pkg::FLAG_INEXACT);
     end else begin
-      y_normal = {rsign_s4, exp_fld, sig_rnd[MANT_W-1:0]};
+      y_normal = {rsign_s3r, exp_fld, sig_rnd[MANT_W-1:0]};
       flags_normal = inexact ? (1 << fp_pkg::FLAG_INEXACT) : 5'd0;
     end
   end
@@ -439,55 +437,47 @@ module fp_add_pipe #(
   generate
     if (W_MANT > 0) begin : g_subnormal
       always_comb begin
-        int signed          shift;
-        /* verilator lint_off UNUSEDSIGNAL */
-        logic [NORM_W-1:0]  shifted;
-        /* verilator lint_on UNUSEDSIGNAL */
         logic [S_W-1:0]     sig_s;
         logic               gs, rs, ss, inexact_s, up_s;
         logic [S_W-1:0]     sig_s2;
-        shift = int'(EMIN - int'(e_res_s4r));
-        if (shift > 0) shifted = norm_s4r >> shift;
-        else           shifted = '0;
-        sig_s  = shifted[TARGET -: S_W];
-        gs     = shifted[2];
-        rs     = shifted[1];
-        ss     = shifted[0] | norm_sticky_s4r
-               | |(norm_s4r & (((NORM_W)'(1) << (shift > 0 ? shift : 0)) - 1));
+        sig_s  = sub_s3r[TARGET -: S_W];
+        gs     = sub_s3r[2];
+        rs     = sub_s3r[1];
+        ss     = sub_s3r[0] | sub_sticky_s3r;
         inexact_s = gs | rs | ss;
-        case (rm_s4)
+        case (rm_s3)
           fp_pkg::RM_RNE: up_s = gs & (rs | ss) | (gs & ~rs & ~ss & sig_s[0]);
           fp_pkg::RM_RNA: up_s = gs;
           fp_pkg::RM_RZ:  up_s = 1'b0;
-          fp_pkg::RM_RP:  up_s = ~rsign_s4 & inexact_s;
-          fp_pkg::RM_RM:  up_s = rsign_s4 & inexact_s;
+          fp_pkg::RM_RP:  up_s = ~rsign_s3r & inexact_s;
+          fp_pkg::RM_RM:  up_s = rsign_s3r & inexact_s;
           default:        up_s = 1'b0;
         endcase
         sig_s2 = sig_s + { {S_W-1{1'b0}}, up_s };
         if (sig_s2 == {1'b1, {W_MANT{1'b0}}}) begin
           if (EMIN > EMAX &&
-              ((gs && rs) || (rm_s4 == fp_pkg::RM_RP && ~rsign_s4 && gs)
-                         || (rm_s4 == fp_pkg::RM_RM && rsign_s4 && gs))) begin
-            case (rm_s4)
+              ((gs && rs) || (rm_s3 == fp_pkg::RM_RP && ~rsign_s3r && gs)
+                         || (rm_s3 == fp_pkg::RM_RM && rsign_s3r && gs))) begin
+            case (rm_s3)
               fp_pkg::RM_RNE,
-              fp_pkg::RM_RNA: y_sub = {rsign_s4, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
-              fp_pkg::RM_RZ:  y_sub = {rsign_s4, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
-              fp_pkg::RM_RP:  y_sub = rsign_s4 ? {1'b1, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}}
+              fp_pkg::RM_RNA: y_sub = {rsign_s3r, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
+              fp_pkg::RM_RZ:  y_sub = {rsign_s3r, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
+              fp_pkg::RM_RP:  y_sub = rsign_s3r ? {1'b1, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}}
                                                : {1'b0, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
-              fp_pkg::RM_RM:  y_sub = rsign_s4 ? {1'b1, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}}
+              fp_pkg::RM_RM:  y_sub = rsign_s3r ? {1'b1, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}}
                                                : {1'b0, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
-              default:        y_sub = {rsign_s4, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
+              default:        y_sub = {rsign_s3r, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
             endcase
             flags_sub = (1 << fp_pkg::FLAG_OVERFLOW) | (1 << fp_pkg::FLAG_INEXACT);
           end else begin
-            y_sub = {rsign_s4, {W_EXP-1{1'b0}}, 1'b1, {W_MANT{1'b0}}};
+            y_sub = {rsign_s3r, {W_EXP-1{1'b0}}, 1'b1, {W_MANT{1'b0}}};
             flags_sub = inexact_s ? (1 << fp_pkg::FLAG_INEXACT) : 5'd0;
           end
         end else if (sig_s2 == '0) begin
-          y_sub = {rsign_s4, {W_EXP{1'b0}}, {W_MANT{1'b0}}};
+          y_sub = {rsign_s3r, {W_EXP{1'b0}}, {W_MANT{1'b0}}};
           flags_sub = inexact_s ? (1 << fp_pkg::FLAG_INEXACT) : 5'd0;
         end else begin
-          y_sub = {rsign_s4, {W_EXP{1'b0}}, sig_s2[MANT_W-1:0]};
+          y_sub = {rsign_s3r, {W_EXP{1'b0}}, sig_s2[MANT_W-1:0]};
           flags_sub = 5'd0;
           if (inexact_s) begin
             flags_sub[fp_pkg::FLAG_UNDERFLOW] = 1'b1;
@@ -496,24 +486,24 @@ module fp_add_pipe #(
         end
       end
     end else begin : g_no_subnormal
-      assign y_sub     = {rsign_s4, {W_EXP{1'b0}}};
+      assign y_sub     = {rsign_s3r, {W_EXP{1'b0}}};
       assign flags_sub = 5'd0;
     end
   endgenerate
 
   logic [W-1:0] y_cancel;
-  assign y_cancel = {(rm_s4 == fp_pkg::RM_RM), {W_EXP{1'b0}}, {W_MANT{1'b0}}};
+  assign y_cancel = {(rm_s3 == fp_pkg::RM_RM), {W_EXP{1'b0}}, {W_MANT{1'b0}}};
 
   logic [W-1:0] y_comb;
   logic [4:0]   flags_comb;
   always_comb begin
-    if (special_s4) begin
-      y_comb     = y_special_s4;
-      flags_comb = flags_special_s4;
+    if (special_s3) begin
+      y_comb     = y_special_s3;
+      flags_comb = flags_special_s3;
     end else if (cancel_s3r) begin
       y_comb     = y_cancel;
       flags_comb = 5'd0;
-    end else if ($signed(e_res_s4r) >= EMIN_S) begin
+    end else if ($signed(e_res_s4) >= EMIN_S) begin
       y_comb     = y_normal;
       flags_comb = flags_normal;
     end else begin
@@ -530,7 +520,7 @@ module fp_add_pipe #(
     end else begin
       y         <= y_comb;
       flags     <= flags_comb;
-      out_valid <= v4;
+      out_valid <= v3;
     end
   end
 

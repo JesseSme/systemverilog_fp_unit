@@ -1,7 +1,7 @@
-// Pipelined IEEE 754-2019 quiet comparison (2 stages).
+// Pipelined IEEE 754-2019 quiet comparison (1 stage).
 //
 // Same semantics as fp_cmp.sv: 2-bit condition code on `cmp`, y driven to 0.
-// Fixed latency: 2 cycles from `start` to `out_valid`.
+// Fixed latency: 1 cycle from `start` to `out_valid`.
 
 /* verilator lint_off WIDTHEXPAND */
 /* verilator lint_off WIDTHTRUNC */
@@ -99,6 +99,7 @@ module fp_cmp_pipe #(
   logic [1:0]   cmp_s1;
   logic [4:0]   flags_s1;
   logic         v1;
+
   always_ff @(posedge clk) begin
     if (!rst_n) begin
       y_s1     <= '0;
@@ -113,18 +114,9 @@ module fp_cmp_pipe #(
     end
   end
 
-  always_ff @(posedge clk) begin
-    if (!rst_n) begin
-      y         <= '0;
-      cmp       <= 2'd0;
-      flags     <= 5'd0;
-      out_valid <= 1'b0;
-    end else begin
-      y         <= y_s1;
-      cmp       <= cmp_s1;
-      flags     <= flags_s1;
-      out_valid <= v1;
-    end
-  end
+  assign y         = y_s1;
+  assign cmp       = cmp_s1;
+  assign flags     = flags_s1;
+  assign out_valid = v1;
 
 endmodule

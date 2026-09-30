@@ -1,8 +1,8 @@
-// Pipelined IEEE 754-2019 minimum / maximum (2 stages).
+// Pipelined IEEE 754-2019 minimum / maximum (1 stage).
 //
-// Same semantics as fp_minmax.sv. Stage 1 computes the ordering keys,
-// comparisons, NaN/special handling and the selected result; stage 2 is the
-// output register. Fixed latency: 2 cycles from `start` to `out_valid`.
+// Same semantics as fp_minmax.sv. The ordering keys, comparisons, NaN/special
+// handling and the selected result are registered once; out_valid is that
+// register's valid bit. Fixed latency: 1 cycle from `start` to `out_valid`.
 
 /* verilator lint_off WIDTHEXPAND */
 /* verilator lint_off WIDTHTRUNC */
@@ -94,6 +94,7 @@ module fp_minmax_pipe #(
   logic [W-1:0] y_s1;
   logic [4:0]   flags_s1;
   logic         v1;
+
   always_ff @(posedge clk) begin
     if (!rst_n) begin
       y_s1     <= '0;
@@ -106,16 +107,8 @@ module fp_minmax_pipe #(
     end
   end
 
-  always_ff @(posedge clk) begin
-    if (!rst_n) begin
-      y         <= '0;
-      flags     <= 5'd0;
-      out_valid <= 1'b0;
-    end else begin
-      y         <= y_s1;
-      flags     <= flags_s1;
-      out_valid <= v1;
-    end
-  end
+  assign y         = y_s1;
+  assign flags     = flags_s1;
+  assign out_valid = v1;
 
 endmodule

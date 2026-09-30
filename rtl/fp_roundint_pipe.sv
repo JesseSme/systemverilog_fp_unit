@@ -1,11 +1,12 @@
-// Pipelined IEEE 754-2019 roundToIntegral (3 stages).
+// Pipelined IEEE 754-2019 roundToIntegral (2 stages).
 //
 // Same semantics as fp_roundint.sv. Stages:
-//   S1  unpack, classification, special cases, M/e0 decomposition
-//   S2  fractional-bit (GRS) extraction at the binary point + rounding increment
-//   S3  re-encode the rounded integer (normal/subnormal/overflow) + result mux
+//   S1  unpack, classification, special cases, M/e0 decomposition, the
+//       fractional-bit (GRS) extraction at the binary point and the rounding
+//       increment (merged into one stage)
+//   S2  re-encode the rounded integer (normal/subnormal/overflow) + result mux
 //
-// Fixed latency: 3 cycles from `start` to `out_valid`.
+// Fixed latency: 2 cycles from `start` to `out_valid`.
 
 /* verilator lint_off WIDTHEXPAND */
 /* verilator lint_off WIDTHTRUNC */
@@ -84,9 +85,46 @@ module fp_roundint_pipe #(
     end
   end
 
+  // ============================================================ stage S1
+  // unpack/classification fused with the fractional GRS extraction, the
+  // rounding increment and the context latch (one registered stage): the
+  // pipeline is S1 prepare+round, S2 re-encode.
+  logic [S_W-1:0] int_part_s1;
+  always_comb begin
+    int             k;
+    logic [S_W-1:0] int_part;
+    logic           g, r, s_bit, inexact, up;
+    int_part = '0;
+    k = 0;
+    g = 1'b0; r = 1'b0; s_bit = 1'b0; inexact = 1'b0; up = 1'b0;
+    int_part_s1 = '0;
+    if ($signed(e0) < 0) begin
+      k = int'(-e0);
+      if (k > S_W) begin
+        s_bit = |M;
+      end else begin
+        int_part = M >> k;
+        g = M[k-1];
+        if (k >= 2) r = M[k-2];
+        s_bit = |(M & (((S_W)'(1) << (k >= 3 ? k - 2 : 0)) - 1));
+      end
+      inexact = g | r | s_bit;
+      case (rm)
+        fp_pkg::RM_RNE: up = g & (r | s_bit) | (g & ~r & ~s_bit & int_part[0]);
+        fp_pkg::RM_RNA: up = g;
+        fp_pkg::RM_RZ:  up = 1'b0;
+        fp_pkg::RM_RP:  up = ~a_sign & inexact;
+        fp_pkg::RM_RM:  up = a_sign & inexact;
+        default:        up = 1'b0;
+      endcase
+      int_part = int_part + { {S_W-1{1'b0}}, up };
+    end
+    int_part_s1 = int_part;
+  end
+
+  logic [S_W-1:0]          int_part_s1r;
   logic [W-1:0]            a_s1;
   logic                    a_sign_s1;
-  logic [S_W-1:0]          M_s1;
   logic signed [W_EXP+3:0] e0_s1;
   logic [2:0]              rm_s1;
   logic [W-1:0]            y_special_s1;
@@ -96,9 +134,9 @@ module fp_roundint_pipe #(
 
   always_ff @(posedge clk) begin
     if (!rst_n) begin
+      int_part_s1r     <= '0;
       a_s1             <= '0;
       a_sign_s1        <= 1'b0;
-      M_s1             <= '0;
       e0_s1            <= '0;
       rm_s1            <= 3'd0;
       y_special_s1     <= '0;
@@ -106,9 +144,9 @@ module fp_roundint_pipe #(
       special_s1       <= 1'b0;
       v1               <= 1'b0;
     end else begin
+      int_part_s1r     <= int_part_s1;
       a_s1             <= a;
       a_sign_s1        <= a_sign;
-      M_s1             <= M;
       e0_s1            <= e0;
       rm_s1            <= rm;
       y_special_s1     <= y_special;
@@ -119,104 +157,36 @@ module fp_roundint_pipe #(
   end
 
   // ============================================================ stage S2
-  logic [S_W-1:0] int_part_s2;
-  always_comb begin
-    int             k;
-    logic [S_W-1:0] int_part;
-    logic           g, r, s_bit, inexact, up;
-    int_part = '0;
-    k = 0;
-    g = 1'b0; r = 1'b0; s_bit = 1'b0; inexact = 1'b0; up = 1'b0;
-    int_part_s2 = '0;
-    if ($signed(e0_s1) < 0) begin
-      k = int'(-e0_s1);
-      if (k > S_W) begin
-        s_bit = |M_s1;
-      end else begin
-        int_part = M_s1 >> k;
-        g = M_s1[k-1];
-        if (k >= 2) r = M_s1[k-2];
-        s_bit = |(M_s1 & (((S_W)'(1) << (k >= 3 ? k - 2 : 0)) - 1));
-      end
-      inexact = g | r | s_bit;
-      case (rm_s1)
-        fp_pkg::RM_RNE: up = g & (r | s_bit) | (g & ~r & ~s_bit & int_part[0]);
-        fp_pkg::RM_RNA: up = g;
-        fp_pkg::RM_RZ:  up = 1'b0;
-        fp_pkg::RM_RP:  up = ~a_sign_s1 & inexact;
-        fp_pkg::RM_RM:  up = a_sign_s1 & inexact;
-        default:        up = 1'b0;
-      endcase
-      int_part = int_part + { {S_W-1{1'b0}}, up };
-    end
-    int_part_s2 = int_part;
-  end
-
-  logic [S_W-1:0]          int_part_s2r;
-  logic [W-1:0]            a_s2;
-  logic                    a_sign_s2;
-  logic signed [W_EXP+3:0] e0_s2;
-  logic [2:0]              rm_s2;
-  logic [W-1:0]            y_special_s2;
-  logic [4:0]              flags_special_s2;
-  logic                    special_s2;
-  logic                    v2;
-
-  always_ff @(posedge clk) begin
-    if (!rst_n) begin
-      int_part_s2r     <= '0;
-      a_s2             <= '0;
-      a_sign_s2        <= 1'b0;
-      e0_s2            <= '0;
-      rm_s2            <= 3'd0;
-      y_special_s2     <= '0;
-      flags_special_s2 <= 5'd0;
-      special_s2       <= 1'b0;
-      v2               <= 1'b0;
-    end else begin
-      int_part_s2r     <= int_part_s2;
-      a_s2             <= a_s1;
-      a_sign_s2        <= a_sign_s1;
-      e0_s2            <= e0_s1;
-      rm_s2            <= rm_s1;
-      y_special_s2     <= y_special_s1;
-      flags_special_s2 <= flags_special_s1;
-      special_s2       <= special_s1;
-      v2               <= v1;
-    end
-  end
-
-  // ============================================================ stage S3
-  logic [W-1:0] y_fin_s3;
-  logic [4:0]   flags_fin_s3;
+  logic [W-1:0] y_fin_s2;
+  logic [4:0]   flags_fin_s2;
   always_comb begin
     int ey;
-    y_fin_s3   = '0;
-    flags_fin_s3 = 5'd0;
+    y_fin_s2   = '0;
+    flags_fin_s2 = 5'd0;
     ey = 0;
-    if (int_part_s2r == '0) begin
-      y_fin_s3 = {a_sign_s2, {W_EXP{1'b0}}, {W_MANT{1'b0}}};
+    if (int_part_s1r == '0) begin
+      y_fin_s2 = {a_sign_s1, {W_EXP{1'b0}}, {W_MANT{1'b0}}};
     end else begin
       for (int i = 0; i < S_W; i++)
-        if (int_part_s2r[i]) ey = i;
+        if (int_part_s1r[i]) ey = i;
       if (ey > EMAX) begin
-        case (rm_s2)
+        case (rm_s1)
           fp_pkg::RM_RNE,
-          fp_pkg::RM_RNA: y_fin_s3 = {a_sign_s2, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
-          fp_pkg::RM_RZ:  y_fin_s3 = {a_sign_s2, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
-          fp_pkg::RM_RP:  y_fin_s3 = a_sign_s2 ? {1'b1, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}}
+          fp_pkg::RM_RNA: y_fin_s2 = {a_sign_s1, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
+          fp_pkg::RM_RZ:  y_fin_s2 = {a_sign_s1, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
+          fp_pkg::RM_RP:  y_fin_s2 = a_sign_s1 ? {1'b1, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}}
                                                : {1'b0, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
-          fp_pkg::RM_RM:  y_fin_s3 = a_sign_s2 ? {1'b1, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}}
+          fp_pkg::RM_RM:  y_fin_s2 = a_sign_s1 ? {1'b1, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}}
                                                : {1'b0, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
-          default:        y_fin_s3 = {a_sign_s2, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
+          default:        y_fin_s2 = {a_sign_s1, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
         endcase
-        flags_fin_s3 = (1 << fp_pkg::FLAG_OVERFLOW) | (1 << fp_pkg::FLAG_INEXACT);
+        flags_fin_s2 = (1 << fp_pkg::FLAG_OVERFLOW) | (1 << fp_pkg::FLAG_INEXACT);
       end else if (ey >= EMIN) begin
-        y_fin_s3 = {a_sign_s2, (W_EXP)'(ey + BIAS),
-                    (MANT_W)'((int_part_s2r - ((S_W)'(1) << ey)) << (W_MANT - ey))};
+        y_fin_s2 = {a_sign_s1, (W_EXP)'(ey + BIAS),
+                    (MANT_W)'((int_part_s1r - ((S_W)'(1) << ey)) << (W_MANT - ey))};
       end else begin
-        y_fin_s3 = {a_sign_s2, {W_EXP{1'b0}},
-                    (MANT_W)'(int_part_s2r) << (W_MANT - EMIN)};
+        y_fin_s2 = {a_sign_s1, {W_EXP{1'b0}},
+                    (MANT_W)'(int_part_s1r) << (W_MANT - EMIN)};
       end
     end
   end
@@ -227,17 +197,17 @@ module fp_roundint_pipe #(
       flags     <= 5'd0;
       out_valid <= 1'b0;
     end else begin
-      if (special_s2) begin
-        y     <= y_special_s2;
-        flags <= flags_special_s2;
-      end else if ($signed(e0_s2) >= 0) begin
-        y     <= a_s2;  // already integral: returned unchanged
+      if (special_s1) begin
+        y     <= y_special_s1;
+        flags <= flags_special_s1;
+      end else if ($signed(e0_s1) >= 0) begin
+        y     <= a_s1;  // already integral: returned unchanged
         flags <= 5'd0;
       end else begin
-        y     <= y_fin_s3;
-        flags <= flags_fin_s3;
+        y     <= y_fin_s2;
+        flags <= flags_fin_s2;
       end
-      out_valid <= v2;
+      out_valid <= v1;
     end
   end
 
