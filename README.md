@@ -73,32 +73,53 @@ support (3.3) and the five exception flags (7.2-7.6, including divide-by-zero
   modules coexist (see the HANDOFF notes). The RTL is verified bit-exact by
   the regression and the exhaustive sweep regardless.
 
-## Optimization: iterative div/sqrt (`ITER_DIVSQRT`)
+## Optimization: iterative radix-4 div/sqrt (`ITER_DIVSQRT`)
 
 `fp_unit` takes a third parameter `ITER_DIVSQRT` (default 0). With
 `ITER_DIVSQRT = 1` (W_MANT > 0) the combinational `fp_div`/`fp_sqrt` datapaths
 are replaced by the shared multi-cycle engine `fp_divsqrt_iter`, which
-produces one quotient bit (division) or one root bit per two radicand bits
-(sqrt) per cycle using a single adder/subtractor. Semantics are bit-exact with
-the combinational modules (verified by the exhaustive 8-bit sweeps and the
+produces two quotient/root bits per cycle (radix-4 restoring recurrence) using
+one small adder/subtractor and a compare tree. Semantics are bit-exact with the
+combinational modules (verified by the exhaustive 8-bit sweeps and the
 medium-width soaks in `--iter` mode).
 
-Handshake: pulse `in_valid` together with a/b/c/mode/rm (ignored while the
-engine is busy); `out_valid` pulses one cycle with the registered `y`/`flags`.
-Single-cycle operations keep the original 1-cycle latency. The AXI-Lite
-wrapper takes the same parameter and waits on `out_valid`.
+The latency is **constant for every input** (including special cases):
+K+1 cycles with K = ceil((W_MANT+3)/2). The top two quotient/root bits are
+precomputed in the start cycle, and when W_MANT is odd the last cycle runs a
+radix-2 half-step, so the count never depends on the operands. A new
+transaction may start in the same cycle `out_valid` is visible (no dead
+cycle between back-to-back div/sqrt). Single-cycle operations keep the
+original 1-cycle latency.
+
+    format   div  sqrt  all other ops      (cycles from in_valid to out_valid)
+    E4M3       4     4        1
+    E5M2       3     3        1
+    BF16       6     6        1
+    binary16   7     7        1
+    binary32  14    14        1
+    binary64  28    28        1
+    E8M0       1     1        1  (engine not used)
+
+Handshake: pulse `in_valid` together with a/b/c/mode/rm; `out_valid` pulses one
+cycle with the registered `y`/`flags`. The AXI-Lite wrapper takes the same
+parameter and waits on `out_valid`, so variable bus wait states are not needed.
+The exhaustive/soak `--iter` harnesses assert these cycle counts on every
+vector (latency errors are reported separately from value mismatches).
 
 Measured with `make metrics-area` (yosys `synth -noabc`, generic-gate cells /
 longest topological path):
 
-    format   default cells  ITER cells   default ltp  ITER ltp
-    E4M3          9,437        7,913        165/160*      60
-    binary16     22,987       16,012        397/309*      68
-    BF16         17,698       13,534        251*          67
-    binary32     63,685       35,143        965/657*      78
+    format   default cells  ITER cells   default ltp     ITER ltp (engine)
+    E4M3          9,437        8,988        165/160*       60 (60)
+    binary16     22,987       17,776        397/309*       68 (68)
+    BF16         17,698       15,170        251*           67 (67)
+    binary32     63,685       38,988        965/657*      324 fp_fma (engine 94)
 
     * combinational fp_div / fp_sqrt (the largest contributor; fp_sqrt also
       dropped ~25-28% from taking its sticky bit from the isqrt remainder)
+    The radix-4 engine costs ~+11% over the first (radix-2) iterative version
+    but halves the div latency and keeps the critical path at fp_fma (324
+    levels) instead of fp_div (965).
 
 ## Semantics (bit-exact vs tests/reference)
 

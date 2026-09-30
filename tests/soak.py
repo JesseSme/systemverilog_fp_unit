@@ -197,8 +197,12 @@ def run(wexp: int, wmant: int, n: int, seed: int, keep: bool, iter_mode: bool) -
         _write_stamp(build_dir, "expected.stamp", want)
     binary = build(wexp, wmant, iter_mode)
     print(f"  running {binary} ...")
+    # Constant div/sqrt latency for the latency assertions (K+1 with
+    # K = ceil((W_MANT+3)/2); E8M0 never uses the iterative engine).
+    latency = 1 if wmant == 0 else (wmant + 3) // 2 + 1
     proc = subprocess.run([binary, expected, str(fmt.width), str(fma_c(fmt)),
-                           "1" if iter_mode else "0"],
+                           "1" if iter_mode else "0",
+                           str(latency) if iter_mode else "0"],
                           capture_output=True, text=True)
     sys.stderr.write(proc.stderr)
     return proc.returncode == 0

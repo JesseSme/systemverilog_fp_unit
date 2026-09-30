@@ -25,7 +25,7 @@
 
 int main(int argc, char** argv) {
     if (argc < 4) {
-        fprintf(stderr, "usage: %s <expected.bin> <width> <c> [iter]\n", argv[0]);
+        fprintf(stderr, "usage: %s <expected.bin> <width> <c> [iter] [divsqrt_cycles]\n", argv[0]);
         return 2;
     }
     const char* path = argv[1];
@@ -34,6 +34,9 @@ int main(int argc, char** argv) {
     // iter=1: fp_unit was built with ITER_DIVSQRT=1; div (op 3) and sqrt
     // (op 4) use the in_valid/busy/out_valid handshake.
     const int iter = (argc > 4) ? atoi(argv[4]) : 0;
+    // Expected constant div/sqrt latency (0 = do not check): K+1 with
+    // K = ceil((W_MANT+3)/2), supplied by the Python driver.
+    const int divsqrt_cycles = (argc > 5) ? atoi(argv[5]) : 0;
     const int A = 1 << w;  // values per operand
 
     Verilated::commandArgs(argc, argv);
@@ -49,6 +52,7 @@ int main(int argc, char** argv) {
 
     const uint64_t expected = 11 * 5ull * (uint64_t)A * (uint64_t)A;
     uint64_t errors = 0;
+    uint64_t lat_errors = 0;
     uint64_t total = 0;
     uint8_t exp_y = 0, exp_flags = 0, exp_cmp = 0;
     for (int op = 0; op < 11; op++) {
@@ -63,18 +67,23 @@ int main(int argc, char** argv) {
                     top->in_valid = 1;
                     top->clk = 0;
                     top->eval();  // combinational result settles (clk low)
-                    top->clk = 1;
-                    top->eval();  // posedge captures y/flags/cmp
-                    top->clk = 0;
-                    top->in_valid = 0;
-                    top->eval();
-                    if (iter && (op == 3 || op == 4)) {
-                        long guard = 0;
-                        while (!top->out_valid && guard++ < 1024) {
-                            top->clk = 1;
-                            top->eval();
-                            top->clk = 0;
-                            top->eval();
+                    int cycles = 0;
+                    do {
+                        top->clk = 1;
+                        top->eval();  // posedge captures y/flags/cmp / iterates
+                        top->clk = 0;
+                        top->eval();
+                        top->in_valid = 0;
+                        cycles++;
+                    } while (iter && (op == 3 || op == 4)
+                             && !top->out_valid && cycles < 1024);
+                    if (iter && divsqrt_cycles > 0) {
+                        const int want = (op == 3 || op == 4) ? divsqrt_cycles : 1;
+                        if (cycles != want) {
+                            if (lat_errors < 5)
+                                fprintf(stderr, "LATENCY op=%d: %d cycles, want %d\n",
+                                        op, cycles, want);
+                            lat_errors++;
                         }
                     }
                     const uint8_t y = top->y;
@@ -120,8 +129,8 @@ int main(int argc, char** argv) {
     }
     delete top;
 
-    fprintf(stderr, "EXHAUSTIVE %llu vectors: %s (%llu mismatches)\n",
-            (unsigned long long)total,
-            errors ? "FAIL" : "PASS", (unsigned long long)errors);
-    return errors ? 1 : 0;
+    fprintf(stderr, "EXHAUSTIVE %llu vectors: %s (%llu mismatches, %llu latency errors)\n",
+            (unsigned long long)total, (errors || lat_errors) ? "FAIL" : "PASS",
+            (unsigned long long)errors, (unsigned long long)lat_errors);
+    return (errors || lat_errors) ? 1 : 0;
 }

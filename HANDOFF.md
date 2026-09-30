@@ -641,9 +641,18 @@ optimization captures `metrics/area-after*.json` and diffs with
   re-assigns `e_res` per branch.
 - Landed: `ITER_DIVSQRT` (default 0), selecting the shared multi-cycle
   `fp_divsqrt_iter` engine in `fp_unit`/`fp_unit_axilite` with an
-  in_valid/out_valid handshake. binary32 unit: 63,685 -> 35,143 cells (-45%),
+  in_valid/out_valid handshake. binary32 unit: 63,685 -> 38,988 cells (-39%),
   critical path from fp_div's 965 levels to fp_fma's 324; the engine itself is
-  3,824 cells / ltp 78. Verified bit-exact by `tests/exhaustive.py --iter`
+  7,513 cells / ltp 94.
+- Landed: the engine is radix-4 (two quotient/root bits per cycle) with the
+  top digit precomputed in the start cycle and a radix-2 half-step for odd
+  W_MANT. The div/sqrt latency is CONSTANT for every input, including special
+  cases: K+1 cycles with K = ceil((W_MANT+3)/2) (binary32: 14, binary64: 28,
+  vs 52/29 and 110/58 before). The fp_unit output register is bypassed for
+  engine results and the engine accepts a new start in the done cycle, so
+  back-to-back div/sqrt have no dead cycle. The `--iter` harnesses now assert
+  these cycle counts on every vector (latency errors reported separately).
+  Verified bit-exact + constant-latency by `tests/exhaustive.py --iter`
   (all 7 eight-bit formats), `tests/soak.py --iter` (binary16/BF16/E4M3) and
   the AXI-Lite tests with `FP_ITER_DIVSQRT=1`.
 - Rejected after measurement: replacing `rem = num % b_al` with

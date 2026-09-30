@@ -27,13 +27,15 @@
 module fp_unit #(
   parameter int W_EXP  = 8,
   parameter int W_MANT = 23,
-  // Selects the shared iterative (multi-cycle) division/square-root engine
-  // (fp_divsqrt_iter) instead of the combinational fp_div/fp_sqrt datapaths.
-  // With ITER_DIVSQRT = 1 a div/sqrt transaction is started by pulsing
-  // in_valid (ignored while `busy`); `out_valid` pulses one cycle with the
-  // registered result. All other operations keep the 1-cycle registered
-  // output. Only supported for W_MANT > 0: E8M0 always uses the dedicated
-  // combinational datapaths.
+  // Selects the shared iterative (multi-cycle) radix-4 division/square-root
+  // engine (fp_divsqrt_iter) instead of the combinational fp_div/fp_sqrt
+  // datapaths. With ITER_DIVSQRT = 1 a div/sqrt transaction is started by
+  // pulsing in_valid (ignored while a transaction is in flight); `out_valid`
+  // pulses one cycle with the registered result, at a constant latency of
+  // K+1 cycles (K = ceil((W_MANT+3)/2)) for every input, including special
+  // cases. All other operations keep the 1-cycle registered output. Only
+  // supported for W_MANT > 0: E8M0 always uses the dedicated combinational
+  // datapaths.
   parameter int ITER_DIVSQRT = 0
 ) (
   input  logic                    clk,
@@ -99,9 +101,12 @@ module fp_unit #(
     end
   endgenerate
 
+  // Engine availability (busy) rather than iter_run gates the start, so a new
+  // transaction may begin in the same cycle the previous `done`/out_valid
+  // pulse is visible (no dead cycle between back-to-back div/sqrt).
   assign iter_start = (ITER_DIVSQRT != 0 && W_MANT > 0) && in_valid
                     && (mode == fp_pkg::OP_DIV || mode == fp_pkg::OP_SQRT)
-                    && !iter_run && !busy_iter;
+                    && !busy_iter;
 
   generate
     if (W_MANT > 0) begin : g_generic
@@ -228,29 +233,37 @@ module fp_unit #(
       cmp_c = 2'd0;
   end
 
+  // Output stage. During an iterative div/sqrt transaction the engine's
+  // already-registered result is forwarded directly (out_valid = done), which
+  // removes the second register stage and makes out_valid appear one cycle
+  // after the engine finishes; the identical latency of every div/sqrt input
+  // (including special cases) is K+1 cycles from in_valid.
+  logic [1+W_EXP+W_MANT-1:0] y_r;
+  logic [4:0]                flags_r;
+  logic [1:0]                cmp_r;
+  logic                      out_valid_r;
+
+  assign y         = iter_run ? y_iter : y_r;
+  assign flags     = iter_run ? flags_iter : flags_r;
+  assign cmp       = iter_run ? 2'd0 : cmp_r;
+  assign out_valid = iter_run ? done_iter : out_valid_r;
+
   always_ff @(posedge clk) begin
     if (!rst_n) begin
-      y        <= '0;
-      flags    <= 5'd0;
-      cmp      <= 2'd0;
-      out_valid <= 1'b0;
-      iter_run  <= 1'b0;
-    end else if (iter_run || done_iter) begin
-      // Iterative div/sqrt transaction in flight: hold the outputs until the
-      // engine's done pulse, then publish the result.
-      out_valid <= done_iter;
-      iter_run  <= iter_run && !done_iter;
-      if (done_iter) begin
-        y     <= y_iter;
-        flags <= flags_iter;
-        cmp   <= 2'd0;
-      end
+      y_r         <= '0;
+      flags_r     <= 5'd0;
+      cmp_r       <= 2'd0;
+      out_valid_r <= 1'b0;
+      iter_run    <= 1'b0;
     end else begin
-      y         <= y_c;
-      flags     <= flags_c;
-      cmp       <= cmp_c;
-      out_valid <= in_valid && !iter_start;
-      iter_run  <= iter_start;
+      y_r         <= y_c;
+      flags_r     <= flags_c;
+      cmp_r       <= cmp_c;
+      out_valid_r <= in_valid && !iter_start;
+      if (iter_start)
+        iter_run <= 1'b1;
+      else if (iter_run && done_iter)
+        iter_run <= 1'b0;
     end
   end
 
