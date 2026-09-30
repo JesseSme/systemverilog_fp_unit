@@ -155,20 +155,54 @@ module fp_add #(
   assign s_a = a_sub ? {1'b0, a_mant} : ((S_W)'(1'b1) << W_MANT) | {1'b0, a_mant};
   assign s_b = b_sub ? {1'b0, b_mant} : ((S_W)'(1'b1) << W_MANT) | {1'b0, b_mant};
 
-  // Bit length of x (leading-one position + 1); 0 if x is zero. Last set bit
-  // wins, i.e. the highest set bit (no break: yosys does not support `break`
-  // in for loops).
+  // Bit length of x (leading-one position + 1); 0 if x is zero.
+  //
+  // Balanced leading-one encoder: a one-hot prefix reduction marks the highest
+  // set bit, then constant masks reduce that one-hot position to an integer.
+  // Every vector element is written exactly once and the reductions are
+  // independent expressions (no loop-carried accumulator, no variable loop
+  // bound), so Yosys/formal cannot turn the body into a don't-care anyseq; the
+  // logic depth is logarithmic instead of a linear 24/28-stage scan.
+  localparam int BL_IW = $clog2(S_W + 1);  // bits needed for a value <= S_W
+
   function automatic int unsigned bitlen(input logic [S_W-1:0] x);
-    bitlen = 0;
-    for (int i = 0; i < S_W; i++)
-      if (x[i]) bitlen = i + 1;
+    logic [S_W-1:0]              lead;   // one-hot highest set bit
+    logic [BL_IW-1:0][S_W-1:0]   vmask;  // vmask[k][i] = bit k of (i+1)
+    logic [S_W-1:0]              amask;  // bits strictly above position i
+    bitlen = '0;
+    for (int i = 0; i < S_W; i++) begin
+      // Bit i is the leading one iff no bit above it is set. The mask is a
+      // runtime shift (the only variable-range form Verilator accepts); at
+      // i = S_W-1 the shift by S_W yields zero, so amask = 0 and the top bit
+      // needs no special case.
+      amask   = ~(((S_W)'(1) << (i + 1)) - (S_W)'(1));
+      lead[i] = x[i] & ~(|(x & amask));
+    end
+    for (int k = 0; k < BL_IW; k++)
+      for (int i = 0; i < S_W; i++)
+        vmask[k][i] = ((i + 1) >> k) & 1'b1;
+    for (int k = 0; k < BL_IW; k++)
+      bitlen[k] = |(lead & vmask[k]);
   endfunction
 
   // Leading-one position of x; 0 if x is zero.
+  localparam int LP_IW = $clog2(SUM_W + 1);  // bits needed for a value < SUM_W
+
   function automatic int unsigned lpos(input logic [SUM_W-1:0] x);
-    lpos = 0;
-    for (int i = 0; i < SUM_W; i++)
-      if (x[i]) lpos = i;
+    logic [SUM_W-1:0]            lead;   // one-hot highest set bit
+    logic [LP_IW-1:0][SUM_W-1:0] vmask;  // vmask[k][i] = bit k of i
+    logic [SUM_W-1:0]            amask;  // bits strictly above position i
+    lpos = '0;
+    for (int i = 0; i < SUM_W; i++) begin
+      // Same mask form as bitlen (see there): amask is zero at the top bit.
+      amask   = ~(((SUM_W)'(1) << (i + 1)) - (SUM_W)'(1));
+      lead[i] = x[i] & ~(|(x & amask));
+    end
+    for (int k = 0; k < LP_IW; k++)
+      for (int i = 0; i < SUM_W; i++)
+        vmask[k][i] = (i >> k) & 1'b1;
+    for (int k = 0; k < LP_IW; k++)
+      lpos[k] = |(lead & vmask[k]);
   endfunction
 
   // Leading-bit exponents: value = s * 2^e.
