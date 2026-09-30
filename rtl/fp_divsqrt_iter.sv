@@ -90,16 +90,16 @@ module fp_divsqrt_iter #(
   logic              a_sign, b_sign;
   logic [W_EXP-1:0]  a_exp, b_exp;
   logic [MANT_W-1:0] a_mant, b_mant;
-  assign a_sign = a[W-1];
-  assign a_exp  = a[W-2 -: W_EXP];
-  assign b_sign = b[W-1];
-  assign b_exp  = b[W-2 -: W_EXP];
+  assign a_sign = a_r[W-1];
+  assign a_exp  = a_r[W-2 -: W_EXP];
+  assign b_sign = b_r[W-1];
+  assign b_exp  = b_r[W-2 -: W_EXP];
   always_comb begin
     a_mant = '0;
     b_mant = '0;
     if (W_MANT > 0) begin
-      a_mant = a[W_MANT-1:0];
-      b_mant = b[W_MANT-1:0];
+      a_mant = a_r[W_MANT-1:0];
+      b_mant = b_r[W_MANT-1:0];
     end
   end
 
@@ -124,7 +124,7 @@ module fp_divsqrt_iter #(
     y_special     = '0;
     flags_special = '0;
     special_case  = 1'b0;
-    if (is_sqrt) begin
+    if (is_sqrt_r) begin
       // fp_sqrt special cases.
       if (a_nan) begin
         // 6.2.3: quiet NaN, payload of the operand; 7.2a: sNaN -> invalid.
@@ -220,24 +220,14 @@ module fp_divsqrt_iter #(
   assign a_al = s_a << (S_W - bitlen(s_a));
   assign b_al = s_b << (S_W - bitlen(s_b));
 
-  logic a_ge_b;
-  assign a_ge_b = (a_al >= b_al);
-  logic signed [W_EXP+3:0] e_res_div;
-  assign e_res_div = (W_EXP+4)'(e_a) - (W_EXP+4)'(e_b) - (W_EXP+4)'(a_al < b_al);
 
   // First radix-4 digit d0 = floor(2*a_al/b_al) (0..3 because
   // 2*a_al < 4*b_al) and rem0 = 2*a_al - d0*b_al < b_al: the exact state of
   // the restoring recurrence at quotient position TARGET-1.
   logic [S_W+1:0] two_a, two_b, three_b;
-  logic [1:0]     d0_div;
-  logic [R_W-1:0] rem0_div;
   assign two_a   = (S_W+2)'(a_al) << 1;
   assign two_b   = (S_W+2)'(b_al) << 1;
   assign three_b = two_b + (S_W+2)'(b_al);
-  assign d0_div  = (two_a >= three_b) ? 2'd3
-                 : (two_a >= two_b)   ? 2'd2
-                 : (two_a >= (S_W+2)'(b_al)) ? 2'd1 : 2'd0;
-  assign rem0_div = (R_W)'(two_a - (S_W+2)'(d0_div) * (S_W+2)'(b_al));
 
   // ---- square-root scaling and first-digit preload (fp_sqrt)
   logic [R_W-1:0] X;
@@ -259,18 +249,20 @@ module fp_divsqrt_iter #(
   assign rem0_sqrt = (R_W)'(v4) - (R_W)'(d0_sqrt) * (R_W)'(d0_sqrt);
 
   logic rsign;  // quotient sign XOR / 0 for sqrt
-  assign rsign = is_sqrt ? 1'b0 : (a_sign ^ b_sign);
+  assign rsign = is_sqrt_r ? 1'b0 : (a_sign ^ b_sign);
 
   // ------------------------------------------------------------- iteration
-  logic [1:0]        state;
-  localparam logic [1:0] ST_IDLE = 2'd0, ST_RUN = 2'd1;
+  logic [2:0]        state;
+  localparam logic [2:0] ST_IDLE = 3'd0, ST_PREP1 = 3'd1, ST_PREP2 = 3'd2,
+                         ST_STEP1 = 3'd3, ST_STEP2 = 3'd4;
   logic [FW-1:0]     q;
   logic [R_W-1:0]    rem;
   logic [POS_W-1:0]  pos;
   logic [COUNT_W-1:0] count;
 
   // Latched iteration context.
-  logic              is_sqrt_r, rsign_r, a_ge_b_r, special_r, half_step;
+  logic [W-1:0]      a_r, b_r;
+  logic              is_sqrt_r, rsign_r, a_ge_b_r, special_r;
   logic [2:0]        rm_r;
   logic signed [W_EXP+3:0] e_res_r;
   logic [W-1:0]      y_special_r;
@@ -278,52 +270,70 @@ module fp_divsqrt_iter #(
   logic [S_W-1:0]    b_al_r;
   logic [S_W+1:0]    two_b_r, three_b_r;
   logic [R_W-1:0]    x_r;
+  // phase-1 latches (wide preload operands)
+  logic [S_W-1:0]    a_al_p, b_al_p;
+  logic [S_W+1:0]    two_a_p;
+  logic signed [W_EXP+2:0] e_a_p, e_b_p;
+  logic signed [W_EXP+3:0] e_res_sqrt_p;
+  logic [1:0]        d0_sqrt_p;
+  logic [R_W-1:0]    rem0_sqrt_p;
 
-  // One digit step. Division: p = 4*rem (the remaining radicand bits are all
-  // zero after the preload), digit from the multiples of b_al. Sqrt:
-  // p = 16*rem + 4 radicand bits, digit from the candidate subtrahends
-  // d*(8q+d). When STEP2_LAST, the final cycle runs a radix-2 half-step.
-  logic [R_W-1:0] rem_next;
-  logic [FW-1:0]  q_next;
+  // Two-cycle digit step. Cycle A computes p (the shifted remainder with the
+  // new radicand bits), the candidate subtrahends and the selected digit;
+  // cycle B applies the subtraction and shifts in the digit. `half_step`
+  // selects the radix-2 final step for odd W_MANT.
+  logic [R_W-1:0] p_a, sel_a;
+  logic [1:0]     d4_a;
+  logic           d2_a, half_step;
   always_comb begin
-    logic [R_W-1:0] p, t1, t2, t3;
-    logic [1:0]     d4;
-    logic           d2;
+    logic [R_W-1:0] t1, t2, t3;
     half_step = STEP2_LAST && (count == '0);
-    p = '0; t1 = '0; t2 = '0; t3 = '0; d4 = 2'd0; d2 = 1'b0;
+    p_a = '0; sel_a = '0; d4_a = 2'd0; d2_a = 1'b0;
+    t1 = '0; t2 = '0; t3 = '0;
     if (is_sqrt_r) begin
       if (half_step) begin
-        p  = (rem << 2) | (R_W)'(x_r[pos - 2 +: 2]);
-        t1 = ((R_W)'(q) << 2) | (R_W)'(1);
-        d2 = (p >= t1);
-        rem_next = d2 ? (p - t1) : p;
-        q_next   = (q << 1) | (FW)'(d2);
+        p_a  = (rem << 2) | (R_W)'(x_r[pos - 2 +: 2]);
+        t1   = ((R_W)'(q) << 2) | (R_W)'(1);
+        d2_a = (p_a >= t1);
+        sel_a = d2_a ? t1 : '0;
       end else begin
-        p  = (rem << 4) | (R_W)'(x_r[pos - 4 +: 4]);
+        p_a  = (rem << 4) | (R_W)'(x_r[pos - 4 +: 4]);
         t1 = ((R_W)'(q) << 3) | (R_W)'(1);                     //  8q+1
         t2 = ((R_W)'(q) << 4) | (R_W)'(4);                     // 16q+4
         t3 = ((R_W)'(q) << 4) + ((R_W)'(q) << 3) + (R_W)'(9);  // 24q+9
-        if      (p >= t3) begin d4 = 2'd3; rem_next = p - t3; end
-        else if (p >= t2) begin d4 = 2'd2; rem_next = p - t2; end
-        else if (p >= t1) begin d4 = 2'd1; rem_next = p - t1; end
-        else              begin d4 = 2'd0; rem_next = p;       end
-        q_next = (q << 2) | (FW)'(d4);
+        if      (p_a >= t3) begin d4_a = 2'd3; sel_a = t3; end
+        else if (p_a >= t2) begin d4_a = 2'd2; sel_a = t2; end
+        else if (p_a >= t1) begin d4_a = 2'd1; sel_a = t1; end
+        else                begin d4_a = 2'd0; sel_a = '0; end
       end
     end else begin
       if (half_step) begin
-        p  = rem << 1;
-        d2 = (p >= (R_W)'(b_al_r));
-        rem_next = d2 ? (p - (R_W)'(b_al_r)) : p;
-        q_next   = (q << 1) | (FW)'(d2);
+        p_a  = rem << 1;
+        d2_a = (p_a >= (R_W)'(b_al_r));
+        sel_a = d2_a ? (R_W)'(b_al_r) : '0;
       end else begin
-        p = rem << 2;
-        if      (p >= (R_W)'(three_b_r)) begin d4 = 2'd3; rem_next = p - (R_W)'(three_b_r); end
-        else if (p >= (R_W)'(two_b_r))   begin d4 = 2'd2; rem_next = p - (R_W)'(two_b_r);   end
-        else if (p >= (R_W)'(b_al_r))    begin d4 = 2'd1; rem_next = p - (R_W)'(b_al_r);    end
-        else                             begin d4 = 2'd0; rem_next = p;                      end
-        q_next = (q << 2) | (FW)'(d4);
+        p_a = rem << 2;
+        if      (p_a >= (R_W)'(three_b_r)) begin d4_a = 2'd3; sel_a = (R_W)'(three_b_r); end
+        else if (p_a >= (R_W)'(two_b_r))   begin d4_a = 2'd2; sel_a = (R_W)'(two_b_r);   end
+        else if (p_a >= (R_W)'(b_al_r))    begin d4_a = 2'd1; sel_a = (R_W)'(b_al_r);    end
+        else                               begin d4_a = 2'd0; sel_a = '0;                end
       end
     end
+  end
+
+  logic [R_W-1:0] p_ar, sel_ar;
+  logic [1:0]     d4_ar;
+  logic           d2_ar;
+
+  // Cycle B: apply the subtraction and shift in the digit.
+  logic [R_W-1:0] rem_b;
+  logic [FW-1:0]  q_b;
+  always_comb begin
+    rem_b = p_ar - sel_ar;
+    if (half_step)
+      q_b = (q << 1) | (FW)'(d2_ar);
+    else
+      q_b = (q << 2) | (FW)'(d4_ar);
   end
 
   // Final placement / sticky from the post-step values: the full quotient
@@ -335,11 +345,11 @@ module fp_divsqrt_iter #(
   logic          norm_sticky;
   always_comb begin
     if (is_sqrt_r) begin
-      placed      = FW'(q_next);
-      norm_sticky = |rem_next;
+      placed      = FW'(q_b);
+      norm_sticky = |rem_b;
     end else begin
-      placed      = a_ge_b_r ? FW'(q_next) : FW'(q_next << 1);
-      norm_sticky = |rem_next;
+      placed      = a_ge_b_r ? FW'(q_b) : FW'(q_b << 1);
+      norm_sticky = |rem_b;
     end
   end
 
@@ -506,48 +516,102 @@ module fp_divsqrt_iter #(
       two_b_r         <= '0;
       three_b_r       <= '0;
       x_r             <= '0;
+      a_r             <= '0;
+      b_r             <= '0;
+      a_al_p          <= '0;
+      b_al_p          <= '0;
+      two_a_p         <= '0;
+      e_a_p           <= '0;
+      e_b_p           <= '0;
+      e_res_sqrt_p    <= '0;
+      d0_sqrt_p       <= '0;
+      rem0_sqrt_p     <= '0;
+      p_ar            <= '0;
+      sel_ar          <= '0;
+      d4_ar           <= '0;
+      d2_ar           <= '0;
     end else begin
       done <= 1'b0;
       case (state)
         ST_IDLE: begin
           busy <= 1'b0;
           if (start) begin
-            is_sqrt_r       <= is_sqrt;
-            rsign_r         <= rsign;
-            a_ge_b_r        <= a_ge_b;
-            special_r       <= special_case;
-            rm_r            <= rm;
-            e_res_r         <= is_sqrt ? e_res_sqrt : e_res_div;
-            y_special_r     <= y_special;
-            flags_special_r <= flags_special;
-            b_al_r          <= b_al;
-            two_b_r         <= two_b;
-            three_b_r       <= three_b;
-            x_r             <= X;
-            q               <= is_sqrt ? (FW)'(d0_sqrt) : (FW)'(d0_div);
-            rem             <= is_sqrt ? rem0_sqrt : rem0_div;
-            pos             <= POS_INIT;
-            count           <= COUNT_W'(K - 1);
-            state           <= ST_RUN;
-            busy            <= 1'b1;
+            // Phase 1: latch the raw inputs only (short path from the ports).
+            a_r       <= a;
+            b_r       <= b;
+            rm_r      <= rm;
+            is_sqrt_r <= is_sqrt;
+            state     <= ST_PREP1;
+            busy      <= 1'b1;
           end
         end
-        ST_RUN: begin
+        ST_PREP1: begin
+          // Phase 2: classification, significands, exponents, alignment and
+          // the sqrt preload (all shallow from the latched inputs).
+          rsign_r         <= rsign;
+          special_r       <= special_case;
+          y_special_r     <= y_special;
+          flags_special_r <= flags_special;
+          b_al_r          <= b_al;
+          two_b_r         <= two_b;
+          three_b_r       <= three_b;
+          x_r             <= X;
+          a_al_p          <= a_al;
+          b_al_p          <= b_al;
+          two_a_p         <= two_a;
+          e_a_p           <= e_a;
+          e_b_p           <= e_b;
+          e_res_sqrt_p    <= e_res_sqrt;
+          d0_sqrt_p       <= d0_sqrt;
+          rem0_sqrt_p     <= rem0_sqrt;
+          state           <= ST_PREP2;
+        end
+        ST_PREP2: begin
+          // Phase 3: the division digit selection / preload subtraction (the
+          // widest arithmetic of the setup) is computed from the phase-1
+          // latches.
+          a_ge_b_r <= (a_al_p >= b_al_p);
+          e_res_r  <= is_sqrt_r ? e_res_sqrt_p
+                                : (W_EXP+4)'(e_a_p) - (W_EXP+4)'(e_b_p)
+                                  - (W_EXP+4)'(a_al_p < b_al_p);
+          q        <= is_sqrt_r ? (FW)'(d0_sqrt_p)
+                                : (FW)'((two_a_p >= three_b_r) ? 2'd3
+                                      : (two_a_p >= two_b_r)   ? 2'd2
+                                      : (two_a_p >= b_al_r)    ? 2'd1 : 2'd0);
+          rem      <= is_sqrt_r ? rem0_sqrt_p
+                                : (R_W)'(two_a_p
+                                   - (S_W+2)'((two_a_p >= three_b_r) ? 2'd3
+                                            : (two_a_p >= two_b_r)   ? 2'd2
+                                            : (two_a_p >= b_al_r)    ? 2'd1 : 2'd0)
+                                   * (S_W+2)'(b_al_r));
+          pos      <= POS_INIT;
+          count    <= COUNT_W'(K - 1);
+          state    <= ST_STEP1;
+        end
+        ST_STEP1: begin
+          p_ar   <= p_a;
+          sel_ar <= sel_a;
+          d4_ar  <= d4_a;
+          d2_ar  <= d2_a;
+          state  <= ST_STEP2;
+        end
+        ST_STEP2: begin
           if (count == '0) begin
-            // Last iteration: q_next/rem_next are the final quotient/root and
+            // Last iteration: q_b/rem_b are the final quotient/root and
             // remainder; round and publish (or publish the latched special).
             // The next transaction may start on this same cycle (engine busy
-            // is low), which keeps back-to-back div/sqrt free of dead cycles.
+            // is low), keeping back-to-back div/sqrt free of dead cycles.
             y      <= special_r ? y_special_r : y_result;
             flags  <= special_r ? flags_special_r : flags_result;
             state  <= ST_IDLE;
             busy   <= 1'b0;
             done   <= 1'b1;
           end else begin
-            q     <= q_next;
-            rem   <= rem_next;
+            q     <= q_b;
+            rem   <= rem_b;
             pos   <= pos - (half_step ? (POS_W)'(2) : (POS_W)'(4));
             count <= count - 1'b1;
+            state <= ST_STEP1;
           end
         end
         default: state <= ST_IDLE;

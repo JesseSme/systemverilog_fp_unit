@@ -42,11 +42,11 @@ from reference.formats import BinFormat, encode_finite  # noqa: E402
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 RTL = [os.path.join(ROOT, "rtl", f) for f in
-       ("fp_pkg.sv", "fp_add.sv", "fp_add_e8m0.sv",
-        "fp_mul.sv", "fp_mul_e8m0.sv", "fp_div.sv", "fp_div_e8m0.sv",
+       ("fp_pkg.sv", "fp_add.sv", "fp_add_pipe.sv", "fp_add_e8m0.sv",
+        "fp_mul.sv", "fp_mul_core.sv", "fp_mul_pipe.sv", "fp_mul_e8m0.sv", "fp_div.sv", "fp_div_e8m0.sv",
         "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_divsqrt_iter.sv",
-        "fp_fma.sv", "fp_fma_e8m0.sv",
-        "fp_minmax.sv", "fp_cmp.sv", "fp_totalorder.sv", "fp_roundint.sv",
+        "fp_fma.sv", "fp_fma_pipe.sv", "fp_fma_e8m0.sv",
+        "fp_minmax.sv", "fp_minmax_pipe.sv", "fp_cmp.sv", "fp_cmp_pipe.sv", "fp_totalorder.sv", "fp_totalorder_pipe.sv", "fp_roundint.sv", "fp_roundint_pipe.sv",
         "fp_roundint_e8m0.sv", "fp_unit.sv")]
 REF = [os.path.join(HERE, "reference", f) for f in
        ("formats.py", "rounding.py", "ops.py", "gen.py")]

@@ -67,16 +67,27 @@ def _flag_names(f):
 
 
 async def check(dut, mode, rm, a, b, exp_y, exp_f, what, c=0, exp_cmp=0):
+    # Single-issue start/out_valid protocol: pulse in_valid, then poll
+    # out_valid (each operation has a fixed latency).
     dut.rst_n.value = 1
     dut.mode.value = mode
     dut.rm.value = rm
     dut.a.value = a
     dut.b.value = b
     dut.c.value = c
+    dut.in_valid.value = 1
     dut.clk.value = 0
     await Timer(1, units="ns")
-    dut.clk.value = 1   # posedge captures the combinational result into the registers
+    dut.clk.value = 1   # posedge samples the start
     await Timer(1, units="ns")
+    dut.in_valid.value = 0
+    for _ in range(1024):
+        if int(dut.out_valid.value):
+            break
+        dut.clk.value = 0
+        await Timer(1, units="ns")
+        dut.clk.value = 1
+        await Timer(1, units="ns")
     y = int(dut.y.value)
     f = int(dut.flags.value)
     cc = int(dut.cmp.value)

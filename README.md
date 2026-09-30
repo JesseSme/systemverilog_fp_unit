@@ -73,53 +73,50 @@ support (3.3) and the five exception flags (7.2-7.6, including divide-by-zero
   modules coexist (see the HANDOFF notes). The RTL is verified bit-exact by
   the regression and the exhaustive sweep regardless.
 
-## Optimization: iterative radix-4 div/sqrt (`ITER_DIVSQRT`)
+## Pipelined Fmax-optimized core (250 MHz on VU9P-2L)
 
-`fp_unit` takes a third parameter `ITER_DIVSQRT` (default 0). With
-`ITER_DIVSQRT = 1` (W_MANT > 0) the combinational `fp_div`/`fp_sqrt` datapaths
-are replaced by the shared multi-cycle engine `fp_divsqrt_iter`, which
-produces two quotient/root bits per cycle (radix-4 restoring recurrence) using
-one small adder/subtractor and a compare tree. Semantics are bit-exact with the
-combinational modules (verified by the exhaustive 8-bit sweeps and the
-medium-width soaks in `--iter` mode).
+The default configuration is fully pipelined with fixed, input-independent
+latency per operation. `in_valid` starts an operation (one pulse; ignored
+while the same pipeline is busy) and `out_valid` pulses once with `y`/`flags`
+(and `cmp`). Latencies in cycles:
 
-The latency is **constant for every input** (including special cases):
-K+1 cycles with K = ceil((W_MANT+3)/2). The top two quotient/root bits are
-precomputed in the start cycle, and when W_MANT is odd the last cycle runs a
-radix-2 half-step, so the count never depends on the operands. A new
-transaction may start in the same cycle `out_valid` is visible (no dead
-cycle between back-to-back div/sqrt). Single-cycle operations keep the
-original 1-cycle latency.
+    format   add  sub  mul  fma  div  sqrt  rndint  min/max/cmp/totalOrder
+    E4M3       5    5    5    9    9     9      3          2
+    E5M2       5    5    5    9    7     7      3          2
+    BF16       5    5    5    9   13    13      3          2
+    binary16   5    5    5    9   15    15      3          2
+    binary32   5    5    5    9   29    29      3          2
+    binary64   5    5    5    9   57    57      3          2
+    E8M0       1    1    1    1    1     1      1          1  (dedicated modules)
 
-    format   div  sqrt  all other ops      (cycles from in_valid to out_valid)
-    E4M3       4     4        1
-    E5M2       3     3        1
-    BF16       6     6        1
-    binary16   7     7        1
-    binary32  14    14        1
-    binary64  28    28        1
-    E8M0       1     1        1  (engine not used)
+* `fp_add_pipe`/`fp_mul_pipe`/`fp_fma_pipe`/`fp_roundint_pipe`: the rounding
+  datapaths split into registered stages (align -> add -> normalize -> round).
+* `fp_mul_core`: a LUT-only pipelined (24x24) multiplier (carry-save adder
+  tree, no DSP inference), shared by the multiply and FMA pipelines; the
+  synthesized design uses **0 DSPs**.
+* `fp_divsqrt_iter`: radix-4 iterative engine, two cycles per digit step (a
+  digit-select phase and an apply phase) plus a two-phase preload; the
+  latency is constant for every input, including special cases.
+* `fp_minmax_pipe`/`fp_cmp_pipe`/`fp_totalorder_pipe`: 2-stage versions of the
+  ordering datapaths.
 
-Handshake: pulse `in_valid` together with a/b/c/mode/rm; `out_valid` pulses one
-cycle with the registered `y`/`flags`. The AXI-Lite wrapper takes the same
-parameter and waits on `out_valid`, so variable bus wait states are not needed.
-The exhaustive/soak `--iter` harnesses assert these cycle counts on every
-vector (latency errors are reported separately from value mismatches).
+Measured with the single Vivado implementation run (non-project batch,
+`synth_design -mode out_of_context`, 4.000 ns clock, `place_design`,
+`route_design`) on **xcvu9p-flga2104-2L-e**:
 
-Measured with `make metrics-area` (yosys `synth -noabc`, generic-gate cells /
-longest topological path):
+    WNS +0.022 ns, TNS 0, 0 failing endpoints (3495)  -> 250 MHz met
+    6994 CLB LUTs, 2625 CLB registers, 0 DSPs
 
-    format   default cells  ITER cells   default ltp     ITER ltp (engine)
-    E4M3          9,437        8,988        165/160*       60 (60)
-    binary16     22,987       17,776        397/309*       68 (68)
-    BF16         17,698       15,170        251*           67 (67)
-    binary32     63,685       38,988        965/657*      324 fp_fma (engine 94)
+The progression: the original combinational design measured 17.6 ns
+(~57 MHz); after the pipelined add/mul/fma it was 5.0 ns, after the roundint
+and small-op pipes 4.65 ns, and after splitting the div/sqrt engine steps and
+preload it closed at 4.00 ns. `ITER_DIVSQRT = 0` selects the legacy
+combinational divider and square root (much longer critical path); the other
+operations stay pipelined. The legacy modules are kept for the formal
+property checks.
 
-    * combinational fp_div / fp_sqrt (the largest contributor; fp_sqrt also
-      dropped ~25-28% from taking its sticky bit from the isqrt remainder)
-    The radix-4 engine costs ~+11% over the first (radix-2) iterative version
-    but halves the div latency and keeps the critical path at fp_fma (324
-    levels) instead of fp_div (965).
+The `--iter` harness flags and `FP_ITER_DIVSQRT=1` still exist and now select
+the same default engine configuration.
 
 ## Semantics (bit-exact vs tests/reference)
 

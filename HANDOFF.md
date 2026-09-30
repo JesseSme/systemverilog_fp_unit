@@ -660,9 +660,24 @@ optimization captures `metrics/area-after*.json` and diffs with
   (+46% cells, +105 ltp levels). `$clog2`-based parallel leading-zero counts
   are not viable on yosys 0.68 (non-constant `$clog2` is unsupported) and loop
   accumulators are formal-hostile (see the fp_add notes).
-- Still open: `fp_fma`'s `ACC_W = 3*S_W+6` accumulator width (needs an
-  exactness proof), operand isolation/clock gating for power (needs a toggle
-  power proxy), and the E8M0 module duplication.
+- Landed (Fmax pass, 250 MHz on xcvu9p-flga2104-2L-e): all generic-format
+  operations are now pipelined with fixed per-op latencies (add/sub/mul 5,
+  fma 9, roundint 3, min/max/cmp/totalOrder 2, div/sqrt 2K+3 cycles). New
+  modules: fp_add_pipe, fp_mul_pipe + fp_mul_core (LUT-only pipelined
+  multiplier, zero DSP inference), fp_fma_pipe, fp_roundint_pipe,
+  fp_minmax_pipe, fp_cmp_pipe, fp_totalorder_pipe; fp_divsqrt_iter now runs
+  two cycles per radix-4 digit step with a two-phase preload; fp_unit is a
+  per-op start/out_valid dispatcher. Measured with the single non-project
+  Vivado run (/tmp/opencode/vivado/impl.tcl, `synth_design -mode
+  out_of_context` + place/route on a 4.000 ns clock): WNS +0.022 ns, 0
+  failing endpoints, 6994 LUTs, 2625 FFs, 0 DSPs. The harnesses assert
+  constant per-op latency on every vector; fp_exp_seq was re-sequenced to
+  issue one operation at a time and wait for out_valid (~110 cycles per exp).
+- Still open: FMA margin is thin (+0.022 ns; split the F5 subnormal path for
+  more headroom if the board differs), `fp_fma`'s `ACC_W = 3*S_W+6`
+  accumulator width (needs an exactness proof), operand isolation/clock
+  gating for power (needs a toggle power proxy), and the E8M0 module
+  duplication (E8M0 ops remain 1-cycle combinational).
 
 ### Known limitations
 

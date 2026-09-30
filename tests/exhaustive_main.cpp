@@ -30,13 +30,17 @@ int main(int argc, char** argv) {
     }
     const char* path = argv[1];
     const int w = atoi(argv[2]);
-    const int C = atoi(argv[3]);
+    const uint64_t C = strtoull(argv[3], nullptr, 10);  // 64-bit safe (binary64 FMA c)
     // iter=1: fp_unit was built with ITER_DIVSQRT=1; div (op 3) and sqrt
     // (op 4) use the in_valid/busy/out_valid handshake.
     const int iter = (argc > 4) ? atoi(argv[4]) : 0;
     // Expected constant div/sqrt latency (0 = do not check): K+1 with
     // K = ceil((W_MANT+3)/2), supplied by the Python driver.
     const int divsqrt_cycles = (argc > 5) ? atoi(argv[5]) : 0;
+    (void)iter;
+    (void)divsqrt_cycles;
+    int seen_cycles[11];
+    for (int i = 0; i < 11; i++) seen_cycles[i] = -1;
     const int A = 1 << w;  // values per operand
 
     Verilated::commandArgs(argc, argv);
@@ -66,25 +70,25 @@ int main(int argc, char** argv) {
                     top->c = C;
                     top->in_valid = 1;
                     top->clk = 0;
-                    top->eval();  // combinational result settles (clk low)
+                    top->eval();  // inputs presented
                     int cycles = 0;
                     do {
                         top->clk = 1;
-                        top->eval();  // posedge captures y/flags/cmp / iterates
+                        top->eval();  // posedge samples the start / advances
                         top->clk = 0;
                         top->eval();
                         top->in_valid = 0;
                         cycles++;
-                    } while (iter && (op == 3 || op == 4)
-                             && !top->out_valid && cycles < 1024);
-                    if (iter && divsqrt_cycles > 0) {
-                        const int want = (op == 3 || op == 4) ? divsqrt_cycles : 1;
-                        if (cycles != want) {
-                            if (lat_errors < 5)
-                                fprintf(stderr, "LATENCY op=%d: %d cycles, want %d\n",
-                                        op, cycles, want);
-                            lat_errors++;
-                        }
+                    } while (!top->out_valid && cycles < 1024);
+                    // Constant per-operation latency (recorded on first sight).
+                    if (cycles >= 1024
+                        || (seen_cycles[op] >= 0 && seen_cycles[op] != cycles)) {
+                        if (lat_errors < 5)
+                            fprintf(stderr, "LATENCY op=%d: %d cycles (first seen %d)\n",
+                                    op, cycles, seen_cycles[op]);
+                        lat_errors++;
+                    } else {
+                        seen_cycles[op] = cycles;
                     }
                     const uint8_t y = top->y;
                     const uint8_t flags = top->flags;
