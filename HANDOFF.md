@@ -641,9 +641,18 @@ optimization captures `metrics/area-after*.json` and diffs with
   re-assigns `e_res` per branch.
 - Landed: `ITER_DIVSQRT` (default 0), selecting the shared multi-cycle
   `fp_divsqrt_iter` engine in `fp_unit`/`fp_unit_axilite` with an
-  in_valid/out_valid handshake. binary32 unit: 63,685 -> 35,143 cells (-45%),
+  in_valid/out_valid handshake. binary32 unit: 63,685 -> 38,988 cells (-39%),
   critical path from fp_div's 965 levels to fp_fma's 324; the engine itself is
-  3,824 cells / ltp 78. Verified bit-exact by `tests/exhaustive.py --iter`
+  7,513 cells / ltp 94.
+- Landed: the engine is radix-4 (two quotient/root bits per cycle) with the
+  top digit precomputed in the start cycle and a radix-2 half-step for odd
+  W_MANT. The div/sqrt latency is CONSTANT for every input, including special
+  cases: K+1 cycles with K = ceil((W_MANT+3)/2) (binary32: 14, binary64: 28,
+  vs 52/29 and 110/58 before). The fp_unit output register is bypassed for
+  engine results and the engine accepts a new start in the done cycle, so
+  back-to-back div/sqrt have no dead cycle. The `--iter` harnesses now assert
+  these cycle counts on every vector (latency errors reported separately).
+  Verified bit-exact + constant-latency by `tests/exhaustive.py --iter`
   (all 7 eight-bit formats), `tests/soak.py --iter` (binary16/BF16/E4M3) and
   the AXI-Lite tests with `FP_ITER_DIVSQRT=1`.
 - Rejected after measurement: replacing `rem = num % b_al` with
@@ -651,9 +660,24 @@ optimization captures `metrics/area-after*.json` and diffs with
   (+46% cells, +105 ltp levels). `$clog2`-based parallel leading-zero counts
   are not viable on yosys 0.68 (non-constant `$clog2` is unsupported) and loop
   accumulators are formal-hostile (see the fp_add notes).
-- Still open: `fp_fma`'s `ACC_W = 3*S_W+6` accumulator width (needs an
-  exactness proof), operand isolation/clock gating for power (needs a toggle
-  power proxy), and the E8M0 module duplication.
+- Landed (Fmax pass, 250 MHz on xcvu9p-flga2104-2L-e): all generic-format
+  operations are now pipelined with fixed per-op latencies (add/sub/mul 5,
+  fma 9, roundint 3, min/max/cmp/totalOrder 2, div/sqrt 2K+3 cycles). New
+  modules: fp_add_pipe, fp_mul_pipe + fp_mul_core (LUT-only pipelined
+  multiplier, zero DSP inference), fp_fma_pipe, fp_roundint_pipe,
+  fp_minmax_pipe, fp_cmp_pipe, fp_totalorder_pipe; fp_divsqrt_iter now runs
+  two cycles per radix-4 digit step with a two-phase preload; fp_unit is a
+  per-op start/out_valid dispatcher. Measured with the single non-project
+  Vivado run (/tmp/opencode/vivado/impl.tcl, `synth_design -mode
+  out_of_context` + place/route on a 4.000 ns clock): WNS +0.022 ns, 0
+  failing endpoints, 6994 LUTs, 2625 FFs, 0 DSPs. The harnesses assert
+  constant per-op latency on every vector; fp_exp_seq was re-sequenced to
+  issue one operation at a time and wait for out_valid (~110 cycles per exp).
+- Still open: FMA margin is thin (+0.022 ns; split the F5 subnormal path for
+  more headroom if the board differs), `fp_fma`'s `ACC_W = 3*S_W+6`
+  accumulator width (needs an exactness proof), operand isolation/clock
+  gating for power (needs a toggle power proxy), and the E8M0 module
+  duplication (E8M0 ops remain 1-cycle combinational).
 
 ### Known limitations
 

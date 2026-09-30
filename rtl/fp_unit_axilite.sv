@@ -42,9 +42,9 @@ module fp_unit_axilite #(
   parameter int W_EXP       = 8,
   parameter int W_MANT      = 23,
   parameter int ADDR_WIDTH  = 6,
-  // Passed through to fp_unit: 1 selects the iterative div/sqrt engine
-  // (in_valid/out_valid/busy handshake), 0 the combinational datapaths.
-  parameter int ITER_DIVSQRT = 0
+  // Passed through to fp_unit: 1 (default) selects the iterative div/sqrt
+  // engine, 0 the legacy combinational datapaths.
+  parameter int ITER_DIVSQRT = 1
 ) (
   input  logic                  s_axi_aclk,
   input  logic                  s_axi_aresetn,
