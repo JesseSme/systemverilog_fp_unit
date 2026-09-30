@@ -76,6 +76,8 @@ metrics-compare:
 lint:
 	verilator --lint-only -Wall --timing rtl/fp_pkg.sv rtl/fp_add.sv rtl/fp_mul.sv rtl/fp_div.sv rtl/fp_sqrt.sv rtl/fp_divsqrt_iter.sv rtl/fp_fma.sv rtl/fp_minmax.sv rtl/fp_cmp.sv rtl/fp_totalorder.sv rtl/fp_roundint.sv rtl/fp_unit.sv
 	verilator --lint-only -Wall --timing -GITER_DIVSQRT=1 rtl/fp_pkg.sv rtl/fp_add.sv rtl/fp_mul.sv rtl/fp_div.sv rtl/fp_sqrt.sv rtl/fp_divsqrt_iter.sv rtl/fp_fma.sv rtl/fp_minmax.sv rtl/fp_cmp.sv rtl/fp_totalorder.sv rtl/fp_roundint.sv rtl/fp_unit.sv
+	verilator --lint-only -Wall --timing rtl/fp_pkg.sv rtl/fp_add.sv rtl/fp_mul.sv rtl/fp_div.sv rtl/fp_sqrt.sv rtl/fp_divsqrt_iter.sv rtl/fp_fma.sv rtl/fp_minmax.sv rtl/fp_cmp.sv rtl/fp_totalorder.sv rtl/fp_roundint.sv rtl/fp_unit.sv rtl/fp_exp_seq.sv
+	verilator --lint-only -Wall --timing rtl/fp32_to_bf16_round.sv
 	verilator --lint-only -Wall --timing rtl/fp_pkg.sv rtl/fp_add_e8m0.sv
 	verilator --lint-only -Wall --timing rtl/fp_pkg.sv rtl/fp_mul_e8m0.sv
 	verilator --lint-only -Wall --timing rtl/fp_pkg.sv rtl/fp_div_e8m0.sv

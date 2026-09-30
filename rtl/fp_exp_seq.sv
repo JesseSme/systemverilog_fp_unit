@@ -49,10 +49,12 @@ module fp_exp_seq (
   /* verilator lint_off UNUSEDSIGNAL */
   logic [1:0]        mul_cmp;
   logic [4:0]        mul_flags;
+  logic              mul_valid;
   /* verilator lint_on UNUSEDSIGNAL */
 
   fp_unit #(.W_EXP(8), .W_MANT(23)) u_mul (
     .clk(clk), .rst_n(rst_n),
+    .in_valid(1'b1), .out_valid(mul_valid),
     .mode(mul_mode), .rm(mul_rm),
     .a(mul_a), .b(mul_b), .c('0),
     .y(mul_y), .cmp(mul_cmp), .flags(mul_flags)
@@ -65,10 +67,12 @@ module fp_exp_seq (
   /* verilator lint_off UNUSEDSIGNAL */
   logic [1:0]        add_cmp;
   logic [4:0]        add_flags;
+  logic              add_valid;
   /* verilator lint_on UNUSEDSIGNAL */
 
   fp_unit #(.W_EXP(8), .W_MANT(23)) u_add (
     .clk(clk), .rst_n(rst_n),
+    .in_valid(1'b1), .out_valid(add_valid),
     .mode(add_mode), .rm(add_rm),
     .a(add_a), .b(add_b), .c('0),
     .y(add_y), .cmp(add_cmp), .flags(add_flags)
