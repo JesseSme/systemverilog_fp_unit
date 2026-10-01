@@ -84,19 +84,25 @@ while the same pipeline is busy) and `out_valid` pulses once with `y`/`flags`
 (and `cmp`). Latencies in cycles:
 
     format   add  sub  mul  fma  div  sqrt  rndint  min/max/cmp/totalOrder
-    E4M3       4    4    4    8    7     7      2          1
-    E5M2       4    4    4    8    6     6      2          1
-    BF16       4    4    4    8    9     9      2          1
-    binary16   4    4    4    8   10    10      2          1
-    binary32   4    4    4    8   17    17      2          1
-    binary64   4    4    5    9   31    31      2          1
+    E4M3       3    3    4    8    7     7      2          1
+    E5M2       3    3    4    8    6     6      2          1
+    BF16       3    3    4    8    9     9      2          1
+    binary16   3    3    4    8   10    10      2          1
+    binary32   3    3    4    8   17    17      2          1
+    binary64   3    3    5    9   31    31      2          1
     E8M0       1    1    1    1    1     1      1          1  (dedicated modules)
 
-* `fp_add_pipe`: 4 stages (unpack -> align -> add + subnormal placement ->
-  normalize/round/encode). The subnormal candidate is shifted directly from
-  the pre-normalization sum by (e_max - EMIN), which is independent of the
-  leading-one position, so the subnormal path never waits for the normalize
-  shift (and is computed in the add stage, in parallel with it).
+* `fp_add_pipe`: 3 stages. S1 unpacks/classifies and computes the per-operand
+  alignment shift amounts (signed, from the exponent fields; the subnormal
+  bit length is scanned on the mantissa bits so the leading-one scan runs in
+  parallel with the classification). S2 aligns with a single bidirectional
+  shift per operand (the alignment sticky is folded into the subtractor
+  carry-in; the two difference directions are computed in parallel and
+  selected by the borrow). S3 normalizes (leading-one + shift) and rounds;
+  the subnormal candidate is shifted directly from the pre-normalization sum
+  by (e_max - EMIN) - independent of the leading-one position - and the
+  rounding increment, exponent and overflow candidates are computed in
+  parallel with the GRS decision (carry-select).
 * `fp_mul_core` + `fp_mul_pipe`: a LUT-only pipelined multiplier (no DSP
   inference), 2 stages for W <= 32 and 3 stages above (the final
   carry-propagate level is folded into the last tree stage), followed by the
@@ -118,18 +124,21 @@ Measured with the single Vivado implementation run (non-project batch,
 `synth_design -mode out_of_context`, 4.000 ns clock, `place_design`,
 `route_design`) on **xcvu9p-flga2104-2L-e**:
 
-    WNS +0.001 ns, TNS 0, 0 failing endpoints (3044)  -> 250 MHz met
-    6974 CLB LUTs, 2301 CLB registers, 0 DSPs
+    WNS +0.015 ns, TNS 0, 0 failing endpoints (2897)  -> 250 MHz met
+    6992 CLB LUTs, 2188 CLB registers, 0 DSPs
+    (critical path: the FMA round/encode stage, as in the Fmax pass)
 
 The progression: the original combinational design measured 17.6 ns
 (~57 MHz); the Fmax pass pipelined every operation and closed at 4.00 ns with
 5-cycle add/mul and a 2-cycle-per-digit div/sqrt engine. The latency pass cut
-add/sub/mul to 4 cycles, div/sqrt to one cycle per radix-4 digit (binary32
-29 -> 17, binary64 57 -> 31) and the ordering/roundint ops to 1-2 cycles,
-while re-closing the same 4.00 ns clock. `ITER_DIVSQRT = 0` selects the legacy
-combinational divider and square root (much longer critical path); the other
-operations stay pipelined. The legacy modules are kept for the formal
-property checks.
+mul to 4 cycles, div/sqrt to one cycle per radix-4 digit (binary32 29 -> 17,
+binary64 57 -> 31) and the ordering/roundint ops to 1-2 cycles; the add/sub
+datapath was then restructured to 3 cycles (single-shift alignment, parallel
+direction subtract, subnormal placement registered ahead of the normalize/
+round stage), while re-closing the same 4.00 ns clock. `ITER_DIVSQRT = 0`
+selects the legacy combinational divider and square root (much longer critical
+path); the other operations stay pipelined. The legacy modules are kept for
+the formal property checks.
 
 The `--iter` harness flags and `FP_ITER_DIVSQRT=1` still exist and now select
 the same default engine configuration. `tests/latency.py`
