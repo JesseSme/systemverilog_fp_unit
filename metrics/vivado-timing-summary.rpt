@@ -1,9 +1,9 @@
 Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2025 Advanced Micro Devices, Inc. All Rights Reserved.
 --------------------------------------------------------------------------------------------------------------------------------------------------
 | Tool Version      : Vivado v.2025.2 (lin64) Build 6299465 Fri Nov 14 12:34:56 MST 2025
-| Date              : Wed Sep 30 13:28:07 2026
+| Date              : Thu Oct  1 10:37:21 2026
 | Host              : jesse-Dell-Pro-Max-Tower-T2-FCT2250 running 64-bit Ubuntu 24.04.5 LTS
-| Command           : report_timing_summary -file /tmp/opencode/vivado/timing_summary.rpt
+| Command           : report_timing_summary -file /tmp/opencode/vivado_stage6/timing_summary.rpt
 | Design            : fp_unit_timing
 | Device            : xcvu9p-flga2104
 | Speed File        : -2L  PRODUCTION 1.28 03-30-2022
@@ -139,7 +139,7 @@ Table of Contents
 
     WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints      WHS(ns)      THS(ns)  THS Failing Endpoints  THS Total Endpoints     WPWS(ns)     TPWS(ns)  TPWS Failing Endpoints  TPWS Total Endpoints  
     -------      -------  ---------------------  -------------------      -------      -------  ---------------------  -------------------     --------     --------  ----------------------  --------------------  
-      0.022        0.000                      0                 3495        0.048        0.000                      0                 3495        1.468        0.000                       0                  2696  
+      0.015        0.000                      0                 2897        0.044        0.000                      0                 2897        1.468        0.000                       0                  2224  
 
 
 All user specified timing constraints are met.
@@ -162,7 +162,7 @@ clk    {0.000 2.000}        4.000           250.000
 
 Clock             WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints      WHS(ns)      THS(ns)  THS Failing Endpoints  THS Total Endpoints     WPWS(ns)     TPWS(ns)  TPWS Failing Endpoints  TPWS Total Endpoints  
 -----             -------      -------  ---------------------  -------------------      -------      -------  ---------------------  -------------------     --------     --------  ----------------------  --------------------  
-clk                 0.022        0.000                      0                 3495        0.048        0.000                      0                 3495        1.468        0.000                       0                  2696  
+clk                 0.015        0.000                      0                 2897        0.044        0.000                      0                 2897        1.468        0.000                       0                  2224  
 
 
 ------------------------------------------------------------------------------------------------
@@ -193,27 +193,27 @@ Path Group    From Clock    To Clock          WNS(ns)      TNS(ns)  TNS Failing 
 From Clock:  clk
   To Clock:  clk
 
-Setup :            0  Failing Endpoints,  Worst Slack        0.022ns,  Total Violation        0.000ns
-Hold  :            0  Failing Endpoints,  Worst Slack        0.048ns,  Total Violation        0.000ns
+Setup :            0  Failing Endpoints,  Worst Slack        0.015ns,  Total Violation        0.000ns
+Hold  :            0  Failing Endpoints,  Worst Slack        0.044ns,  Total Violation        0.000ns
 PW    :            0  Failing Endpoints,  Worst Slack        1.468ns,  Total Violation        0.000ns
 ---------------------------------------------------------------------------------------------------
 
 
 Max Delay Paths
 --------------------------------------------------------------------------------------
-Slack (MET) :             0.022ns  (required time - arrival time)
-  Source:                 u_fp/g_fma_pipe.u_fp_fma_pipe/e_res_f4r_reg[1]/C
+Slack (MET) :             0.015ns  (required time - arrival time)
+  Source:                 u_fp/g_fma_pipe.u_fp_fma_pipe/e_res_f4r_reg[3]/C
                             (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@2.000ns period=4.000ns})
-  Destination:            u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[0]/R
+  Destination:            u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[10]/R
                             (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@2.000ns period=4.000ns})
   Path Group:             clk
   Path Type:              Setup (Max at Slow Process Corner)
   Requirement:            4.000ns  (clk rise@4.000ns - clk rise@0.000ns)
-  Data Path Delay:        3.860ns  (logic 1.533ns (39.717%)  route 2.327ns (60.283%))
-  Logic Levels:           20  (CARRY8=7 LUT2=1 LUT3=1 LUT4=3 LUT5=2 LUT6=6)
+  Data Path Delay:        3.867ns  (logic 1.620ns (41.897%)  route 2.247ns (58.103%))
+  Logic Levels:           20  (CARRY8=6 LUT2=1 LUT4=3 LUT5=1 LUT6=9)
   Clock Path Skew:        -0.009ns (DCD - SCD + CPR)
-    Destination Clock Delay (DCD):    0.020ns = ( 4.020 - 4.000 ) 
-    Source Clock Delay      (SCD):    0.029ns
+    Destination Clock Delay (DCD):    0.021ns = ( 4.021 - 4.000 ) 
+    Source Clock Delay      (SCD):    0.030ns
     Clock Pessimism Removal (CPR):    0.000ns
   Clock Uncertainty:      0.035ns  ((TSJ^2 + TIJ^2)^1/2 + DJ) / 2 + PE
     Total System Jitter     (TSJ):    0.071ns
@@ -225,88 +225,88 @@ Slack (MET) :             0.022ns  (required time - arrival time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=2695, unset)         0.029     0.029    u_fp/g_fma_pipe.u_fp_fma_pipe/clk
-    SLICE_X94Y179        FDRE                                         r  u_fp/g_fma_pipe.u_fp_fma_pipe/e_res_f4r_reg[1]/C
+                         net (fo=2223, unset)         0.030     0.030    u_fp/g_fma_pipe.u_fp_fma_pipe/clk
+    SLICE_X50Y136        FDRE                                         r  u_fp/g_fma_pipe.u_fp_fma_pipe/e_res_f4r_reg[3]/C
   -------------------------------------------------------------------    -------------------
-    SLICE_X94Y179        FDRE (Prop_FFF_SLICEL_C_Q)
-                                                      0.079     0.108 r  u_fp/g_fma_pipe.u_fp_fma_pipe/e_res_f4r_reg[1]/Q
-                         net (fo=117, routed)         0.193     0.301    u_fp/g_fma_pipe.u_fp_fma_pipe/e_res_f4r[1]
-    SLICE_X93Y179        LUT4 (Prop_E6LUT_SLICEM_I2_O)
-                                                      0.052     0.353 f  u_fp/g_fma_pipe.u_fp_fma_pipe/i___50/O
-                         net (fo=4, routed)           0.067     0.420    u_fp/g_fma_pipe.u_fp_fma_pipe/i___50_n_0
-    SLICE_X93Y179        LUT5 (Prop_F6LUT_SLICEM_I3_O)
-                                                      0.148     0.568 r  u_fp/g_fma_pipe.u_fp_fma_pipe/i___47_i_17/O
-                         net (fo=7, routed)           0.100     0.667    u_fp/g_fma_pipe.u_fp_fma_pipe/i___47_i_17_n_0
-    SLICE_X94Y179        LUT3 (Prop_E6LUT_SLICEL_I1_O)
-                                                      0.051     0.718 r  u_fp/g_fma_pipe.u_fp_fma_pipe/i___47_i_12/O
-                         net (fo=1, routed)           0.007     0.725    u_fp/g_fma_pipe.u_fp_fma_pipe/i___47_i_12_n_0
-    SLICE_X94Y179        CARRY8 (Prop_CARRY8_SLICEL_S[4]_CO[6])
-                                                      0.110     0.835 f  u_fp/g_fma_pipe.u_fp_fma_pipe/i___47_i_2/CO[6]
-                         net (fo=59, routed)          0.211     1.046    u_fp/g_fma_pipe.u_fp_fma_pipe/i___47_i_2_n_1
-    SLICE_X94Y179        LUT6 (Prop_H6LUT_SLICEL_I5_O)
-                                                      0.036     1.082 r  u_fp/g_fma_pipe.u_fp_fma_pipe/i___47/O
-                         net (fo=1, routed)           0.223     1.305    u_fp/g_fma_pipe.u_fp_fma_pipe/i___47_n_0
-    SLICE_X95Y179        CARRY8 (Prop_CARRY8_SLICEM_S[0]_CO[7])
-                                                      0.192     1.497 r  u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5_reg[1]_i_21/CO[7]
-                         net (fo=1, routed)           0.026     1.523    u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5_reg[1]_i_21_n_0
-    SLICE_X95Y180        CARRY8 (Prop_CARRY8_SLICEM_CI_CO[7])
-                                                      0.015     1.538 r  u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5_reg[1]_i_18/CO[7]
-                         net (fo=1, routed)           0.026     1.564    u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5_reg[1]_i_18_n_0
-    SLICE_X95Y181        CARRY8 (Prop_CARRY8_SLICEM_CI_O[5])
-                                                      0.116     1.680 r  u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5_reg[1]_i_16/O[5]
-                         net (fo=1, routed)           0.306     1.986    u_fp/g_fma_pipe.u_fp_fma_pipe/g_subnormal.up_s6[22]
-    SLICE_X96Y180        LUT4 (Prop_F6LUT_SLICEL_I1_O)
-                                                      0.049     2.035 r  u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5[1]_i_60/O
-                         net (fo=1, routed)           0.082     2.117    u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5[1]_i_60_n_0
-    SLICE_X96Y181        LUT5 (Prop_H6LUT_SLICEL_I4_O)
-                                                      0.036     2.153 r  u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5[1]_i_22/O
-                         net (fo=1, routed)           0.039     2.192    u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5[1]_i_22_n_0
-    SLICE_X96Y181        LUT6 (Prop_G6LUT_SLICEL_I5_O)
-                                                      0.035     2.227 r  u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5[1]_i_8/O
-                         net (fo=2, routed)           0.252     2.480    u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5[1]_i_8_n_0
-    SLICE_X94Y181        LUT6 (Prop_H6LUT_SLICEL_I2_O)
-                                                      0.051     2.531 r  u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5[7]_i_19/O
-                         net (fo=1, routed)           0.088     2.619    u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5[7]_i_19_n_0
-    SLICE_X94Y182        LUT6 (Prop_A6LUT_SLICEL_I1_O)
-                                                      0.035     2.654 r  u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5[7]_i_10/O
-                         net (fo=1, routed)           0.009     2.663    u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5[7]_i_10_n_0
-    SLICE_X94Y182        CARRY8 (Prop_CARRY8_SLICEL_S[0]_CO[7])
-                                                      0.190     2.853 r  u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[7]_i_1/CO[7]
-                         net (fo=1, routed)           0.026     2.879    u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[7]_i_1_n_0
-    SLICE_X94Y183        CARRY8 (Prop_CARRY8_SLICEL_CI_CO[7])
-                                                      0.015     2.894 r  u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[15]_i_1/CO[7]
-                         net (fo=1, routed)           0.026     2.920    u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[15]_i_1_n_0
-    SLICE_X94Y184        CARRY8 (Prop_CARRY8_SLICEL_CI_O[0])
-                                                      0.056     2.976 f  u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[22]_i_1/O[0]
-                         net (fo=2, routed)           0.222     3.198    u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub[16]
-    SLICE_X93Y183        LUT4 (Prop_C6LUT_SLICEM_I1_O)
-                                                      0.088     3.286 f  u_fp/g_fma_pipe.u_fp_fma_pipe/i___135_i_4/O
-                         net (fo=1, routed)           0.039     3.325    u_fp/g_fma_pipe.u_fp_fma_pipe/i___135_i_4_n_0
-    SLICE_X93Y183        LUT6 (Prop_B6LUT_SLICEM_I0_O)
-                                                      0.089     3.414 f  u_fp/g_fma_pipe.u_fp_fma_pipe/i___135_i_3/O
-                         net (fo=1, routed)           0.042     3.456    u_fp/g_fma_pipe.u_fp_fma_pipe/i___135_i_3_n_0
-    SLICE_X93Y183        LUT6 (Prop_E6LUT_SLICEM_I5_O)
-                                                      0.037     3.493 r  u_fp/g_fma_pipe.u_fp_fma_pipe/i___135_i_1/O
-                         net (fo=3, routed)           0.154     3.646    u_fp/g_fma_pipe.u_fp_fma_pipe/i___135_i_1_n_0
-    SLICE_X93Y183        LUT2 (Prop_A6LUT_SLICEM_I0_O)
-                                                      0.053     3.699 r  u_fp/g_fma_pipe.u_fp_fma_pipe/i___135/O
-                         net (fo=23, routed)          0.189     3.889    u_fp/g_fma_pipe.u_fp_fma_pipe/i___135_n_0
-    SLICE_X94Y183        FDRE                                         r  u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[0]/R
+    SLICE_X50Y136        FDRE (Prop_BFF_SLICEM_C_Q)
+                                                      0.078     0.108 f  u_fp/g_fma_pipe.u_fp_fma_pipe/e_res_f4r_reg[3]/Q
+                         net (fo=70, routed)          0.119     0.227    u_fp/g_fma_pipe.u_fp_fma_pipe/e_res_f4r[3]
+    SLICE_X50Y135        LUT4 (Prop_A6LUT_SLICEM_I0_O)
+                                                      0.100     0.327 r  u_fp/g_fma_pipe.u_fp_fma_pipe/i___73/O
+                         net (fo=4, routed)           0.143     0.470    u_fp/g_fma_pipe.u_fp_fma_pipe/i___73_n_0
+    SLICE_X50Y138        LUT6 (Prop_D6LUT_SLICEM_I2_O)
+                                                      0.037     0.507 f  u_fp/g_fma_pipe.u_fp_fma_pipe/i___70_i_18/O
+                         net (fo=2, routed)           0.057     0.564    u_fp/g_fma_pipe.u_fp_fma_pipe/i___70_i_18_n_0
+    SLICE_X50Y138        LUT6 (Prop_C6LUT_SLICEM_I5_O)
+                                                      0.145     0.709 f  u_fp/g_fma_pipe.u_fp_fma_pipe/i___70_i_3/O
+                         net (fo=2, routed)           0.144     0.853    u_fp/g_fma_pipe.u_fp_fma_pipe/i___70_i_3_n_0
+    SLICE_X52Y137        LUT6 (Prop_G6LUT_SLICEL_I5_O)
+                                                      0.035     0.888 f  u_fp/g_fma_pipe.u_fp_fma_pipe/i___70_i_1/O
+                         net (fo=31, routed)          0.122     1.010    u_fp/g_fma_pipe.u_fp_fma_pipe/i___70_i_1_n_0
+    SLICE_X51Y137        LUT6 (Prop_F6LUT_SLICEM_I4_O)
+                                                      0.098     1.108 r  u_fp/g_fma_pipe.u_fp_fma_pipe/i___70__0/O
+                         net (fo=1, routed)           0.281     1.389    u_fp/g_fma_pipe.u_fp_fma_pipe/g_subnormal.up_s7[1]
+    SLICE_X53Y137        CARRY8 (Prop_CARRY8_SLICEM_DI[0]_CO[7])
+                                                      0.132     1.521 r  u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5_reg[1]_i_21/CO[7]
+                         net (fo=1, routed)           0.026     1.547    u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5_reg[1]_i_21_n_0
+    SLICE_X53Y138        CARRY8 (Prop_CARRY8_SLICEM_CI_CO[7])
+                                                      0.015     1.562 r  u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5_reg[1]_i_18/CO[7]
+                         net (fo=1, routed)           0.026     1.588    u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5_reg[1]_i_18_n_0
+    SLICE_X53Y139        CARRY8 (Prop_CARRY8_SLICEM_CI_O[5])
+                                                      0.116     1.704 r  u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5_reg[1]_i_16/O[5]
+                         net (fo=1, routed)           0.178     1.882    u_fp/g_fma_pipe.u_fp_fma_pipe/g_subnormal.up_s6[22]
+    SLICE_X53Y140        LUT4 (Prop_E6LUT_SLICEM_I1_O)
+                                                      0.037     1.919 r  u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5[1]_i_60/O
+                         net (fo=1, routed)           0.087     2.006    u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5[1]_i_60_n_0
+    SLICE_X54Y140        LUT5 (Prop_C6LUT_SLICEL_I4_O)
+                                                      0.035     2.041 r  u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5[1]_i_22/O
+                         net (fo=1, routed)           0.087     2.128    u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5[1]_i_22_n_0
+    SLICE_X53Y140        LUT6 (Prop_D6LUT_SLICEM_I5_O)
+                                                      0.037     2.165 r  u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5[1]_i_8/O
+                         net (fo=2, routed)           0.146     2.311    u_fp/g_fma_pipe.u_fp_fma_pipe/flags_sub_r5[1]_i_8_n_0
+    SLICE_X51Y140        LUT6 (Prop_A6LUT_SLICEM_I2_O)
+                                                      0.125     2.436 r  u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5[7]_i_19/O
+                         net (fo=1, routed)           0.099     2.535    u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5[7]_i_19_n_0
+    SLICE_X51Y142        LUT6 (Prop_A6LUT_SLICEM_I1_O)
+                                                      0.038     2.573 r  u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5[7]_i_10/O
+                         net (fo=1, routed)           0.013     2.586    u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5[7]_i_10_n_0
+    SLICE_X51Y142        CARRY8 (Prop_CARRY8_SLICEM_S[0]_CO[7])
+                                                      0.192     2.778 r  u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[7]_i_1/CO[7]
+                         net (fo=1, routed)           0.026     2.804    u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[7]_i_1_n_0
+    SLICE_X51Y143        CARRY8 (Prop_CARRY8_SLICEM_CI_CO[7])
+                                                      0.015     2.819 r  u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[15]_i_1/CO[7]
+                         net (fo=1, routed)           0.026     2.845    u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[15]_i_1_n_0
+    SLICE_X51Y144        CARRY8 (Prop_CARRY8_SLICEM_CI_O[5])
+                                                      0.116     2.961 f  u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[22]_i_1/O[5]
+                         net (fo=2, routed)           0.166     3.127    u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub[21]
+    SLICE_X50Y143        LUT4 (Prop_F6LUT_SLICEM_I0_O)
+                                                      0.088     3.215 f  u_fp/g_fma_pipe.u_fp_fma_pipe/i___158_i_5/O
+                         net (fo=1, routed)           0.085     3.300    u_fp/g_fma_pipe.u_fp_fma_pipe/i___158_i_5_n_0
+    SLICE_X50Y142        LUT6 (Prop_E6LUT_SLICEM_I1_O)
+                                                      0.091     3.391 f  u_fp/g_fma_pipe.u_fp_fma_pipe/i___158_i_3/O
+                         net (fo=1, routed)           0.086     3.477    u_fp/g_fma_pipe.u_fp_fma_pipe/i___158_i_3_n_0
+    SLICE_X50Y143        LUT6 (Prop_B6LUT_SLICEM_I5_O)
+                                                      0.037     3.514 r  u_fp/g_fma_pipe.u_fp_fma_pipe/i___158_i_1/O
+                         net (fo=3, routed)           0.056     3.570    u_fp/g_fma_pipe.u_fp_fma_pipe/i___158_i_1_n_0
+    SLICE_X50Y143        LUT2 (Prop_A6LUT_SLICEM_I0_O)
+                                                      0.053     3.623 r  u_fp/g_fma_pipe.u_fp_fma_pipe/i___158/O
+                         net (fo=23, routed)          0.273     3.897    u_fp/g_fma_pipe.u_fp_fma_pipe/i___158_n_0
+    SLICE_X51Y143        FDRE                                         r  u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[10]/R
   -------------------------------------------------------------------    -------------------
 
                          (clock clk rise edge)        4.000     4.000 r  
                                                       0.000     4.000 r  clk (IN)
-                         net (fo=2695, unset)         0.020     4.020    u_fp/g_fma_pipe.u_fp_fma_pipe/clk
-    SLICE_X94Y183        FDRE                                         r  u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[0]/C
-                         clock pessimism              0.000     4.020    
-                         clock uncertainty           -0.035     3.985    
-    SLICE_X94Y183        FDRE (Setup_DFF2_SLICEL_C_R)
-                                                     -0.074     3.911    u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[0]
+                         net (fo=2223, unset)         0.021     4.021    u_fp/g_fma_pipe.u_fp_fma_pipe/clk
+    SLICE_X51Y143        FDRE                                         r  u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[10]/C
+                         clock pessimism              0.000     4.021    
+                         clock uncertainty           -0.035     3.986    
+    SLICE_X51Y143        FDRE (Setup_CFF_SLICEM_C_R)
+                                                     -0.074     3.912    u_fp/g_fma_pipe.u_fp_fma_pipe/y_sub_r5_reg[10]
   -------------------------------------------------------------------
-                         required time                          3.911    
-                         arrival time                          -3.889    
+                         required time                          3.912    
+                         arrival time                          -3.897    
   -------------------------------------------------------------------
-                         slack                                  0.022    
+                         slack                                  0.015    
 
 
 
@@ -314,16 +314,16 @@ Slack (MET) :             0.022ns  (required time - arrival time)
 
 Min Delay Paths
 --------------------------------------------------------------------------------------
-Slack (MET) :             0.048ns  (arrival time - required time)
-  Source:                 u_fp/g_divsqrt_iter.u_fp_divsqrt/count_reg[3]/C
+Slack (MET) :             0.044ns  (arrival time - required time)
+  Source:                 u_fp/g_add_pipe.u_fp_add_pipe/y_special_s1_reg[15]/C
                             (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@2.000ns period=4.000ns})
-  Destination:            u_fp/g_divsqrt_iter.u_fp_divsqrt/count_reg[3]/D
+  Destination:            u_fp/g_add_pipe.u_fp_add_pipe/y_bypass_s2_reg[15]/D
                             (rising edge-triggered cell FDRE clocked by clk  {rise@0.000ns fall@2.000ns period=4.000ns})
   Path Group:             clk
   Path Type:              Hold (Min at Fast Process Corner)
   Requirement:            0.000ns  (clk rise@0.000ns - clk rise@0.000ns)
-  Data Path Delay:        0.100ns  (logic 0.052ns (52.079%)  route 0.048ns (47.921%))
-  Logic Levels:           1  (LUT6=1)
+  Data Path Delay:        0.097ns  (logic 0.039ns (40.206%)  route 0.058ns (59.794%))
+  Logic Levels:           0  
   Clock Path Skew:        0.006ns (DCD - SCD - CPR)
     Destination Clock Delay (DCD):    0.019ns
     Source Clock Delay      (SCD):    0.013ns
@@ -333,30 +333,27 @@ Slack (MET) :             0.048ns  (arrival time - required time)
   -------------------------------------------------------------------    -------------------
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=2695, unset)         0.013     0.013    u_fp/g_divsqrt_iter.u_fp_divsqrt/clk
-    SLICE_X99Y245        FDRE                                         r  u_fp/g_divsqrt_iter.u_fp_divsqrt/count_reg[3]/C
+                         net (fo=2223, unset)         0.013     0.013    u_fp/g_add_pipe.u_fp_add_pipe/clk
+    SLICE_X49Y153        FDRE                                         r  u_fp/g_add_pipe.u_fp_add_pipe/y_special_s1_reg[15]/C
   -------------------------------------------------------------------    -------------------
-    SLICE_X99Y245        FDRE (Prop_BFF_SLICEM_C_Q)
-                                                      0.038     0.051 r  u_fp/g_divsqrt_iter.u_fp_divsqrt/count_reg[3]/Q
-                         net (fo=2, routed)           0.027     0.078    u_fp/g_divsqrt_iter.u_fp_divsqrt/count[3]
-    SLICE_X99Y245        LUT6 (Prop_B6LUT_SLICEM_I1_O)
-                                                      0.014     0.092 r  u_fp/g_divsqrt_iter.u_fp_divsqrt/count[3]_i_2/O
-                         net (fo=1, routed)           0.021     0.113    u_fp/g_divsqrt_iter.u_fp_divsqrt/count[3]_i_2_n_0
-    SLICE_X99Y245        FDRE                                         r  u_fp/g_divsqrt_iter.u_fp_divsqrt/count_reg[3]/D
+    SLICE_X49Y153        FDRE (Prop_HFF_SLICEL_C_Q)
+                                                      0.039     0.052 r  u_fp/g_add_pipe.u_fp_add_pipe/y_special_s1_reg[15]/Q
+                         net (fo=1, routed)           0.058     0.110    u_fp/g_add_pipe.u_fp_add_pipe/y_special_s1[15]
+    SLICE_X49Y154        FDRE                                         r  u_fp/g_add_pipe.u_fp_add_pipe/y_bypass_s2_reg[15]/D
   -------------------------------------------------------------------    -------------------
 
                          (clock clk rise edge)        0.000     0.000 r  
                                                       0.000     0.000 r  clk (IN)
-                         net (fo=2695, unset)         0.019     0.019    u_fp/g_divsqrt_iter.u_fp_divsqrt/clk
-    SLICE_X99Y245        FDRE                                         r  u_fp/g_divsqrt_iter.u_fp_divsqrt/count_reg[3]/C
+                         net (fo=2223, unset)         0.019     0.019    u_fp/g_add_pipe.u_fp_add_pipe/clk
+    SLICE_X49Y154        FDRE                                         r  u_fp/g_add_pipe.u_fp_add_pipe/y_bypass_s2_reg[15]/C
                          clock pessimism              0.000     0.019    
-    SLICE_X99Y245        FDRE (Hold_BFF_SLICEM_C_D)
-                                                      0.046     0.065    u_fp/g_divsqrt_iter.u_fp_divsqrt/count_reg[3]
+    SLICE_X49Y154        FDRE (Hold_EFF2_SLICEL_C_D)
+                                                      0.047     0.066    u_fp/g_add_pipe.u_fp_add_pipe/y_bypass_s2_reg[15]
   -------------------------------------------------------------------
-                         required time                         -0.065    
-                         arrival time                           0.113    
+                         required time                         -0.066    
+                         arrival time                           0.110    
   -------------------------------------------------------------------
-                         slack                                  0.048    
+                         slack                                  0.044    
 
 
 
@@ -369,10 +366,10 @@ Waveform(ns):       { 0.000 2.000 }
 Period(ns):         4.000
 Sources:            { clk }
 
-Check Type        Corner  Lib Pin     Reference Pin  Required(ns)  Actual(ns)  Slack(ns)  Location        Pin
-Min Period        n/a     SRL16E/CLK  n/a            1.064         4.000       2.936      SLICE_X108Y189  u_fp/g_add_pipe.u_fp_add_pipe/flags_special_s2_reg[4]_srl2___u_fp_g_fma_pipe.u_fp_fma_pipe_u_core_vb_reg_r/CLK
-Low Pulse Width   Slow    SRL16E/CLK  n/a            0.532         2.000       1.468      SLICE_X108Y189  u_fp/g_add_pipe.u_fp_add_pipe/flags_special_s2_reg[4]_srl2___u_fp_g_fma_pipe.u_fp_fma_pipe_u_core_vb_reg_r/CLK
-High Pulse Width  Slow    SRL16E/CLK  n/a            0.532         2.000       1.468      SLICE_X108Y189  u_fp/g_add_pipe.u_fp_add_pipe/flags_special_s2_reg[4]_srl2___u_fp_g_fma_pipe.u_fp_fma_pipe_u_core_vb_reg_r/CLK
+Check Type        Corner  Lib Pin     Reference Pin  Required(ns)  Actual(ns)  Slack(ns)  Location       Pin
+Min Period        n/a     SRL16E/CLK  n/a            1.064         4.000       2.936      SLICE_X47Y169  u_fp/g_fma_pipe.u_fp_fma_pipe/f4_valid_reg_srl6___u_fp_g_fma_pipe.u_fp_fma_pipe_f4_valid_reg_r/CLK
+Low Pulse Width   Slow    SRL16E/CLK  n/a            0.532         2.000       1.468      SLICE_X47Y169  u_fp/g_fma_pipe.u_fp_fma_pipe/f4_valid_reg_srl6___u_fp_g_fma_pipe.u_fp_fma_pipe_f4_valid_reg_r/CLK
+High Pulse Width  Slow    SRL16E/CLK  n/a            0.532         2.000       1.468      SLICE_X47Y169  u_fp/g_fma_pipe.u_fp_fma_pipe/f4_valid_reg_srl6___u_fp_g_fma_pipe.u_fp_fma_pipe_f4_valid_reg_r/CLK
 
 
 

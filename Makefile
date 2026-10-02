@@ -7,7 +7,7 @@ OSS ?= /home/jesse/Documents/oss-cad-suite-linux-x64-20260813/oss-cad-suite
 
 .PHONY: regress regress-all regress-axilite smoke soak coverage formal lint \
         exhaustive-iter soak-iter regress-axilite-iter \
-        metrics-area metrics-runtime metrics-compare clean
+        metrics-area metrics-runtime metrics-latency metrics-compare clean
 
 regress:
 	uv run python tests/run_regression.py
@@ -67,6 +67,10 @@ metrics-area:
 
 metrics-runtime:
 	uv run python tests/metrics.py --runtime --out metrics/runtime-baseline.json
+
+# Per-op latency probe (cycles from in_valid to out_valid, per format).
+metrics-latency:
+	uv run python tests/latency.py --json metrics/latency-after.json
 
 # Deltas between two metrics JSON files, e.g.
 #   make metrics-compare BEFORE=metrics/area-baseline.json AFTER=metrics/area-after.json

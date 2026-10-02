@@ -34,7 +34,7 @@ int main(int argc, char** argv) {
     // iter=1: fp_unit was built with ITER_DIVSQRT=1; div (op 3) and sqrt
     // (op 4) use the in_valid/busy/out_valid handshake.
     const int iter = (argc > 4) ? atoi(argv[4]) : 0;
-    // Expected constant div/sqrt latency (0 = do not check): K+1 with
+    // Expected constant div/sqrt latency (0 = do not check): K+4 with
     // K = ceil((W_MANT+3)/2), supplied by the Python driver.
     const int divsqrt_cycles = (argc > 5) ? atoi(argv[5]) : 0;
     (void)iter;

@@ -14,7 +14,8 @@ support (3.3) and the five exception flags (7.2-7.6, including divide-by-zero
     rtl/                fp_pkg.sv, fp_add.sv, fp_mul.sv, fp_div.sv, fp_sqrt.sv,
                         fp_divsqrt_iter.sv, fp_fma.sv, fp_minmax.sv, fp_cmp.sv,
                         fp_totalorder.sv, fp_roundint.sv, the *_e8m0.sv sibling
-                        modules, fp_unit.sv (synthesizable SV) and
+                        modules, the *_pipe.sv pipelined siblings and fp_mul_core.sv,
+                        fp_unit.sv (synthesizable SV) and
                         fp_unit_axilite.sv (AXI4-Lite register wrapper)
     tests/reference/    bit-exact Python oracle (exact rational arithmetic)
     tests/test_fp_unit.py     cocotb tests (directed vectors + randomized)
@@ -22,6 +23,7 @@ support (3.3) and the five exception flags (7.2-7.6, including divide-by-zero
     tests/run_regression.py   builds and runs the width matrix
     tests/exhaustive.py       exhaustive all-vectors sweep of every 8-bit format
     tests/soak.py             cross-width randomized soak (medium formats)
+    tests/latency.py          per-op in_valid -> out_valid cycle-count probe
     tests/metrics.py          area/timing proxies (yosys) + target runtimes
     metrics/                  baseline/after metrics JSON (for --compare)
     formal/ + bmc_m6_*.sby    SymbiYosys formal property proofs of the M6 ops
@@ -41,6 +43,7 @@ support (3.3) and the five exception flags (7.2-7.6, including divide-by-zero
     make formal   # SymbiYosys BMC proofs (needs the oss-cad-suite)
     make metrics-area      # yosys cell count + ltp per format (baseline JSON)
     make metrics-runtime   # wall-clock of the standard targets
+    make metrics-latency   # per-op in_valid -> out_valid cycle table
     make metrics-compare BEFORE=... AFTER=...
 
 ## Toolchain notes
@@ -73,7 +76,7 @@ support (3.3) and the five exception flags (7.2-7.6, including divide-by-zero
   modules coexist (see the HANDOFF notes). The RTL is verified bit-exact by
   the regression and the exhaustive sweep regardless.
 
-## Pipelined Fmax-optimized core (250 MHz on VU9P-2L)
+## Pipelined latency-optimized core (250 MHz on VU9P-2L)
 
 The default configuration is fully pipelined with fixed, input-independent
 latency per operation. `in_valid` starts an operation (one pulse; ignored
@@ -81,42 +84,66 @@ while the same pipeline is busy) and `out_valid` pulses once with `y`/`flags`
 (and `cmp`). Latencies in cycles:
 
     format   add  sub  mul  fma  div  sqrt  rndint  min/max/cmp/totalOrder
-    E4M3       5    5    5    9    9     9      3          2
-    E5M2       5    5    5    9    7     7      3          2
-    BF16       5    5    5    9   13    13      3          2
-    binary16   5    5    5    9   15    15      3          2
-    binary32   5    5    5    9   29    29      3          2
-    binary64   5    5    5    9   57    57      3          2
+    E4M3       3    3    4    8    7     7      2          1
+    E5M2       3    3    4    8    6     6      2          1
+    BF16       3    3    4    8    9     9      2          1
+    binary16   3    3    4    8   10    10      2          1
+    binary32   3    3    4    8   17    17      2          1
+    binary64   3    3    5    9   31    31      2          1
     E8M0       1    1    1    1    1     1      1          1  (dedicated modules)
 
-* `fp_add_pipe`/`fp_mul_pipe`/`fp_fma_pipe`/`fp_roundint_pipe`: the rounding
-  datapaths split into registered stages (align -> add -> normalize -> round).
-* `fp_mul_core`: a LUT-only pipelined (24x24) multiplier (carry-save adder
-  tree, no DSP inference), shared by the multiply and FMA pipelines; the
-  synthesized design uses **0 DSPs**.
-* `fp_divsqrt_iter`: radix-4 iterative engine, two cycles per digit step (a
-  digit-select phase and an apply phase) plus a two-phase preload; the
-  latency is constant for every input, including special cases.
-* `fp_minmax_pipe`/`fp_cmp_pipe`/`fp_totalorder_pipe`: 2-stage versions of the
-  ordering datapaths.
+* `fp_add_pipe`: 3 stages. S1 unpacks/classifies and computes the per-operand
+  alignment shift amounts (signed, from the exponent fields; the subnormal
+  bit length is scanned on the mantissa bits so the leading-one scan runs in
+  parallel with the classification). S2 aligns with a single bidirectional
+  shift per operand (the alignment sticky is folded into the subtractor
+  carry-in; the two difference directions are computed in parallel and
+  selected by the borrow). S3 normalizes (leading-one + shift) and rounds;
+  the subnormal candidate is shifted directly from the pre-normalization sum
+  by (e_max - EMIN) - independent of the leading-one position - and the
+  rounding increment, exponent and overflow candidates are computed in
+  parallel with the GRS decision (carry-select).
+* `fp_mul_core` + `fp_mul_pipe`: a LUT-only pipelined multiplier (no DSP
+  inference), 2 stages for W <= 32 and 3 stages above (the final
+  carry-propagate level is folded into the last tree stage), followed by the
+  placement and round/encode stages; shared by the multiply and FMA
+  pipelines. The synthesized design uses **0 DSPs**.
+* `fp_divsqrt_iter`: radix-4 iterative engine, ONE digit per cycle (the
+  digit-select compare, the multiple mux and the remainder subtraction are
+  fused into a single registered step), plus a two-phase preload and a
+  publish cycle: latency K+4 with K = ceil((W_MANT+3)/2). It is constant for
+  every input, including special cases, and the restoring recurrence is
+  unchanged, so the results stay bit-exact with fp_div/fp_sqrt.
+* `fp_fma_pipe`: the wide-accumulator FMA is the longest of the add/mul/fma
+  group (8 cycles for W <= 32, 9 above); it was left structurally unchanged
+  and inherits the shorter shared multiplier core.
+* `fp_roundint_pipe`: 2 stages (prepare/GRS/round fused); `fp_minmax_pipe`/
+  `fp_cmp_pipe`/`fp_totalorder_pipe`: 1 stage (compare/select + register).
 
 Measured with the single Vivado implementation run (non-project batch,
 `synth_design -mode out_of_context`, 4.000 ns clock, `place_design`,
 `route_design`) on **xcvu9p-flga2104-2L-e**:
 
-    WNS +0.022 ns, TNS 0, 0 failing endpoints (3495)  -> 250 MHz met
-    6994 CLB LUTs, 2625 CLB registers, 0 DSPs
+    WNS +0.015 ns, TNS 0, 0 failing endpoints (2897)  -> 250 MHz met
+    6992 CLB LUTs, 2188 CLB registers, 0 DSPs
+    (critical path: the FMA round/encode stage, as in the Fmax pass)
 
 The progression: the original combinational design measured 17.6 ns
-(~57 MHz); after the pipelined add/mul/fma it was 5.0 ns, after the roundint
-and small-op pipes 4.65 ns, and after splitting the div/sqrt engine steps and
-preload it closed at 4.00 ns. `ITER_DIVSQRT = 0` selects the legacy
-combinational divider and square root (much longer critical path); the other
-operations stay pipelined. The legacy modules are kept for the formal
-property checks.
+(~57 MHz); the Fmax pass pipelined every operation and closed at 4.00 ns with
+5-cycle add/mul and a 2-cycle-per-digit div/sqrt engine. The latency pass cut
+mul to 4 cycles, div/sqrt to one cycle per radix-4 digit (binary32 29 -> 17,
+binary64 57 -> 31) and the ordering/roundint ops to 1-2 cycles; the add/sub
+datapath was then restructured to 3 cycles (single-shift alignment, parallel
+direction subtract, subnormal placement registered ahead of the normalize/
+round stage), while re-closing the same 4.00 ns clock. `ITER_DIVSQRT = 0`
+selects the legacy combinational divider and square root (much longer critical
+path); the other operations stay pipelined. The legacy modules are kept for
+the formal property checks.
 
 The `--iter` harness flags and `FP_ITER_DIVSQRT=1` still exist and now select
-the same default engine configuration.
+the same default engine configuration. `tests/latency.py`
+(`make metrics-latency`) prints the per-op cycle table above and checks that
+every op has a constant latency across normal, subnormal and special vectors.
 
 ## Semantics (bit-exact vs tests/reference)
 

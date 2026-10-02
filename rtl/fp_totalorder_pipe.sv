@@ -1,7 +1,7 @@
-// Pipelined IEEE 754-2019 totalOrder predicate (2 stages).
+// Pipelined IEEE 754-2019 totalOrder predicate (1 stage).
 //
 // Same semantics as fp_totalorder.sv: cmp[0] = a precedes-or-equals b,
-// cmp[1] = 0, y = 0, never signals. Fixed latency: 2 cycles.
+// cmp[1] = 0, y = 0, never signals. Fixed latency: 1 cycle.
 
 /* verilator lint_off WIDTHEXPAND */
 /* verilator lint_off WIDTHTRUNC */
@@ -46,18 +46,9 @@ module fp_totalorder_pipe #(
     end
   end
 
-  always_ff @(posedge clk) begin
-    if (!rst_n) begin
-      y         <= '0;
-      cmp       <= 2'd0;
-      flags     <= 5'd0;
-      out_valid <= 1'b0;
-    end else begin
-      y         <= '0;
-      cmp       <= cmp_s1;
-      flags     <= 5'd0;
-      out_valid <= v1;
-    end
-  end
+  assign y         = '0;
+  assign cmp       = cmp_s1;
+  assign flags     = 5'd0;
+  assign out_valid = v1;
 
 endmodule

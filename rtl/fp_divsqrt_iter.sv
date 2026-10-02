@@ -9,8 +9,12 @@
 // overflow/underflow/inexact rules (7.2-7.6).
 //
 // THE LATENCY IS CONSTANT (input-independent), including for special cases:
-//   cycles from `start` to `done` = K + 1, with K = ceil((W_MANT+3)/2)
-// (e.g. binary32: 14 cycles; binary64: 28). `done` pulses one cycle with the
+//   cycles from `start` to `done` = K + 4, with K = ceil((W_MANT+3)/2)
+// (e.g. binary32: 17 cycles; binary64: 31). One radix-4 digit is produced per
+// cycle: the digit selection (compare against the precomputed divisor
+// multiples / the current root candidates) and the remainder subtraction are
+// fused into a single registered step, so the engine runs at one cycle per
+// digit instead of the former two. `done` pulses one cycle with the
 // registered y/flags.
 //
 // Division (fp_div math): q_raw = floor(num / b_al) with
@@ -254,7 +258,7 @@ module fp_divsqrt_iter #(
   // ------------------------------------------------------------- iteration
   logic [2:0]        state;
   localparam logic [2:0] ST_IDLE = 3'd0, ST_PREP1 = 3'd1, ST_PREP2 = 3'd2,
-                         ST_STEP1 = 3'd3, ST_STEP2 = 3'd4;
+                         ST_STEP = 3'd3, ST_PUB = 3'd4;
   logic [FW-1:0]     q;
   logic [R_W-1:0]    rem;
   logic [POS_W-1:0]  pos;
@@ -278,10 +282,10 @@ module fp_divsqrt_iter #(
   logic [1:0]        d0_sqrt_p;
   logic [R_W-1:0]    rem0_sqrt_p;
 
-  // Two-cycle digit step. Cycle A computes p (the shifted remainder with the
-  // new radicand bits), the candidate subtrahends and the selected digit;
-  // cycle B applies the subtraction and shifts in the digit. `half_step`
-  // selects the radix-2 final step for odd W_MANT.
+  // One-cycle radix-4 digit step: p (the shifted remainder with the new
+  // radicand bits), the candidate subtrahends, the selected digit and the
+  // remainder subtraction all resolve in the same cycle. `half_step` selects
+  // the radix-2 final step for odd W_MANT.
   logic [R_W-1:0] p_a, sel_a;
   logic [1:0]     d4_a;
   logic           d2_a, half_step;
@@ -321,35 +325,33 @@ module fp_divsqrt_iter #(
     end
   end
 
-  logic [R_W-1:0] p_ar, sel_ar;
-  logic [1:0]     d4_ar;
-  logic           d2_ar;
-
-  // Cycle B: apply the subtraction and shift in the digit.
+  // Apply the subtraction and shift in the digit (same cycle as the select).
   logic [R_W-1:0] rem_b;
   logic [FW-1:0]  q_b;
   always_comb begin
-    rem_b = p_ar - sel_ar;
+    rem_b = p_a - sel_a;
     if (half_step)
-      q_b = (q << 1) | (FW)'(d2_ar);
+      q_b = (q << 1) | (FW)'(d2_a);
     else
-      q_b = (q << 2) | (FW)'(d4_ar);
+      q_b = (q << 2) | (FW)'(d4_a);
   end
 
-  // Final placement / sticky from the post-step values: the full quotient
-  // (MSB at TARGET after the optional a_al < b_al shift) or the root. The
-  // final remainder is the sticky in both cases (division: remainder != 0 iff
-  // the quotient has dropped fraction bits; sqrt: remainder != 0 iff X is not
-  // a perfect square).
+  // Final placement / sticky from the registered quotient/root and remainder
+  // (the publish cycle rounds these; in the step cycles the value is unused).
+  // Keeping the rounding off q_b/rem_b avoids re-introducing the digit-step
+  // (compare/mux/subtract) path into the publish cycle's static timing.
+  // The final remainder is the sticky in both cases (division: remainder != 0
+  // iff the quotient has dropped fraction bits; sqrt: remainder != 0 iff X is
+  // not a perfect square).
   logic [FW-1:0] placed;
   logic          norm_sticky;
   always_comb begin
     if (is_sqrt_r) begin
-      placed      = FW'(q_b);
-      norm_sticky = |rem_b;
+      placed      = FW'(q);
+      norm_sticky = |rem;
     end else begin
-      placed      = a_ge_b_r ? FW'(q_b) : FW'(q_b << 1);
-      norm_sticky = |rem_b;
+      placed      = a_ge_b_r ? FW'(q) : FW'(q << 1);
+      norm_sticky = |rem;
     end
   end
 
@@ -490,9 +492,9 @@ module fp_divsqrt_iter #(
   end
 
   // ----------------------------------------------------------------- control
-  // Constant latency: K iterations, then `done` (start cycle + K cycles +
-  // the done cycle). Special cases run the same countdown so the latency does
-  // not depend on the operands.
+  // Constant latency: K one-cycle digit steps, then `done` (start cycle + K
+  // cycles + the done cycle). Special cases run the same countdown so the
+  // latency does not depend on the operands.
   always_ff @(posedge clk) begin
     if (!rst_n) begin
       state           <= ST_IDLE;
@@ -526,10 +528,6 @@ module fp_divsqrt_iter #(
       e_res_sqrt_p    <= '0;
       d0_sqrt_p       <= '0;
       rem0_sqrt_p     <= '0;
-      p_ar            <= '0;
-      sel_ar          <= '0;
-      d4_ar           <= '0;
-      d2_ar           <= '0;
     end else begin
       done <= 1'b0;
       case (state)
@@ -586,33 +584,30 @@ module fp_divsqrt_iter #(
                                    * (S_W+2)'(b_al_r));
           pos      <= POS_INIT;
           count    <= COUNT_W'(K - 1);
-          state    <= ST_STEP1;
+          state    <= ST_STEP;
         end
-        ST_STEP1: begin
-          p_ar   <= p_a;
-          sel_ar <= sel_a;
-          d4_ar  <= d4_a;
-          d2_ar  <= d2_a;
-          state  <= ST_STEP2;
-        end
-        ST_STEP2: begin
+        ST_STEP: begin
+          q     <= q_b;
+          rem   <= rem_b;
           if (count == '0) begin
-            // Last iteration: q_b/rem_b are the final quotient/root and
-            // remainder; round and publish (or publish the latched special).
-            // The next transaction may start on this same cycle (engine busy
-            // is low), keeping back-to-back div/sqrt free of dead cycles.
-            y      <= special_r ? y_special_r : y_result;
-            flags  <= special_r ? flags_special_r : flags_result;
-            state  <= ST_IDLE;
-            busy   <= 1'b0;
-            done   <= 1'b1;
+            // Last digit applied: publish the rounded result from the
+            // registered quotient/root and remainder in the next cycle (the
+            // publish cycle keeps the rounding off the digit-step path).
+            state <= ST_PUB;
           end else begin
-            q     <= q_b;
-            rem   <= rem_b;
             pos   <= pos - (half_step ? (POS_W)'(2) : (POS_W)'(4));
             count <= count - 1'b1;
-            state <= ST_STEP1;
           end
+        end
+        ST_PUB: begin
+          // Round and publish (or publish the latched special). The next
+          // transaction may start on this same cycle (engine busy is low),
+          // keeping back-to-back div/sqrt free of dead cycles.
+          y      <= special_r ? y_special_r : y_result;
+          flags  <= special_r ? flags_special_r : flags_result;
+          state  <= ST_IDLE;
+          busy   <= 1'b0;
+          done   <= 1'b1;
         end
         default: state <= ST_IDLE;
       endcase
