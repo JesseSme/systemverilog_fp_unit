@@ -144,14 +144,23 @@ module fp_mul_pipe #(
     .a(s_a), .b(s_b), .p(P), .out_valid(core_valid)
   );
 
-  // context registers (valid from cycle 1; consumed by stage M1 in cycle 3)
-  logic [W-1:0]   y_special_s1;
-  logic [4:0]     flags_special_s1;
-  logic           special_s1;
-  logic           rsign_s1;
-  logic [2:0]     rm_s1;
+  // Context pipeline. The product P of the transaction started in cycle 0 is
+  // valid in cycle 2 (two-stage core, W <= 32) or cycle 3 (three-stage core),
+  // so stage M1 consumes the transaction context shifted by the same number
+  // of cycles. With only s1 (cycle 1), a back-to-back start stream would
+  // combine each product with the following transaction's context; the
+  // library's latency harness (one transaction at a time) never exercised it.
+  localparam bit CORE_TWO_STAGE = (S_W <= 32);
+
+  logic [W-1:0]   y_special_s1, y_special_s2, y_special_s3;
+  logic [4:0]     flags_special_s1, flags_special_s2, flags_special_s3;
+  logic           special_s1, special_s2, special_s3;
+  logic           rsign_s1, rsign_s2, rsign_s3;
+  logic [2:0]     rm_s1, rm_s2, rm_s3;
   logic signed [W_EXP+2:0] e_a_s1, e_b_s1;
+  logic signed [W_EXP+2:0] e_a_s2, e_b_s2, e_a_s3, e_b_s3;
   logic [BL_W-1:0] bl_a_s1, bl_b_s1;
+  logic [BL_W-1:0] bl_a_s2, bl_b_s2, bl_a_s3, bl_b_s3;
 
   always_ff @(posedge clk) begin
     if (!rst_n) begin
@@ -174,6 +183,81 @@ module fp_mul_pipe #(
       e_b_s1          <= e_b;
       bl_a_s1         <= BL_W'(bitlen(s_a));
       bl_b_s1         <= BL_W'(bitlen(s_b));
+    end
+  end
+
+  // s2 (and s3 for the three-stage core) keep the context aligned with P.
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      y_special_s2    <= '0;
+      flags_special_s2 <= 5'd0;
+      special_s2      <= 1'b0;
+      rsign_s2        <= 1'b0;
+      rm_s2           <= 3'd0;
+      e_a_s2          <= '0;
+      e_b_s2          <= '0;
+      bl_a_s2         <= '0;
+      bl_b_s2         <= '0;
+      y_special_s3    <= '0;
+      flags_special_s3 <= 5'd0;
+      special_s3      <= 1'b0;
+      rsign_s3        <= 1'b0;
+      rm_s3           <= 3'd0;
+      e_a_s3          <= '0;
+      e_b_s3          <= '0;
+      bl_a_s3         <= '0;
+      bl_b_s3         <= '0;
+    end else begin
+      y_special_s2    <= y_special_s1;
+      flags_special_s2 <= flags_special_s1;
+      special_s2      <= special_s1;
+      rsign_s2        <= rsign_s1;
+      rm_s2           <= rm_s1;
+      e_a_s2          <= e_a_s1;
+      e_b_s2          <= e_b_s1;
+      bl_a_s2         <= bl_a_s1;
+      bl_b_s2         <= bl_b_s1;
+      y_special_s3    <= y_special_s2;
+      flags_special_s3 <= flags_special_s2;
+      special_s3      <= special_s2;
+      rsign_s3        <= rsign_s2;
+      rm_s3           <= rm_s2;
+      e_a_s3          <= e_a_s2;
+      e_b_s3          <= e_b_s2;
+      bl_a_s3         <= bl_a_s2;
+      bl_b_s3         <= bl_b_s2;
+    end
+  end
+
+  // M1-side context, aligned with the core latency.
+  logic [W-1:0]   y_special_m1;
+  logic [4:0]     flags_special_m1;
+  logic           special_m1;
+  logic           rsign_m1;
+  logic [2:0]     rm_m1;
+  logic signed [W_EXP+2:0] e_a_m1, e_b_m1;
+  logic [BL_W-1:0] bl_a_m1, bl_b_m1;
+  always_comb begin
+    if (CORE_TWO_STAGE) begin
+      y_special_m1     = y_special_s2;
+      flags_special_m1 = flags_special_s2;
+      special_m1       = special_s2;
+      rsign_m1         = rsign_s2;
+      rm_m1            = rm_s2;
+      e_a_m1           = e_a_s2;
+      e_b_m1           = e_b_s2;
+      bl_a_m1          = bl_a_s2;
+      bl_b_m1          = bl_b_s2;
+    end else begin
+      y_special_m1     = y_special_s3;
+      flags_special_m1 = flags_special_s3;
+      special_m1       = special_s3;
+      rsign_m1         = rsign_s3;
+      rm_m1            = rm_s3;
+      e_a_m1           = e_a_s3;
+      e_b_m1           = e_b_s3;
+      bl_a_m1          = bl_a_s3;
+      bl_b_m1          = bl_b_s3;
     end
   end
 
@@ -200,11 +284,11 @@ module fp_mul_pipe #(
       placed_m1        = FW'(P >> (B - FW));
       placed_sticky_m1 = |(P & (((P_W)'(1) << (B - FW)) - 1));
     end
-    e_res_m1 = (W_EXP+4)'(e_a_s1) + (W_EXP+4)'(e_b_s1)
-             + (W_EXP+4)'(pbitlen(P) == int'(bl_a_s1) + int'(bl_b_s1));
+    e_res_m1 = (W_EXP+4)'(e_a_m1) + (W_EXP+4)'(e_b_m1)
+             + (W_EXP+4)'(pbitlen(P) == int'(bl_a_m1) + int'(bl_b_m1));
   end
-  // bitlen(s_a_s1)/s_b_s1 are carried in bl_a_s1/bl_b_s1; the carry-out
-  // identity uses those instead of re-running the leading-one search.
+  // bitlen(s_a)/s_b are carried in bl_a_m1/bl_b_m1; the carry-out identity
+  // uses those instead of re-running the leading-one search.
 
   logic [FW-1:0]    placed_r;
   logic             placed_sticky_r;
@@ -231,11 +315,11 @@ module fp_mul_pipe #(
       placed_r         <= placed_m1;
       placed_sticky_r  <= placed_sticky_m1;
       e_res_r          <= e_res_m1;
-      rsign_r          <= rsign_s1;
-      rm_r             <= rm_s1;
-      y_special_r      <= y_special_s1;
-      flags_special_r  <= flags_special_s1;
-      special_r        <= special_s1;
+      rsign_r          <= rsign_m1;
+      rm_r             <= rm_m1;
+      y_special_r      <= y_special_m1;
+      flags_special_r  <= flags_special_m1;
+      special_r        <= special_m1;
       m1_valid         <= core_valid;
     end
   end
