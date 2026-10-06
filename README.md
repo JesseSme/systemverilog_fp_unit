@@ -84,12 +84,12 @@ while the same pipeline is busy) and `out_valid` pulses once with `y`/`flags`
 (and `cmp`). Latencies in cycles:
 
     format   add  sub  mul  fma  div  sqrt  rndint  min/max/cmp/totalOrder
-    E4M3       3    3    4    7    7     7      2          1
-    E5M2       3    3    4    7    6     6      2          1
-    BF16       3    3    4    7    9     9      2          1
-    binary16   3    3    4    7   10    10      2          1
-    binary32   3    3    4    7   17    17      2          1
-    binary64   3    3    5    8   31    31      2          1
+    E4M3       3    3    4    7    6     6      2          1
+    E5M2       3    3    4    7    5     5      2          1
+    BF16       3    3    4    7    8     8      2          1
+    binary16   3    3    4    7    9     9      2          1
+    binary32   3    3    4    7   16    16      2          1
+    binary64   3    3    5    8   30    30      2          1
     E8M0       1    1    1    1    1     1      1          1  (dedicated modules)
 
 * `fp_add_pipe`: 3 stages. S1 unpacks/classifies and computes the per-operand
@@ -110,10 +110,11 @@ while the same pipeline is busy) and `out_valid` pulses once with `y`/`flags`
   pipelines. The synthesized design uses **0 DSPs**.
 * `fp_divsqrt_iter`: radix-4 iterative engine, ONE digit per cycle (the
   digit-select compare, the multiple mux and the remainder subtraction are
-  fused into a single registered step), plus a two-phase preload and a
-  publish cycle: latency K+4 with K = ceil((W_MANT+3)/2). It is constant for
-  every input, including special cases, and the restoring recurrence is
-  unchanged, so the results stay bit-exact with fp_div/fp_sqrt.
+  fused into a single registered step), with the classification/significand/
+  exponent setup resolved in the start cycle, a preload cycle and a publish
+  cycle: latency K+3 with K = ceil((W_MANT+3)/2). It is constant for every
+  input, including special cases, and the restoring recurrence is unchanged,
+  so the results stay bit-exact with fp_div/fp_sqrt.
 * `fp_fma_pipe`: 7 cycles for W <= 32 (8 above). The subnormal-candidate
   shift is computed from the pre-normalization accumulator in the normalize
   stage (the fp_add_pipe placement-ahead trick), so round/encode is a single

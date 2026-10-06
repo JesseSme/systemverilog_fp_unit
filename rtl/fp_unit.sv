@@ -320,7 +320,7 @@ module fp_unit #(
   // already-registered result is forwarded directly (out_valid = done), which
   // removes the second register stage and makes out_valid appear one cycle
   // after the engine finishes; the identical latency of every div/sqrt input
-  // (including special cases) is K+1 cycles from in_valid.
+  // (including special cases) is K+3 cycles from in_valid.
   logic [1+W_EXP+W_MANT-1:0] y_r;
   logic [4:0]                flags_r;
   logic [1:0]                cmp_r;
