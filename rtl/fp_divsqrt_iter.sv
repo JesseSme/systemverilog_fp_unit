@@ -9,13 +9,15 @@
 // overflow/underflow/inexact rules (7.2-7.6).
 //
 // THE LATENCY IS CONSTANT (input-independent), including for special cases:
-//   cycles from `start` to `done` = K + 4, with K = ceil((W_MANT+3)/2)
-// (e.g. binary32: 17 cycles; binary64: 31). One radix-4 digit is produced per
+//   cycles from `start` to `done` = K + 3, with K = ceil((W_MANT+3)/2)
+// (e.g. binary32: 16 cycles; binary64: 30). One radix-4 digit is produced per
 // cycle: the digit selection (compare against the precomputed divisor
 // multiples / the current root candidates) and the remainder subtraction are
-// fused into a single registered step, so the engine runs at one cycle per
-// digit instead of the former two. `done` pulses one cycle with the
-// registered y/flags.
+// fused into a single registered step. The classification/significand/
+// exponent setup resolves combinationally in the start cycle (the former
+// separate raw-input latch is gone); the preload runs in the next cycle and
+// the publish cycle rounds the registered quotient/root and remainder.
+// `done` pulses one cycle with the registered y/flags.
 //
 // Division (fp_div math): q_raw = floor(num / b_al) with
 // num = a_al << (S_W+2), a_al/b_al the significands normalized to MSB at
@@ -94,16 +96,16 @@ module fp_divsqrt_iter #(
   logic              a_sign, b_sign;
   logic [W_EXP-1:0]  a_exp, b_exp;
   logic [MANT_W-1:0] a_mant, b_mant;
-  assign a_sign = a_r[W-1];
-  assign a_exp  = a_r[W-2 -: W_EXP];
-  assign b_sign = b_r[W-1];
-  assign b_exp  = b_r[W-2 -: W_EXP];
+  assign a_sign = a[W-1];
+  assign a_exp  = a[W-2 -: W_EXP];
+  assign b_sign = b[W-1];
+  assign b_exp  = b[W-2 -: W_EXP];
   always_comb begin
     a_mant = '0;
     b_mant = '0;
     if (W_MANT > 0) begin
-      a_mant = a_r[W_MANT-1:0];
-      b_mant = b_r[W_MANT-1:0];
+      a_mant = a[W_MANT-1:0];
+      b_mant = b[W_MANT-1:0];
     end
   end
 
@@ -128,7 +130,7 @@ module fp_divsqrt_iter #(
     y_special     = '0;
     flags_special = '0;
     special_case  = 1'b0;
-    if (is_sqrt_r) begin
+    if (is_sqrt) begin
       // fp_sqrt special cases.
       if (a_nan) begin
         // 6.2.3: quiet NaN, payload of the operand; 7.2a: sNaN -> invalid.
@@ -253,19 +255,20 @@ module fp_divsqrt_iter #(
   assign rem0_sqrt = (R_W)'(v4) - (R_W)'(d0_sqrt) * (R_W)'(d0_sqrt);
 
   logic rsign;  // quotient sign XOR / 0 for sqrt
-  assign rsign = is_sqrt_r ? 1'b0 : (a_sign ^ b_sign);
+  assign rsign = is_sqrt ? 1'b0 : (a_sign ^ b_sign);
 
   // ------------------------------------------------------------- iteration
   logic [2:0]        state;
-  localparam logic [2:0] ST_IDLE = 3'd0, ST_PREP1 = 3'd1, ST_PREP2 = 3'd2,
-                         ST_STEP = 3'd3, ST_PUB = 3'd4;
+  localparam logic [2:0] ST_IDLE = 3'd0, ST_PREP2 = 3'd1, ST_STEP = 3'd2,
+                         ST_PUB = 3'd3;
   logic [FW-1:0]     q;
   logic [R_W-1:0]    rem;
   logic [POS_W-1:0]  pos;
   logic [COUNT_W-1:0] count;
 
-  // Latched iteration context.
-  logic [W-1:0]      a_r, b_r;
+  // Latched iteration context. The classification/significand/exponent values
+  // are registered directly in the start cycle (no raw-input latch); the
+  // phase-1 values are the preload operands held for the PREP2 cycle.
   logic              is_sqrt_r, rsign_r, a_ge_b_r, special_r;
   logic [2:0]        rm_r;
   logic signed [W_EXP+3:0] e_res_r;
@@ -518,8 +521,6 @@ module fp_divsqrt_iter #(
       two_b_r         <= '0;
       three_b_r       <= '0;
       x_r             <= '0;
-      a_r             <= '0;
-      b_r             <= '0;
       a_al_p          <= '0;
       b_al_p          <= '0;
       two_a_p         <= '0;
@@ -534,35 +535,31 @@ module fp_divsqrt_iter #(
         ST_IDLE: begin
           busy <= 1'b0;
           if (start) begin
-            // Phase 1: latch the raw inputs only (short path from the ports).
-            a_r       <= a;
-            b_r       <= b;
-            rm_r      <= rm;
-            is_sqrt_r <= is_sqrt;
-            state     <= ST_PREP1;
-            busy      <= 1'b1;
+            // Classification, significands, exponents, alignment and the sqrt
+            // preload resolve combinationally from the input ports at the
+            // start edge (the old IDLE+PREP1 merged); the preload digit step
+            // runs in ST_PREP2.
+            rsign_r         <= rsign;
+            special_r       <= special_case;
+            y_special_r     <= y_special;
+            flags_special_r <= flags_special;
+            b_al_r          <= b_al;
+            two_b_r         <= two_b;
+            three_b_r       <= three_b;
+            x_r             <= X;
+            a_al_p          <= a_al;
+            b_al_p          <= b_al;
+            two_a_p         <= two_a;
+            e_a_p           <= e_a;
+            e_b_p           <= e_b;
+            e_res_sqrt_p    <= e_res_sqrt;
+            d0_sqrt_p       <= d0_sqrt;
+            rem0_sqrt_p     <= rem0_sqrt;
+            rm_r            <= rm;
+            is_sqrt_r       <= is_sqrt;
+            state           <= ST_PREP2;
+            busy            <= 1'b1;
           end
-        end
-        ST_PREP1: begin
-          // Phase 2: classification, significands, exponents, alignment and
-          // the sqrt preload (all shallow from the latched inputs).
-          rsign_r         <= rsign;
-          special_r       <= special_case;
-          y_special_r     <= y_special;
-          flags_special_r <= flags_special;
-          b_al_r          <= b_al;
-          two_b_r         <= two_b;
-          three_b_r       <= three_b;
-          x_r             <= X;
-          a_al_p          <= a_al;
-          b_al_p          <= b_al;
-          two_a_p         <= two_a;
-          e_a_p           <= e_a;
-          e_b_p           <= e_b;
-          e_res_sqrt_p    <= e_res_sqrt;
-          d0_sqrt_p       <= d0_sqrt;
-          rem0_sqrt_p     <= rem0_sqrt;
-          state           <= ST_PREP2;
         end
         ST_PREP2: begin
           // Phase 3: the division digit selection / preload subtraction (the
