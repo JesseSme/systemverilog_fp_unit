@@ -429,8 +429,43 @@ module fp_fma_pipe #(
     e_res_f4 = top_f3 + (W_EXP+4)'($signed(p0_f4) - PTOP);
   end
 
+  // Subnormal-candidate shift, computed from the pre-normalization accumulator
+  // and registered at the F3->F4 boundary (the same placement-ahead trick as
+  // fp_add_pipe). The accumulator is anchored so value = acc * 2^(top_f3-PTOP);
+  // the shift down to the subnormal grid is therefore
+  //   sh = W_MANT + 3 + top_f3 - PTOP - EMIN
+  // and does not depend on the leading-one position p0 - which is what kept the
+  // old F5 version (shift = EMIN - e_res_f4r) on the critical path. shifted_sub
+  // is 8 * value / ulp_sub with the guard/round/sticky bits at [2:0].
+  //
+  // The placement stickies (bits of the product / c shifted below acc bit 0)
+  // are not represented in acc_f3r, so they feed the sticky directly; the old
+  // F5 path picked them up through norm_sticky_f4r.
+  logic [FW-1:0] shifted_sub_f4;
+  logic          sub_sticky_f4;
+  always_comb begin
+    int sh;
+    sh = W_MANT + 3 + int'(top_f3) - PTOP - EMIN;
+    shifted_sub_f4 = '0;
+    sub_sticky_f4  = sticky_p_f3r | sticky_c_f3r;
+    if (sh >= 0) begin
+      // Left shift: exact (no dropped bits); out of the selected subnormal
+      // range the value is unused and the truncation is harmless.
+      if (sh < FW) shifted_sub_f4 = (FW)'(acc_f3r << sh);
+    end else if (-sh >= ACC_W + 1) begin
+      // Shifted below the accumulator LSB: saturates to zero plus sticky.
+      sub_sticky_f4 = sub_sticky_f4 | (|acc_f3r);
+    end else begin
+      shifted_sub_f4 = (FW)'(acc_f3r >> (-sh));
+      sub_sticky_f4  = sub_sticky_f4
+                     | (|(acc_f3r & (((ACC_W + 1)'(1) << (-sh)) - 1)));
+    end
+  end
+
   logic [FW-1:0]   norm_f4r;
   logic            norm_sticky_f4r;
+  logic [FW-1:0]   shifted_sub_r;
+  logic            sub_sticky_r;
   logic signed [W_EXP+3:0] e_res_f4r;
   logic            rsign_f4;
   logic            cancel_f4;
@@ -444,6 +479,8 @@ module fp_fma_pipe #(
     if (!rst_n) begin
       norm_f4r         <= '0;
       norm_sticky_f4r  <= 1'b0;
+      shifted_sub_r    <= '0;
+      sub_sticky_r     <= 1'b0;
       e_res_f4r        <= '0;
       rsign_f4         <= 1'b0;
       cancel_f4        <= 1'b0;
@@ -455,6 +492,8 @@ module fp_fma_pipe #(
     end else begin
       norm_f4r         <= norm_f4;
       norm_sticky_f4r  <= norm_sticky_f4;
+      shifted_sub_r    <= shifted_sub_f4;
+      sub_sticky_r     <= sub_sticky_f4;
       e_res_f4r        <= e_res_f4;
       rsign_f4         <= rsign_f3r;
       cancel_f4        <= cancel_f3r;
@@ -525,19 +564,19 @@ module fp_fma_pipe #(
   generate
     if (W_MANT > 0) begin : g_subnormal
       always_comb begin
-        int signed          shift;
         logic [FW-1:0]      shifted;
         logic [S_W-1:0]     sig_s;
         logic               gs, rs, ss, inexact_s, up_s;
         logic [S_W-1:0]     sig_s2;
-        shift = int'(EMIN - int'(e_res_f4r));
-        if (shift > 0) shifted = norm_f4r >> shift;
-        else           shifted = '0;
+        // The shift to the subnormal grid was computed from the
+        // pre-normalization accumulator and registered in F4
+        // (shifted_sub_r / sub_sticky_r), so this path no longer waits on the
+        // leading-one position or e_res_f4r.
+        shifted = shifted_sub_r;
         sig_s  = shifted[TARGET -: S_W];
         gs     = shifted[2];
         rs     = shifted[1];
-        ss     = shifted[0] | norm_sticky_f4r
-               | |(norm_f4r & (((FW)'(1) << (shift > 0 ? shift : 0)) - 1));
+        ss     = shifted[0] | sub_sticky_r;
         inexact_s = gs | rs | ss;
         case (rm_f5)
           fp_pkg::RM_RNE: up_s = gs & (rs | ss) | (gs & ~rs & ~ss & sig_s[0]);
