@@ -167,15 +167,28 @@ module fp_fma_pipe #(
     .a(s_a), .b(s_b), .p(P), .out_valid(core_valid)
   );
 
-  // context registers (valid from cycle 1; consumed from stage F1 on)
-  logic [W-1:0]   y_special_s1;
-  logic [4:0]     flags_special_s1;
-  logic           special_s1;
-  logic           prod_sign_s1, c_sign_s1, c_zero_s1;
-  logic [S_W-1:0] s_c_s1;
+  // Context registers (valid from cycle 1; consumed from stage F1 on).
+  // The product is valid in cycle 2 (two-stage core, W <= 32) or cycle 3
+  // (three-stage core), so F1 must consume the context shifted by the same
+  // number of cycles. With only s1 a back-to-back start stream combines each
+  // product with the following transaction's context - the same misalignment
+  // fixed in fp_mul_pipe; the one-transaction-at-a-time harness never
+  // exercised it. s2/s3 keep the context aligned and CORE_TWO_STAGE picks the
+  // stage that matches the product.
+  localparam bit CORE_TWO_STAGE = (S_W <= 32);
+
+  logic [W-1:0]   y_special_s1, y_special_s2, y_special_s3;
+  logic [4:0]     flags_special_s1, flags_special_s2, flags_special_s3;
+  logic           special_s1, special_s2, special_s3;
+  logic           prod_sign_s1, prod_sign_s2, prod_sign_s3;
+  logic           c_sign_s1, c_sign_s2, c_sign_s3;
+  logic           c_zero_s1, c_zero_s2, c_zero_s3;
+  logic [S_W-1:0] s_c_s1, s_c_s2, s_c_s3;
   logic signed [W_EXP+2:0] e_a_s1, e_b_s1, e_c_s1;
+  logic signed [W_EXP+2:0] e_a_s2, e_b_s2, e_c_s2, e_a_s3, e_b_s3, e_c_s3;
   logic [BL_W-1:0] bl_a_s1, bl_b_s1, bl_c_s1;
-  logic [2:0]     rm_s1;
+  logic [BL_W-1:0] bl_a_s2, bl_b_s2, bl_c_s2, bl_a_s3, bl_b_s3, bl_c_s3;
+  logic [2:0]     rm_s1, rm_s2, rm_s3;
 
   always_ff @(posedge clk) begin
     if (!rst_n) begin
@@ -193,6 +206,34 @@ module fp_fma_pipe #(
       bl_b_s1          <= '0;
       bl_c_s1          <= '0;
       rm_s1            <= 3'd0;
+      y_special_s2     <= '0;
+      flags_special_s2 <= 5'd0;
+      special_s2       <= 1'b0;
+      prod_sign_s2     <= 1'b0;
+      c_sign_s2        <= 1'b0;
+      c_zero_s2        <= 1'b0;
+      s_c_s2           <= '0;
+      e_a_s2           <= '0;
+      e_b_s2           <= '0;
+      e_c_s2           <= '0;
+      bl_a_s2          <= '0;
+      bl_b_s2          <= '0;
+      bl_c_s2          <= '0;
+      rm_s2            <= 3'd0;
+      y_special_s3     <= '0;
+      flags_special_s3 <= 5'd0;
+      special_s3       <= 1'b0;
+      prod_sign_s3     <= 1'b0;
+      c_sign_s3        <= 1'b0;
+      c_zero_s3        <= 1'b0;
+      s_c_s3           <= '0;
+      e_a_s3           <= '0;
+      e_b_s3           <= '0;
+      e_c_s3           <= '0;
+      bl_a_s3          <= '0;
+      bl_b_s3          <= '0;
+      bl_c_s3          <= '0;
+      rm_s3            <= 3'd0;
     end else begin
       y_special_s1     <= y_special;
       flags_special_s1 <= flags_special;
@@ -208,6 +249,76 @@ module fp_fma_pipe #(
       bl_b_s1          <= BL_W'(bitlen(s_b));
       bl_c_s1          <= BL_W'(bitlen(s_c));
       rm_s1            <= rm;
+      y_special_s2     <= y_special_s1;
+      flags_special_s2 <= flags_special_s1;
+      special_s2       <= special_s1;
+      prod_sign_s2     <= prod_sign_s1;
+      c_sign_s2        <= c_sign_s1;
+      c_zero_s2        <= c_zero_s1;
+      s_c_s2           <= s_c_s1;
+      e_a_s2           <= e_a_s1;
+      e_b_s2           <= e_b_s1;
+      e_c_s2           <= e_c_s1;
+      bl_a_s2          <= bl_a_s1;
+      bl_b_s2          <= bl_b_s1;
+      bl_c_s2          <= bl_c_s1;
+      rm_s2            <= rm_s1;
+      y_special_s3     <= y_special_s2;
+      flags_special_s3 <= flags_special_s2;
+      special_s3       <= special_s2;
+      prod_sign_s3     <= prod_sign_s2;
+      c_sign_s3        <= c_sign_s2;
+      c_zero_s3        <= c_zero_s2;
+      s_c_s3           <= s_c_s2;
+      e_a_s3           <= e_a_s2;
+      e_b_s3           <= e_b_s2;
+      e_c_s3           <= e_c_s2;
+      bl_a_s3          <= bl_a_s2;
+      bl_b_s3          <= bl_b_s2;
+      bl_c_s3          <= bl_c_s2;
+      rm_s3            <= rm_s2;
+    end
+  end
+
+  // F1-side context, aligned with the core latency.
+  logic [W-1:0]   y_special_f1c;
+  logic [4:0]     flags_special_f1c;
+  logic           special_f1c, prod_sign_f1c, c_sign_f1c, c_zero_f1c;
+  logic [S_W-1:0] s_c_f1c;
+  logic signed [W_EXP+2:0] e_a_f1c, e_b_f1c, e_c_f1c;
+  logic [BL_W-1:0] bl_a_f1c, bl_b_f1c, bl_c_f1c;
+  logic [2:0]     rm_f1c;
+  always_comb begin
+    if (CORE_TWO_STAGE) begin
+      y_special_f1c     = y_special_s2;
+      flags_special_f1c = flags_special_s2;
+      special_f1c       = special_s2;
+      prod_sign_f1c     = prod_sign_s2;
+      c_sign_f1c        = c_sign_s2;
+      c_zero_f1c        = c_zero_s2;
+      s_c_f1c           = s_c_s2;
+      e_a_f1c           = e_a_s2;
+      e_b_f1c           = e_b_s2;
+      e_c_f1c           = e_c_s2;
+      bl_a_f1c          = bl_a_s2;
+      bl_b_f1c          = bl_b_s2;
+      bl_c_f1c          = bl_c_s2;
+      rm_f1c            = rm_s2;
+    end else begin
+      y_special_f1c     = y_special_s3;
+      flags_special_f1c = flags_special_s3;
+      special_f1c       = special_s3;
+      prod_sign_f1c     = prod_sign_s3;
+      c_sign_f1c        = c_sign_s3;
+      c_zero_f1c        = c_zero_s3;
+      s_c_f1c           = s_c_s3;
+      e_a_f1c           = e_a_s3;
+      e_b_f1c           = e_b_s3;
+      e_c_f1c           = e_c_s3;
+      bl_a_f1c          = bl_a_s3;
+      bl_b_f1c          = bl_b_s3;
+      bl_c_f1c          = bl_c_s3;
+      rm_f1c            = rm_s3;
     end
   end
 
@@ -222,15 +333,15 @@ module fp_fma_pipe #(
   logic signed [SH_W-1:0]  shift_p_f1, shift_c_f1;
   always_comb begin
     logic signed [W_EXP+3:0] prod_top;
-    E_f1 = (W_EXP+4)'(e_a_s1) + (W_EXP+4)'(e_b_s1)
-         - (W_EXP+4)'(bl_a_s1) - (W_EXP+4)'(bl_b_s1)
+    E_f1 = (W_EXP+4)'(e_a_f1c) + (W_EXP+4)'(e_b_f1c)
+         - (W_EXP+4)'(bl_a_f1c) - (W_EXP+4)'(bl_b_f1c)
          + (W_EXP+4)'(2);
     prod_top = E_f1 + (W_EXP+4)'($signed(pbitlen(P))) - (W_EXP+4)'(1);
-    top_f1 = (c_zero_s1 || prod_top >= (W_EXP+4)'(e_c_s1)) ? prod_top
-                                                           : (W_EXP+4)'(e_c_s1);
+    top_f1 = (c_zero_f1c || prod_top >= (W_EXP+4)'(e_c_f1c)) ? prod_top
+                                                             : (W_EXP+4)'(e_c_f1c);
     shift_p_f1 = SH_W'(int'(PTOP) - int'(top_f1) + int'(E_f1));
-    shift_c_f1 = SH_W'(int'(PTOP) - int'(top_f1) + int'(e_c_s1)
-                        - int'(bl_c_s1) + 1);
+    shift_c_f1 = SH_W'(int'(PTOP) - int'(top_f1) + int'(e_c_f1c)
+                        - int'(bl_c_f1c) + 1);
   end
 
   logic [P_W-1:0]          P_f1;
@@ -264,14 +375,14 @@ module fp_fma_pipe #(
       top_f1r          <= top_f1;
       shift_p_f1r      <= shift_p_f1;
       shift_c_f1r      <= shift_c_f1;
-      s_c_f1           <= s_c_s1;
-      prod_sign_f1     <= prod_sign_s1;
-      c_sign_f1        <= c_sign_s1;
-      c_zero_f1        <= c_zero_s1;
-      rm_f1            <= rm_s1;
-      y_special_f1     <= y_special_s1;
-      flags_special_f1 <= flags_special_s1;
-      special_f1       <= special_s1;
+      s_c_f1           <= s_c_f1c;
+      prod_sign_f1     <= prod_sign_f1c;
+      c_sign_f1        <= c_sign_f1c;
+      c_zero_f1        <= c_zero_f1c;
+      rm_f1            <= rm_f1c;
+      y_special_f1     <= y_special_f1c;
+      flags_special_f1 <= flags_special_f1c;
+      special_f1       <= special_f1c;
       f1_valid         <= core_valid;
     end
   end
