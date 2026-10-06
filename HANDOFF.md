@@ -727,13 +727,51 @@ optimization captures `metrics/area-after*.json` and diffs with
   across the streams. (Note: the exhaustive sweep caught a width bug in the
   first subnormal-amount precompute - the clamped amounts need SUM_W range,
   not the narrower alignment widths.)
-- Still open: the FMA round/encode stage is the critical path (+0.015 ns)
-  with the add S3 stage ~0.13 ns behind it; further add latency cuts would
-  need a leading-zero-anticipation / far-near split to remove the lpos from
-  the S3 critical path; `fp_fma`'s `ACC_W = 3*S_W+6` accumulator width (needs
-  an exactness proof); operand isolation/clock gating for power (needs a
-  toggle power proxy), and the E8M0 module duplication (E8M0 ops remain
-  1-cycle combinational).
+- Landed (FMA latency + streaming pass, 250 MHz re-closed on xcvu9p-2L):
+  binary32 fma 8 -> 7, div/sqrt 17 -> 16 (binary64 fma 9 -> 8, div/sqrt
+  31 -> 30; E4M3 div/sqrt 7 -> 6, E5M2 6 -> 5, BF16 9 -> 8, binary16
+  10 -> 9). Changes:
+  * fp_fma_pipe: the subnormal-candidate shift is computed from the
+    pre-normalization accumulator (the fp_add_pipe placement-ahead trick):
+    value = acc * 2^(top_f3-PTOP), so the shift to the subnormal grid is
+    W_MANT+3+top_f3-PTOP-EMIN and does not depend on the leading-one
+    position. That removed the F5 variable shifter from the critical path
+    (Vivado WNS +0.015 -> +0.023; critical path moved from F5 to F1). The
+    product/c placement stickies are not in acc and must feed the subnormal
+    sticky directly (caught by the differential harness).
+  * fp_fma_pipe: with the subnormal shift precomputed in F4, F5a/F5b merge
+    into one round/encode stage; FMA 8 -> 7 (W <= 32), 9 -> 8 (binary64).
+    WNS +0.009 ns (the mul round/encode is then the critical path).
+  * fp_fma_pipe: the F1 context is pipelined s1 -> s2 -> s3 and selected by
+    the core latency (CORE_TWO_STAGE), fixing back-to-back start streams
+    exactly like the fp_mul_pipe M1 fix (was ~99% wrong at binary32 with one
+    start per cycle; the one-transaction-at-a-time harness never caught it).
+    WNS +0.090 ns.
+  * fp_divsqrt_iter: classification/significands/exponents resolve in the
+    start cycle (former IDLE+PREP1 merged; the raw-input latch is gone), so
+    the setup is one cycle shorter: K+4 -> K+3. WNS +0.043 ns; the radix-4
+    digit step (pos -> rem, 3.939 ns) is now the critical path.
+  * Rejected at the 4.000 ns clock (measured, not merged):
+    - FMA F1+F2 merge with product-MSB anticipation (pbitlen =
+      bl_a+bl_b-1+P[bl_a+bl_b-1] => prod_top = e_a+e_b+msb): -0.866 ns, 308
+      failing endpoints (patch archived at
+      /tmp/opencode/a3-f1f2-merge-attempt.patch).
+    - div/sqrt publish folded into the last step, and the preload merged into
+      the start cycle (K+1): functionally correct (exhaustive/soak PASS) but
+      -0.674 ns.
+  * New scratch harnesses (/tmp/opencode/fma_diff): differential vs the
+    combinational fp_fma (one-at-a-time: 2M x 6 formats plus 30M at binary32
+    and 10M at binary64 across seeds) and streaming (one start per cycle with
+    FIFO-tracked operands); both 0 mismatches. Worth promoting into tests/.
+- Still open: the div/sqrt radix-4 digit step is now the critical path
+  (+0.043 ns); cutting div/sqrt latency further needs a faster step
+  (redundant-digit SRT + carry-save remainder, or digit speculation), not
+  stage merges - the measured setup/publish folds do not fit 4 ns. Add
+  latency cuts would need a leading-zero-anticipation / far-near split to
+  remove the lpos from the S3 critical path; `fp_fma`'s `ACC_W = 3*S_W+6`
+  accumulator width (needs an exactness proof); operand isolation/clock
+  gating for power (needs a toggle power proxy), and the E8M0 module
+  duplication (E8M0 ops remain 1-cycle combinational).
 
 ### Known limitations
 
