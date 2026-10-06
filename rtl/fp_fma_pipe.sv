@@ -6,14 +6,16 @@
 // and normalization are pipelined:
 //
 //   cycle 0        unpack/classify/special; core start with s_a, s_b
-//   cycles 1-3     core reduction tree
-//   stage F1 (reg after cycle 3)   E, top, shift amounts
-//   stage F2 (reg after cycle 4)   place product and c in the accumulator
-//   stage F3 (reg after cycle 5)   3p+6-bit sign-magnitude add/sub
-//   stage F4 (reg after cycle 6)   normalize (leading-one + shift)
-//   stage F5 (reg after cycle 7)   GRS round, overflow/subnormal, encode
+//   cycles 1-3     core reduction tree (2 cycles for W <= 32)
+//   stage F1 (reg after the core)  E, top, shift amounts
+//   stage F2                       place product and c in the accumulator
+//   stage F3                       3p+6-bit sign-magnitude add/sub
+//   stage F4                       normalize (leading-one + shift) and the
+//                                  subnormal-candidate shift, both computed
+//                                  from the pre-normalization accumulator
+//   stage F5                       GRS round, overflow/subnormal, encode
 //
-// Fixed latency: 8 cycles from `start` to `out_valid`.
+// Fixed latency: 7 cycles (W <= 32) / 8 (binary64) from `start` to `out_valid`.
 
 /* verilator lint_off WIDTHEXPAND */
 /* verilator lint_off WIDTHTRUNC */
@@ -627,63 +629,29 @@ module fp_fma_pipe #(
   logic [W-1:0] y_cancel;
   assign y_cancel = {(rm_f5 == fp_pkg::RM_RM), {W_EXP{1'b0}}, {W_MANT{1'b0}}};
 
-  // The round/encode stage is split into two: F5a evaluates the normal and
-  // subnormal paths plus the special/cancel candidates, F5b only muxes the
-  // already-registered candidates (short final path).
-  logic [W-1:0] y_normal_r5, y_sub_r5, y_special_r5, y_cancel_r5;
-  logic [4:0]   flags_normal_r5, flags_sub_r5, flags_special_r5;
-  logic         special_r5, cancel_r5;
-  logic signed [W_EXP+3:0] e_res_r5;
-  logic         v5;
-
-  always_ff @(posedge clk) begin
-    if (!rst_n) begin
-      y_normal_r5      <= '0;
-      y_sub_r5         <= '0;
-      y_special_r5     <= '0;
-      y_cancel_r5      <= '0;
-      flags_normal_r5  <= 5'd0;
-      flags_sub_r5     <= 5'd0;
-      flags_special_r5 <= 5'd0;
-      special_r5       <= 1'b0;
-      cancel_r5        <= 1'b0;
-      e_res_r5         <= '0;
-      v5               <= 1'b0;
-    end else begin
-      y_normal_r5      <= y_normal;
-      y_sub_r5         <= y_sub;
-      y_special_r5     <= y_special_f4;
-      y_cancel_r5      <= y_cancel;
-      flags_normal_r5  <= flags_normal;
-      flags_sub_r5     <= flags_sub;
-      flags_special_r5 <= flags_special_f4;
-      special_r5       <= special_f4;
-      cancel_r5        <= cancel_f4;
-      e_res_r5         <= e_res_f4r;
-      v5               <= f4_valid;
-    end
-  end
-
+  // Round/encode is a single stage (was F5a candidates + F5b mux): with the
+  // subnormal shift precomputed in F4 the round/mux path is short enough to
+  // register directly, and `out_valid` rides f4_valid.
   always_ff @(posedge clk) begin
     if (!rst_n) begin
       y         <= '0;
       flags     <= 5'd0;
       out_valid <= 1'b0;
     end else begin
-      if (special_r5) begin
-        y     <= y_special_r5;
-        flags <= flags_special_r5;
-      end else if (cancel_r5) begin
-        y     <= y_cancel_r5;
+      if (special_f4) begin
+        y     <= y_special_f4;
+        flags <= flags_special_f4;
+      end else if (cancel_f4) begin
+        y     <= y_cancel;
         flags <= 5'd0;
-      end else if ($signed(e_res_r5) >= EMIN_S) begin
-        y     <= y_normal_r5;
-        flags <= flags_normal_r5;
+      end else if ($signed(e_res_f4r) >= EMIN_S) begin
+        y     <= y_normal;
+        flags <= flags_normal;
       end else begin
-        y     <= y_sub_r5;
-        flags <= flags_sub_r5;
+        y     <= y_sub;
+        flags <= flags_sub;
       end
-      out_valid <= v5;
+      out_valid <= f4_valid;
     end
   end
 
