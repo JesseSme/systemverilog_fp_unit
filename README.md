@@ -128,9 +128,9 @@ Measured with the single Vivado implementation run (non-project batch,
 `synth_design -mode out_of_context`, 4.000 ns clock, `place_design`,
 `route_design`) on **xcvu9p-flga2104-2L-e**:
 
-    WNS +0.015 ns, TNS 0, 0 failing endpoints (2897)  -> 250 MHz met
-    6992 CLB LUTs, 2188 CLB registers, 0 DSPs
-    (critical path: the FMA round/encode stage, as in the Fmax pass)
+    WNS +0.014 ns, TNS 0, 0 failing endpoints  -> 250 MHz met
+    7255 CLB LUTs, 2202 CLB registers, 0 DSPs
+    (critical path: the div/sqrt publish subnormal-rounding path)
 
 The progression: the original combinational design measured 17.6 ns
 (~57 MHz); the Fmax pass pipelined every operation and closed at 4.00 ns with
@@ -139,7 +139,14 @@ mul to 4 cycles, div/sqrt to one cycle per radix-4 digit (binary32 29 -> 17,
 binary64 57 -> 31) and the ordering/roundint ops to 1-2 cycles; the add/sub
 datapath was then restructured to 3 cycles (single-shift alignment, parallel
 direction subtract, subnormal placement registered ahead of the normalize/
-round stage), while re-closing the same 4.00 ns clock. `ITER_DIVSQRT = 0`
+round stage), while re-closing the same 4.00 ns clock. A later FMA pass
+computed the subnormal candidate from the pre-normalization accumulator (the
+same placement-ahead trick) and merged the round/encode stages, taking FMA
+8 -> 7 (binary64 9 -> 8), and aligned the FMA context with the core latency so
+back-to-back start streams are correct; div/sqrt resolved the classifier in
+the start cycle for K+3 (binary32 17 -> 16, binary64 31 -> 30). That pass
+re-closed at +0.014 ns; the earlier FMA F1+F2 merge and the div/sqrt K+1
+setup/publish folds were measured and rejected at 4.000 ns. `ITER_DIVSQRT = 0`
 selects the legacy combinational divider and square root (much longer critical
 path); the other operations stay pipelined. The legacy modules are kept for
 the formal property checks.
