@@ -167,7 +167,7 @@ module fp_unit #(
 
   generate
     if (PIPE_SQRT_SRT) begin : g_sqrt_srt
-      fp_sqrt_srt #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_sqrt_srt (
+      fp_sqrt_srt #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DPS(1)) u_fp_sqrt_srt (
         .a(a), .rm(rm), .start(start_sqrt_srt),
         .y(y_sqrt_srt), .flags(flags_sqrt_srt),
         .clk(clk), .rst_n(rst_n), .out_valid(sqrt_srt_valid)

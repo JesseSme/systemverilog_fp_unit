@@ -171,9 +171,9 @@ module fp_div_srt #(
     else          dcell_of = 4'(t << (5 - S_W));
   endfunction
 
-  // QST: q = -2 + sum(k >= t_i); thresholds by divisor cell
-  function automatic logic signed [2:0] qst_sel(input logic signed [7:0] k,
-                                                input logic [3:0] dcell);
+  // QST thresholds by divisor cell (decoded once in the setup)
+  function automatic logic signed [7:0] qst_th(input logic [3:0] dcell,
+                                               input logic [1:0] idx);
     logic signed [7:0] t0, t1, t2, t3;
     case (dcell)
       4'd0 : begin t0 = -13; t1 = -4; t2 = 4;  t3 = 12; end
@@ -193,6 +193,20 @@ module fp_div_srt #(
       4'd14: begin t0 = -22; t1 = -7; t2 = 9;  t3 = 24; end
       default: begin t0 = -23; t1 = -7; t2 = 9; t3 = 24; end
     endcase
+    case (idx)
+      2'd0: qst_th = t0;
+      2'd1: qst_th = t1;
+      2'd2: qst_th = t2;
+      default: qst_th = t3;
+    endcase
+  endfunction
+
+  // selection from precomputed thresholds: q = -2 + sum(k >= t_i)
+  function automatic logic signed [2:0] qst_sel(input logic signed [7:0] k,
+                                                input logic signed [7:0] t0,
+                                                input logic signed [7:0] t1,
+                                                input logic signed [7:0] t2,
+                                                input logic signed [7:0] t3);
     qst_sel = 3'(-2) + 3'(k >= t0) + 3'(k >= t1) + 3'(k >= t2) + 3'(k >= t3);
   endfunction
 
@@ -215,6 +229,8 @@ module fp_div_srt #(
   logic [QW-1:0]  qm_st [0:NSTG];
   logic [3:0]     dc_st [0:NSTG];
   logic [S_W-1:0] bal_st [0:NSTG];
+  logic signed [7:0] th0_st [0:NSTG], th1_st [0:NSTG], th2_st [0:NSTG], th3_st [0:NSTG];
+  logic [CSW+2:0] m4_st [0:NSTG], m8_st [0:NSTG];
   logic           valid_st [0:NSTG];
   logic [W-1:0]   ysp_st [0:NSTG];
   logic [4:0]     fsp_st [0:NSTG];
@@ -226,22 +242,26 @@ module fp_div_srt #(
 
   always_ff @(posedge clk) begin
     if (!rst_n) begin
-      for (int i = 0; i <= NSTG; i++) begin
-        s_st[i]  <= '0;
-        c_st[i]  <= '0;
-        q_st[i]  <= '0;
-        qm_st[i] <= '1;             // QM = Q - 1 = -1
-        dc_st[i] <= '0;
-        bal_st[i] <= '0;
-        valid_st[i] <= 1'b0;
-        ysp_st[i] <= '0;
-        fsp_st[i] <= 5'd0;
-        sp_st[i]  <= 1'b0;
-        rs_st[i]  <= 1'b0;
-        ge_st[i]  <= 1'b0;
-        rm_st[i]  <= 3'd0;
-        er_st[i]  <= '0;
-      end
+      s_st[0]  <= '0;
+      c_st[0]  <= '0;
+      q_st[0]  <= '0;
+      qm_st[0] <= '1;               // QM = Q - 1 = -1
+      dc_st[0] <= '0;
+      bal_st[0] <= '0;
+      th0_st[0] <= '0;
+      th1_st[0] <= '0;
+      th2_st[0] <= '0;
+      th3_st[0] <= '0;
+      m4_st[0] <= '0;
+      m8_st[0] <= '0;
+      valid_st[0] <= 1'b0;
+      ysp_st[0] <= '0;
+      fsp_st[0] <= 5'd0;
+      sp_st[0]  <= 1'b0;
+      rs_st[0]  <= 1'b0;
+      ge_st[0]  <= 1'b0;
+      rm_st[0]  <= 3'd0;
+      er_st[0]  <= '0;
     end else if (start) begin
       s_st[0]  <= (CSW)'(a_al);
       c_st[0]  <= '0;
@@ -249,6 +269,12 @@ module fp_div_srt #(
       qm_st[0] <= '1;
       dc_st[0] <= dcell_of(b_al);
       bal_st[0] <= b_al;
+      th0_st[0] <= qst_th(dcell_of(b_al), 2'd0);
+      th1_st[0] <= qst_th(dcell_of(b_al), 2'd1);
+      th2_st[0] <= qst_th(dcell_of(b_al), 2'd2);
+      th3_st[0] <= qst_th(dcell_of(b_al), 2'd3);
+      m4_st[0]  <= (CSW+3)'(b_al) << 2;
+      m8_st[0]  <= (CSW+3)'(b_al) << 3;
       valid_st[0] <= 1'b1;
       ysp_st[0] <= y_special;
       fsp_st[0] <= flags_special;
@@ -279,15 +305,29 @@ module fp_div_srt #(
       cv  = c_st[st];
       qv  = q_st[st];
       qmv = qm_st[st];
+      k   = '0;
+      d   = '0;
+      a4  = '0;
+      b4  = '0;
+      prod = '0;
+      cc  = '0;
+      ss  = '0;
+      maj = '0;
       for (int j = 0; j < DPS; j++) begin
         if (st * DPS + j < NDIG) begin
           k = est_k(sv, cv);
-          d = qst_sel(k, dc_st[st]);
+          d = qst_sel(k, th0_st[st], th1_st[st], th2_st[st], th3_st[st]);
           // u' = 4u - 4*d*Den  (3:2 CSA, exact sign extension within CSW+2)
           a4   = (CSW+3)'(sv) << 2;
           b4   = (CSW+3)'(cv) << 2;
-          prod = $signed(d) * $signed({1'b0, bal_st[st]});
-          cc   = -(prod <<< 2);
+          case (d)
+            3'sd1:  prod = $signed(m4_st[st]);
+            3'sd2:  prod = $signed(m8_st[st]);
+            -3'sd1: prod = -$signed(m4_st[st]);
+            -3'sd2: prod = -$signed(m8_st[st]);
+            default: prod = '0;
+          endcase
+          cc   = -prod;
           ss   = a4 ^ b4 ^ (CSW+3)'(cc);
           maj  = (a4 & b4) | (a4 & (CSW+3)'(cc)) | (b4 & (CSW+3)'(cc));
           sv   = CSW'(ss);
@@ -329,6 +369,12 @@ module fp_div_srt #(
         qm_st[st+1] <= qm_nxt;
         dc_st[st+1] <= dc_st[st];
         bal_st[st+1] <= bal_st[st];
+        th0_st[st+1] <= th0_st[st];
+        th1_st[st+1] <= th1_st[st];
+        th2_st[st+1] <= th2_st[st];
+        th3_st[st+1] <= th3_st[st];
+        m4_st[st+1] <= m4_st[st];
+        m8_st[st+1] <= m8_st[st];
         valid_st[st+1] <= valid_st[st];
         ysp_st[st+1] <= ysp_st[st];
         fsp_st[st+1] <= fsp_st[st];
