@@ -151,30 +151,240 @@ module fp_sqrt_srt #(
     else          sh_ar = 16'($signed(v) <<< (-sh));
   endfunction
 
-  // exact first digit (q < 4): pick the valid d with the smallest |R'|
-  function automatic logic signed [3:0] first_digit(input logic [QW-1:0] qv,
-                                                    input logic [CSW-1:0] rv,
+  // exact first digit (q < 4 only, i.e. the very first digit): small
+  // table over {q[1:0], R[2:0], bits[3:0]} generated from the model
+  function automatic logic signed [3:0] first_digit(input logic [1:0] qv,
+                                                    input logic [2:0] rv,
                                                     input logic [3:0] bits);
-    logic signed [CSW+4:0] p, term, bound, diff;
-    logic signed [3:0]     best;
-    logic signed [CSW+4:0] bestabs;
-    p = $signed((CSW+5)'(rv)) * 16 + $signed((CSW+5)'(bits));
-    best = 0;
-    bestabs = {1'b0, {(CSW+4){1'b1}}};
-    for (int d = -4; d <= 4; d++) begin
-      term  = $signed((CSW+5)'(d)) * ($signed((CSW+5)'(qv)) * 8 + d);
-      bound = $signed((CSW+5)'(qv)) * 8 + 2 * d;
-      if ((4 * $signed((CSW+5)'(qv)) + d) > 0) begin            // q' > 0
-        diff = term - p;
-        if ((diff <= bound) && (diff >= -bound)) begin
-          if ((diff >= 0 ? diff : -diff) < bestabs) begin
-            bestabs = (diff >= 0 ? diff : -diff);
-            best    = 4'(d);
-          end
-        end
-      end
-    end
-    first_digit = best;
+    logic [8:0] idx;
+    idx = {qv, rv, bits};
+    case (idx)
+      9'h100: first_digit = 4'sd0;
+      9'h101: first_digit = 4'sd0;
+      9'h102: first_digit = 4'sd0;
+      9'h103: first_digit = 4'sd0;
+      9'h104: first_digit = 4'sd0;
+      9'h105: first_digit = 4'sd0;
+      9'h106: first_digit = 4'sd0;
+      9'h107: first_digit = 4'sd0;
+      9'h108: first_digit = 4'sd0;
+      9'h109: first_digit = 4'sd1;
+      9'h10a: first_digit = 4'sd1;
+      9'h10b: first_digit = 4'sd1;
+      9'h10c: first_digit = 4'sd1;
+      9'h10d: first_digit = 4'sd1;
+      9'h10e: first_digit = 4'sd1;
+      9'h10f: first_digit = 4'sd1;
+      9'h110: first_digit = 4'sd1;
+      9'h111: first_digit = 4'sd1;
+      9'h112: first_digit = 4'sd1;
+      9'h113: first_digit = 4'sd1;
+      9'h114: first_digit = 4'sd1;
+      9'h115: first_digit = 4'sd1;
+      9'h116: first_digit = 4'sd1;
+      9'h117: first_digit = 4'sd1;
+      9'h118: first_digit = 4'sd1;
+      9'h119: first_digit = 4'sd1;
+      9'h11a: first_digit = 4'sd1;
+      9'h11b: first_digit = 4'sd2;
+      9'h11c: first_digit = 4'sd2;
+      9'h11d: first_digit = 4'sd2;
+      9'h11e: first_digit = 4'sd2;
+      9'h11f: first_digit = 4'sd2;
+      9'h120: first_digit = 4'sd2;
+      9'h121: first_digit = 4'sd2;
+      9'h122: first_digit = 4'sd2;
+      9'h123: first_digit = 4'sd2;
+      9'h124: first_digit = 4'sd2;
+      9'h125: first_digit = 4'sd2;
+      9'h126: first_digit = 4'sd2;
+      9'h127: first_digit = 4'sd2;
+      9'h128: first_digit = 4'sd2;
+      9'h129: first_digit = 4'sd2;
+      9'h12a: first_digit = 4'sd2;
+      9'h12b: first_digit = 4'sd2;
+      9'h12c: first_digit = 4'sd2;
+      9'h12d: first_digit = 4'sd2;
+      9'h12e: first_digit = 4'sd2;
+      9'h12f: first_digit = 4'sd3;
+      9'h130: first_digit = 4'sd3;
+      9'h131: first_digit = 4'sd3;
+      9'h132: first_digit = 4'sd3;
+      9'h133: first_digit = 4'sd3;
+      9'h134: first_digit = 4'sd3;
+      9'h135: first_digit = 4'sd3;
+      9'h136: first_digit = 4'sd3;
+      9'h137: first_digit = 4'sd3;
+      9'h138: first_digit = 4'sd3;
+      9'h139: first_digit = 4'sd3;
+      9'h13a: first_digit = 4'sd3;
+      9'h13b: first_digit = 4'sd3;
+      9'h13c: first_digit = 4'sd3;
+      9'h13d: first_digit = 4'sd3;
+      9'h13e: first_digit = 4'sd3;
+      9'h13f: first_digit = 4'sd3;
+      9'h140: first_digit = 4'sd3;
+      9'h141: first_digit = 4'sd3;
+      9'h142: first_digit = 4'sd3;
+      9'h143: first_digit = 4'sd3;
+      9'h144: first_digit = 4'sd3;
+      9'h145: first_digit = 4'sd4;
+      9'h146: first_digit = 4'sd4;
+      9'h147: first_digit = 4'sd4;
+      9'h148: first_digit = 4'sd4;
+      9'h149: first_digit = 4'sd4;
+      9'h14a: first_digit = 4'sd4;
+      9'h14b: first_digit = 4'sd4;
+      9'h14c: first_digit = 4'sd4;
+      9'h14d: first_digit = 4'sd4;
+      9'h14e: first_digit = 4'sd4;
+      9'h14f: first_digit = 4'sd4;
+      9'h150: first_digit = 4'sd4;
+      9'h151: first_digit = 4'sd4;
+      9'h152: first_digit = 4'sd4;
+      9'h153: first_digit = 4'sd4;
+      9'h154: first_digit = 4'sd4;
+      9'h155: first_digit = 4'sd4;
+      9'h156: first_digit = 4'sd4;
+      9'h157: first_digit = 4'sd4;
+      9'h158: first_digit = 4'sd4;
+      9'h159: first_digit = 4'sd4;
+      9'h15a: first_digit = 4'sd4;
+      9'h15b: first_digit = 4'sd4;
+      9'h15c: first_digit = 4'sd4;
+      9'h15d: first_digit = 4'sd4;
+      9'h15e: first_digit = 4'sd4;
+      9'h15f: first_digit = 4'sd4;
+      9'h160: first_digit = 4'sd4;
+      9'h161: first_digit = 4'sd4;
+      9'h162: first_digit = 4'sd4;
+      9'h163: first_digit = 4'sd4;
+      9'h164: first_digit = 4'sd4;
+      9'h165: first_digit = 4'sd4;
+      9'h166: first_digit = 4'sd4;
+      9'h167: first_digit = 4'sd4;
+      9'h168: first_digit = 4'sd4;
+      9'h169: first_digit = 4'sd0;
+      9'h16a: first_digit = 4'sd0;
+      9'h16b: first_digit = 4'sd0;
+      9'h16c: first_digit = 4'sd0;
+      9'h16d: first_digit = 4'sd0;
+      9'h16e: first_digit = 4'sd0;
+      9'h16f: first_digit = 4'sd0;
+      9'h180: first_digit = 4'sd0;
+      9'h181: first_digit = 4'sd0;
+      9'h182: first_digit = 4'sd0;
+      9'h183: first_digit = 4'sd0;
+      9'h184: first_digit = 4'sd0;
+      9'h185: first_digit = 4'sd0;
+      9'h186: first_digit = 4'sd0;
+      9'h187: first_digit = 4'sd0;
+      9'h188: first_digit = 4'sd0;
+      9'h189: first_digit = 4'sd0;
+      9'h18a: first_digit = 4'sd0;
+      9'h18b: first_digit = 4'sd0;
+      9'h18c: first_digit = 4'sd0;
+      9'h18d: first_digit = 4'sd1;
+      9'h18e: first_digit = 4'sd1;
+      9'h18f: first_digit = 4'sd1;
+      9'h190: first_digit = 4'sd1;
+      9'h191: first_digit = 4'sd1;
+      9'h192: first_digit = 4'sd1;
+      9'h193: first_digit = 4'sd1;
+      9'h194: first_digit = 4'sd1;
+      9'h195: first_digit = 4'sd1;
+      9'h196: first_digit = 4'sd1;
+      9'h197: first_digit = 4'sd1;
+      9'h198: first_digit = 4'sd1;
+      9'h199: first_digit = 4'sd1;
+      9'h19a: first_digit = 4'sd1;
+      9'h19b: first_digit = 4'sd1;
+      9'h19c: first_digit = 4'sd1;
+      9'h19d: first_digit = 4'sd1;
+      9'h19e: first_digit = 4'sd1;
+      9'h19f: first_digit = 4'sd1;
+      9'h1a0: first_digit = 4'sd1;
+      9'h1a1: first_digit = 4'sd1;
+      9'h1a2: first_digit = 4'sd1;
+      9'h1a3: first_digit = 4'sd1;
+      9'h1a4: first_digit = 4'sd1;
+      9'h1a5: first_digit = 4'sd1;
+      9'h1a6: first_digit = 4'sd1;
+      9'h1a7: first_digit = 4'sd2;
+      9'h1a8: first_digit = 4'sd2;
+      9'h1a9: first_digit = 4'sd2;
+      9'h1aa: first_digit = 4'sd2;
+      9'h1ab: first_digit = 4'sd2;
+      9'h1ac: first_digit = 4'sd2;
+      9'h1ad: first_digit = 4'sd2;
+      9'h1ae: first_digit = 4'sd2;
+      9'h1af: first_digit = 4'sd2;
+      9'h1b0: first_digit = 4'sd2;
+      9'h1b1: first_digit = 4'sd2;
+      9'h1b2: first_digit = 4'sd2;
+      9'h1b3: first_digit = 4'sd2;
+      9'h1b4: first_digit = 4'sd2;
+      9'h1b5: first_digit = 4'sd2;
+      9'h1b6: first_digit = 4'sd2;
+      9'h1b7: first_digit = 4'sd2;
+      9'h1b8: first_digit = 4'sd2;
+      9'h1b9: first_digit = 4'sd2;
+      9'h1ba: first_digit = 4'sd2;
+      9'h1bb: first_digit = 4'sd2;
+      9'h1bc: first_digit = 4'sd2;
+      9'h1bd: first_digit = 4'sd2;
+      9'h1be: first_digit = 4'sd2;
+      9'h1bf: first_digit = 4'sd2;
+      9'h1c0: first_digit = 4'sd2;
+      9'h1c1: first_digit = 4'sd2;
+      9'h1c2: first_digit = 4'sd2;
+      9'h1c3: first_digit = 4'sd3;
+      9'h1c4: first_digit = 4'sd3;
+      9'h1c5: first_digit = 4'sd3;
+      9'h1c6: first_digit = 4'sd3;
+      9'h1c7: first_digit = 4'sd3;
+      9'h1c8: first_digit = 4'sd3;
+      9'h1c9: first_digit = 4'sd3;
+      9'h1ca: first_digit = 4'sd3;
+      9'h1cb: first_digit = 4'sd3;
+      9'h1cc: first_digit = 4'sd3;
+      9'h1cd: first_digit = 4'sd3;
+      9'h1ce: first_digit = 4'sd3;
+      9'h1cf: first_digit = 4'sd3;
+      9'h1d0: first_digit = 4'sd3;
+      9'h1d1: first_digit = 4'sd3;
+      9'h1d2: first_digit = 4'sd3;
+      9'h1d3: first_digit = 4'sd3;
+      9'h1d4: first_digit = 4'sd3;
+      9'h1d5: first_digit = 4'sd3;
+      9'h1d6: first_digit = 4'sd3;
+      9'h1d7: first_digit = 4'sd3;
+      9'h1d8: first_digit = 4'sd3;
+      9'h1d9: first_digit = 4'sd3;
+      9'h1da: first_digit = 4'sd3;
+      9'h1db: first_digit = 4'sd3;
+      9'h1dc: first_digit = 4'sd3;
+      9'h1dd: first_digit = 4'sd3;
+      9'h1de: first_digit = 4'sd3;
+      9'h1df: first_digit = 4'sd3;
+      9'h1e0: first_digit = 4'sd3;
+      9'h1e1: first_digit = 4'sd4;
+      9'h1e2: first_digit = 4'sd4;
+      9'h1e3: first_digit = 4'sd4;
+      9'h1e4: first_digit = 4'sd4;
+      9'h1e5: first_digit = 4'sd4;
+      9'h1e6: first_digit = 4'sd4;
+      9'h1e7: first_digit = 4'sd4;
+      9'h1e8: first_digit = 4'sd4;
+      9'h1e9: first_digit = 4'sd4;
+      9'h1ea: first_digit = 4'sd4;
+      9'h1eb: first_digit = 4'sd4;
+      9'h1ec: first_digit = 4'sd4;
+      9'h1ed: first_digit = 4'sd4;
+      9'h1ee: first_digit = 4'sd4;
+      9'h1ef: first_digit = 4'sd4;
+      default: first_digit = 4'sd0;
+    endcase
   endfunction
 
   // threshold selection (q >= 4): d = count(p >= q*(8k+4), k=-4..3) - 4
@@ -251,6 +461,7 @@ module fp_sqrt_srt #(
     always_comb begin
       logic signed [3:0] d;
       logic [CSW-1:0]    sv, cv;
+      logic [2:0]        rsum;
       logic [QW-1:0]     qv, qmv;
       logic [RE-1:0]     xv;
       /* verilator lint_off UNUSEDSIGNAL */
@@ -263,6 +474,7 @@ module fp_sqrt_srt #(
       qv  = q_st[st];
       qmv = qm_st[st];
       xv  = x_st[st];
+      rsum = 3'(sv + cv);
       d   = '0;
       a16 = '0;
       b16 = '0;
@@ -276,8 +488,8 @@ module fp_sqrt_srt #(
           int t;
           t = st * DPS + j;
           // radicand bits for this digit (preload consumed the top 4)
-          if (qv < QW'(4)) begin
-            d = first_digit(qv, sv + cv, xv[RE-5-4*t -: 4]);
+          if ((st * DPS + j) == 0) begin
+            d = first_digit(qv[1:0], rsum[2:0], xv[RE-5 -: 4]);
           end else begin
             pe = sh_ar($signed(sv), 2*t - 6)
                + sh_ar($signed(cv), 2*t - 6)
