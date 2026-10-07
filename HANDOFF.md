@@ -763,10 +763,11 @@ optimization captures `metrics/area-after*.json` and diffs with
     combinational fp_fma (one-at-a-time: 2M x 6 formats plus 30M at binary32
     and 10M at binary64 across seeds) and streaming (one start per cycle with
     FIFO-tracked operands); both 0 mismatches. Worth promoting into tests/.
-- Landed (DIV/SQRT SRT rework): the generic div/sqrt datapaths were replaced
-  by fully unrolled radix-4 SRT pipelines (`fp_div_srt`, `fp_sqrt_srt`),
-  carry-save remainder, DPS=2 digits per stage, one start per cycle (fixed
-  latency NSTG+2). Latencies: div 17 -> 9 (binary32), 31 -> 17 (binary64),
+- Attempted (DIV/SQRT SRT rework, NOT landed - see the timing note at the
+  end): fully unrolled radix-4 SRT pipelines (`fp_div_srt`, `fp_sqrt_srt`),
+  carry-save remainder, DPS digits per stage, one start per cycle (fixed
+  latency NSTG+2), functionally verified but reverted from `fp_unit` because
+  they do not close 4.000 ns. Latencies: div 17 -> 9 (binary32), 31 -> 17 (binary64),
   10 -> 6 (binary16), 9 -> 5 (BF16), 7 -> 4 (E4M3), 6 -> 4 (E5M2); sqrt
   17 -> 9 (binary32), 31 -> 16 (binary64), 10 -> 5 (binary16), 9 -> 5 (BF16),
   7 -> 4, 6 -> 3. `fp_unit` now runs both on SRT pipelines for generic
@@ -798,7 +799,20 @@ optimization captures `metrics/area-after*.json` and diffs with
     (multi-driven in synthesis - the divider was silently pruned);
     (b) signed casts are needed around all digit arithmetic (unsigned size
     casts zero-extend and corrupt negative digits); (c) the first-digit
-    radicand slice is RE-5-4t, not RE-8-4t.
+    radicand slice is RE-5-4t, not RE-8-4t; (d) the small-q first-digit
+    logic must be instantiated once (as a table), not per digit (215k ->
+    36k cells, -34 ns -> -5.4 ns).
+  * TIMING OUTCOME (why it was reverted): across five Vivado runs (DPS=2,
+    DPS=1, optimized thresholds/multiples, ExtraTimingOpt + pblocks) the
+    packed stages still measure ~5.4 ns vs the 4.000 ns clock - logic
+    ~2.2-2.7 ns but route ~2.7-3.2 ns (58%), because the unrolled wide
+    datapaths spread. The sqrt digit is the worst (the q-dependent
+    d(8q+d) term); 2 sqrt digits/stage measured 9.4 ns. One digit/stage
+    only reaches 15/29 cycles (barely better than K+3) and also misses
+    timing. `fp_unit` therefore keeps `fp_divsqrt_iter` (K+3: binary32
+    16/16, binary64 30/30) and the SRT modules remain in-tree as verified
+    experimental building blocks (`verification/srt` reproduces the
+    differential tests).
 - Still open: further div/sqrt latency cuts would need radix-8 SRT or
   digit speculation. The add pipe is now the closest to the 4.000 ns budget;
   further add latency cuts would need a leading-zero-anticipation / far-near
