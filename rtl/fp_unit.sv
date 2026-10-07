@@ -133,6 +133,31 @@ module fp_unit #(
   logic start_add;
   assign start_add = in_valid && use_pipe_add;
 
+  // Pipelined radix-4 SRT divider (generic formats, ITER_DIVSQRT != 0):
+  // fully unrolled carry-save pipeline, one start per cycle.
+  localparam bit PIPE_DIV_SRT = (ITER_DIVSQRT != 0) && (W_MANT > 0);
+  logic [W-1:0] y_div_srt;
+  logic [4:0]   flags_div_srt;
+  logic         div_srt_valid;
+  logic         use_pipe_div_srt;
+  assign use_pipe_div_srt = PIPE_DIV_SRT && (mode == fp_pkg::OP_DIV);
+  logic start_div_srt;
+  assign start_div_srt = in_valid && use_pipe_div_srt;
+
+  generate
+    if (PIPE_DIV_SRT) begin : g_div_srt
+      fp_div_srt #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_div_srt (
+        .a(a), .b(b), .rm(rm), .start(start_div_srt),
+        .y(y_div_srt), .flags(flags_div_srt),
+        .clk(clk), .rst_n(rst_n), .out_valid(div_srt_valid)
+      );
+    end else begin : g_no_div_srt
+      assign y_div_srt     = '0;
+      assign flags_div_srt = 5'd0;
+      assign div_srt_valid = 1'b0;
+    end
+  endgenerate
+
   generate
     if (ITER_DIVSQRT != 0 && W_MANT > 0) begin : g_divsqrt_iter
       fp_divsqrt_iter #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_divsqrt (
@@ -148,11 +173,11 @@ module fp_unit #(
     end
   endgenerate
 
-  // Engine availability (busy) rather than iter_run gates the start, so a new
-  // transaction may begin in the same cycle the previous `done`/out_valid
-  // pulse is visible (no dead cycle between back-to-back div/sqrt).
+  // The iterative engine now serves SQRT only (division runs on the SRT
+  // pipeline). Engine availability (busy) rather than iter_run gates the
+  // start, so back-to-back sqrt transactions have no dead cycle.
   assign iter_start = (ITER_DIVSQRT != 0 && W_MANT > 0) && in_valid
-                    && (mode == fp_pkg::OP_DIV || mode == fp_pkg::OP_SQRT)
+                    && (mode == fp_pkg::OP_SQRT)
                     && !busy_iter;
 
   generate
@@ -221,9 +246,10 @@ module fp_unit #(
       assign y_mul     = y_mul_pipe;
       assign flags_mul = flags_mul_pipe;
       if (ITER_DIVSQRT != 0) begin : g_iter_divsqrt
-        // Registered engine outputs replace the combinational datapaths.
-        assign y_div      = y_iter;
-        assign flags_div  = flags_iter;
+        // Registered engine outputs replace the combinational datapaths; DIV
+        // runs on the pipelined SRT divider, SQRT on the iterative engine.
+        assign y_div      = y_div_srt;
+        assign flags_div  = flags_div_srt;
         assign y_sqrt     = y_iter;
         assign flags_sqrt = flags_iter;
       end else begin : g_comb_divsqrt
@@ -333,6 +359,7 @@ module fp_unit #(
                    : mm_valid ? y_mm_pipe
                    : cmp_valid ? y_cmp_pipe
                    : tot_valid ? y_tot_pipe
+                   : div_srt_valid ? y_div_srt
                    : (iter_run ? y_iter : y_r);
   assign flags     = mul_valid ? flags_mul_pipe
                    : fma_valid ? flags_fma_pipe
@@ -341,13 +368,14 @@ module fp_unit #(
                    : mm_valid ? flags_mm_pipe
                    : cmp_valid ? flags_cmp_pipe
                    : tot_valid ? 5'd0
+                   : div_srt_valid ? flags_div_srt
                    : (iter_run ? flags_iter : flags_r);
   assign cmp       = iter_run ? 2'd0
                    : cmp_valid ? cmp_cmp_pipe
                    : tot_valid ? cmp_tot_pipe
                    : cmp_r;
   assign out_valid = mul_valid | fma_valid | add_valid | rnd_valid
-                   | mm_valid | cmp_valid | tot_valid
+                   | mm_valid | cmp_valid | tot_valid | div_srt_valid
                    | (iter_run ? done_iter : out_valid_r);
 
   always_ff @(posedge clk) begin
@@ -362,7 +390,8 @@ module fp_unit #(
       flags_r     <= flags_c;
       cmp_r       <= cmp_c;
       out_valid_r <= in_valid && !iter_start && !start_add && !start_mul
-                   && !start_fma && !start_rnd && !start_mm && !start_cmp && !start_tot;
+                   && !start_fma && !start_rnd && !start_mm && !start_cmp
+                   && !start_tot && !start_div_srt;
       if (iter_start)
         iter_run <= 1'b1;
       else if (iter_run && done_iter)

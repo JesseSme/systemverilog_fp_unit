@@ -13,6 +13,7 @@ set rtl [list \
   /home/jesse/Documents/systemverilog_fp_unit/rtl/fp_mul_core.sv \
   /home/jesse/Documents/systemverilog_fp_unit/rtl/fp_mul_pipe.sv \
   /home/jesse/Documents/systemverilog_fp_unit/rtl/fp_div.sv \
+  /home/jesse/Documents/systemverilog_fp_unit/rtl/fp_div_srt.sv \
   /home/jesse/Documents/systemverilog_fp_unit/rtl/fp_sqrt.sv \
   /home/jesse/Documents/systemverilog_fp_unit/rtl/fp_divsqrt_iter.sv \
   /home/jesse/Documents/systemverilog_fp_unit/rtl/fp_fma.sv \
