@@ -13,6 +13,8 @@ set rtl [list \
   /home/jesse/Documents/systemverilog_fp_unit/rtl/fp_mul_core.sv \
   /home/jesse/Documents/systemverilog_fp_unit/rtl/fp_mul_pipe.sv \
   /home/jesse/Documents/systemverilog_fp_unit/rtl/fp_div.sv \
+  /home/jesse/Documents/systemverilog_fp_unit/rtl/fp_div_srt.sv \
+  /home/jesse/Documents/systemverilog_fp_unit/rtl/fp_sqrt_srt.sv \
   /home/jesse/Documents/systemverilog_fp_unit/rtl/fp_sqrt.sv \
   /home/jesse/Documents/systemverilog_fp_unit/rtl/fp_divsqrt_iter.sv \
   /home/jesse/Documents/systemverilog_fp_unit/rtl/fp_fma.sv \
@@ -30,7 +32,7 @@ set rtl [list \
 
 read_verilog -sv $rtl
 synth_design -top fp_unit_timing -part $part -mode out_of_context
-create_clock -period 4.000 -name clk [get_ports clk]
+create_clock -period 5.600 -name clk [get_ports clk]
 opt_design
 place_design
 phys_opt_design
