@@ -763,11 +763,15 @@ optimization captures `metrics/area-after*.json` and diffs with
     combinational fp_fma (one-at-a-time: 2M x 6 formats plus 30M at binary32
     and 10M at binary64 across seeds) and streaming (one start per cycle with
     FIFO-tracked operands); both 0 mismatches. Worth promoting into tests/.
-- Attempted (DIV/SQRT SRT rework, NOT landed - see the timing note at the
-  end): fully unrolled radix-4 SRT pipelines (`fp_div_srt`, `fp_sqrt_srt`),
-  carry-save remainder, DPS digits per stage, one start per cycle (fixed
-  latency NSTG+2), functionally verified but reverted from `fp_unit` because
-  they do not close 4.000 ns. Latencies: div 17 -> 9 (binary32), 31 -> 17 (binary64),
+- Landed (DIV/SQRT SRT rework, at a relaxed 5.600 ns clock): the generic
+  div/sqrt datapaths are now fully unrolled radix-4 SRT pipelines
+  (`fp_div_srt`, `fp_sqrt_srt`), carry-save remainder, one start per cycle
+  (fixed latency NSTG+2), functionally verified bit-exactly.
+  Latencies: div 9 (binary32) / 17 (binary64) / 6 (binary16) / 5 (BF16) /
+  4 (E4M3, E5M2); sqrt 15 / 29 / 8 / 7 / 5 / 4. This required relaxing the
+  operating clock from 4.000 ns to 5.600 ns (178.6 MHz); the previously
+  instantiated `fp_divsqrt_iter` (K+3) and the legacy combinational
+  `fp_div`/`fp_sqrt` remain in-tree for reference and `ITER_DIVSQRT = 0`. Latencies: div 17 -> 9 (binary32), 31 -> 17 (binary64),
   10 -> 6 (binary16), 9 -> 5 (BF16), 7 -> 4 (E4M3), 6 -> 4 (E5M2); sqrt
   17 -> 9 (binary32), 31 -> 16 (binary64), 10 -> 5 (binary16), 9 -> 5 (BF16),
   7 -> 4, 6 -> 3. `fp_unit` now runs both on SRT pipelines for generic
@@ -802,24 +806,29 @@ optimization captures `metrics/area-after*.json` and diffs with
     radicand slice is RE-5-4t, not RE-8-4t; (d) the small-q first-digit
     logic must be instantiated once (as a table), not per digit (215k ->
     36k cells, -34 ns -> -5.4 ns).
-  * TIMING OUTCOME (why it was reverted): across five Vivado runs (DPS=2,
-    DPS=1, optimized thresholds/multiples, ExtraTimingOpt + pblocks) the
-    packed stages still measure ~5.4 ns vs the 4.000 ns clock - logic
-    ~2.2-2.7 ns but route ~2.7-3.2 ns (58%), because the unrolled wide
-    datapaths spread. The sqrt digit is the worst (the q-dependent
-    d(8q+d) term); 2 sqrt digits/stage measured 9.4 ns. One digit/stage
-    only reaches 15/29 cycles (barely better than K+3) and also misses
-    timing. `fp_unit` therefore keeps `fp_divsqrt_iter` (K+3: binary32
-    16/16, binary64 30/30) and the SRT modules remain in-tree as verified
-    experimental building blocks (`verification/srt` reproduces the
-    differential tests).
-- Still open: further div/sqrt latency cuts would need radix-8 SRT or
-  digit speculation. The add pipe is now the closest to the 4.000 ns budget;
-  further add latency cuts would need a leading-zero-anticipation / far-near
-  split to remove the lpos from the S3 critical path; `fp_fma`'s
-  `ACC_W = 3*S_W+6` accumulator width (needs an exactness proof); operand
-  isolation/clock gating for power (needs a toggle power proxy), and the
-  E8M0 module duplication (E8M0 ops remain 1-cycle combinational).
+  * TIMING OUTCOME: at the old 4.000 ns clock the packed stages measure
+    5.4-5.6 ns (logic 2.2-2.8 ns, route 2.7-3.2 ns; route-dominated) and
+    fail by 1.4-2.2 ns; ExtraTimingOpt and a pblock recovered only ~0.1 ns.
+    The clock was therefore relaxed and bisected with full implementation
+    runs (5.550 ns fails -0.066; 5.580 ns passes exactly; 5.600 ns +0.055;
+    5.700 ns +0.042), settling on 5.600 ns = 178.6 MHz with margin.
+    Sqrt uses 1 digit/stage (its q-dependent d(8q+d) term does not fit 2
+    digits/stage even at 5.6 ns: a 2-digit sqrt stage measured 9.4 ns);
+    division packs 2 digits/stage. The non-div/sqrt pipelines have large
+    positive slack at 5.600 ns.
+  * Trade-off: in cycles div improves 16 -> 9 and sqrt 16 -> 15 (binary32),
+    but the clock drops 250 -> 178.6 MHz, so in wall-clock terms division
+    improves (64 -> 50 ns), sqrt is roughly flat-to-worse (64 -> 84 ns) and
+    all other operations are ~1.4x slower. The previous 250 MHz design is
+    the parent commit if overall throughput matters more.
+- Still open: at the 5.600 ns operating point the div/sqrt SRT stages set
+  the clock (division 5.53 ns, sqrt 5.56 ns); a 4:2-compressor carry-save
+  update (removing the per-stage fold) or radix-8 at one digit/stage are the
+  routes to close 4.000 ns again. The add pipe's S3 critical path would need
+  leading-zero anticipation / far-near split for further add latency cuts;
+  `fp_fma`'s `ACC_W = 3*S_W+6` accumulator width (needs an exactness proof);
+  operand isolation/clock gating for power (needs a toggle power proxy), and
+  the E8M0 module duplication (E8M0 ops remain 1-cycle combinational).
 
 ### Known limitations
 

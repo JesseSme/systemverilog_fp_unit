@@ -75,9 +75,6 @@ module fp_unit #(
   // Iterative div/sqrt engine and its handshake (only when selected and the
   // format has a significand; otherwise tied off).
   localparam int W = 1 + W_EXP + W_MANT;
-  logic [W-1:0] y_iter;
-  logic [4:0]   flags_iter;
-  logic         busy_iter, done_iter, iter_run, iter_start;
 
   // Pipelined add/sub (generic formats); the other ops are still on the
   // 1-cycle legacy path while they are converted.
@@ -133,27 +130,54 @@ module fp_unit #(
   logic start_add;
   assign start_add = in_valid && use_pipe_add;
 
+  // Pipelined radix-4 SRT divider (generic formats, ITER_DIVSQRT != 0):
+  // fully unrolled carry-save pipeline, one start per cycle.
+  localparam bit PIPE_DIV_SRT = (ITER_DIVSQRT != 0) && (W_MANT > 0);
+  logic [W-1:0] y_div_srt;
+  logic [4:0]   flags_div_srt;
+  logic         div_srt_valid;
+  logic         use_pipe_div_srt;
+  assign use_pipe_div_srt = PIPE_DIV_SRT && (mode == fp_pkg::OP_DIV);
+  logic start_div_srt;
+  assign start_div_srt = in_valid && use_pipe_div_srt;
+
   generate
-    if (ITER_DIVSQRT != 0 && W_MANT > 0) begin : g_divsqrt_iter
-      fp_divsqrt_iter #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_divsqrt (
-        .a(a), .b(b), .rm(rm), .is_sqrt(mode == fp_pkg::OP_SQRT),
-        .start(iter_start), .y(y_iter), .flags(flags_iter),
-        .clk(clk), .rst_n(rst_n), .busy(busy_iter), .done(done_iter)
+    if (PIPE_DIV_SRT) begin : g_div_srt
+      fp_div_srt #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_div_srt (
+        .a(a), .b(b), .rm(rm), .start(start_div_srt),
+        .y(y_div_srt), .flags(flags_div_srt),
+        .clk(clk), .rst_n(rst_n), .out_valid(div_srt_valid)
       );
-    end else begin : g_no_divsqrt_iter
-      assign y_iter     = '0;
-      assign flags_iter = 5'd0;
-      assign busy_iter  = 1'b0;
-      assign done_iter  = 1'b0;
+    end else begin : g_no_div_srt
+      assign y_div_srt     = '0;
+      assign flags_div_srt = 5'd0;
+      assign div_srt_valid = 1'b0;
     end
   endgenerate
 
-  // Engine availability (busy) rather than iter_run gates the start, so a new
-  // transaction may begin in the same cycle the previous `done`/out_valid
-  // pulse is visible (no dead cycle between back-to-back div/sqrt).
-  assign iter_start = (ITER_DIVSQRT != 0 && W_MANT > 0) && in_valid
-                    && (mode == fp_pkg::OP_DIV || mode == fp_pkg::OP_SQRT)
-                    && !busy_iter;
+  // Pipelined radix-4 SRT sqrt (generic formats, ITER_DIVSQRT != 0).
+  localparam bit PIPE_SQRT_SRT = (ITER_DIVSQRT != 0) && (W_MANT > 0);
+  logic [W-1:0] y_sqrt_srt;
+  logic [4:0]   flags_sqrt_srt;
+  logic         sqrt_srt_valid;
+  logic         use_pipe_sqrt_srt;
+  assign use_pipe_sqrt_srt = PIPE_SQRT_SRT && (mode == fp_pkg::OP_SQRT);
+  logic start_sqrt_srt;
+  assign start_sqrt_srt = in_valid && use_pipe_sqrt_srt;
+
+  generate
+    if (PIPE_SQRT_SRT) begin : g_sqrt_srt
+      fp_sqrt_srt #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DPS(1)) u_fp_sqrt_srt (
+        .a(a), .rm(rm), .start(start_sqrt_srt),
+        .y(y_sqrt_srt), .flags(flags_sqrt_srt),
+        .clk(clk), .rst_n(rst_n), .out_valid(sqrt_srt_valid)
+      );
+    end else begin : g_no_sqrt_srt
+      assign y_sqrt_srt     = '0;
+      assign flags_sqrt_srt = 5'd0;
+      assign sqrt_srt_valid = 1'b0;
+    end
+  endgenerate
 
   generate
     if (PIPE_ADD) begin : g_add_pipe
@@ -221,11 +245,11 @@ module fp_unit #(
       assign y_mul     = y_mul_pipe;
       assign flags_mul = flags_mul_pipe;
       if (ITER_DIVSQRT != 0) begin : g_iter_divsqrt
-        // Registered engine outputs replace the combinational datapaths.
-        assign y_div      = y_iter;
-        assign flags_div  = flags_iter;
-        assign y_sqrt     = y_iter;
-        assign flags_sqrt = flags_iter;
+        // Pipelined SRT datapaths replace the combinational ones.
+        assign y_div      = y_div_srt;
+        assign flags_div  = flags_div_srt;
+        assign y_sqrt     = y_sqrt_srt;
+        assign flags_sqrt = flags_sqrt_srt;
       end else begin : g_comb_divsqrt
         fp_div #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_div (
           .a(a), .b(b), .rm(rm),
@@ -333,7 +357,9 @@ module fp_unit #(
                    : mm_valid ? y_mm_pipe
                    : cmp_valid ? y_cmp_pipe
                    : tot_valid ? y_tot_pipe
-                   : (iter_run ? y_iter : y_r);
+                   : div_srt_valid ? y_div_srt
+                   : sqrt_srt_valid ? y_sqrt_srt
+                   : y_r;
   assign flags     = mul_valid ? flags_mul_pipe
                    : fma_valid ? flags_fma_pipe
                    : add_valid ? flags_add_pipe
@@ -341,14 +367,15 @@ module fp_unit #(
                    : mm_valid ? flags_mm_pipe
                    : cmp_valid ? flags_cmp_pipe
                    : tot_valid ? 5'd0
-                   : (iter_run ? flags_iter : flags_r);
-  assign cmp       = iter_run ? 2'd0
-                   : cmp_valid ? cmp_cmp_pipe
+                   : div_srt_valid ? flags_div_srt
+                   : sqrt_srt_valid ? flags_sqrt_srt
+                   : flags_r;
+  assign cmp       = cmp_valid ? cmp_cmp_pipe
                    : tot_valid ? cmp_tot_pipe
                    : cmp_r;
   assign out_valid = mul_valid | fma_valid | add_valid | rnd_valid
                    | mm_valid | cmp_valid | tot_valid
-                   | (iter_run ? done_iter : out_valid_r);
+                   | div_srt_valid | sqrt_srt_valid | out_valid_r;
 
   always_ff @(posedge clk) begin
     if (!rst_n) begin
@@ -356,17 +383,13 @@ module fp_unit #(
       flags_r     <= 5'd0;
       cmp_r       <= 2'd0;
       out_valid_r <= 1'b0;
-      iter_run    <= 1'b0;
     end else begin
       y_r         <= y_c;
       flags_r     <= flags_c;
       cmp_r       <= cmp_c;
-      out_valid_r <= in_valid && !iter_start && !start_add && !start_mul
-                   && !start_fma && !start_rnd && !start_mm && !start_cmp && !start_tot;
-      if (iter_start)
-        iter_run <= 1'b1;
-      else if (iter_run && done_iter)
-        iter_run <= 1'b0;
+      out_valid_r <= in_valid && !start_add && !start_mul
+                   && !start_fma && !start_rnd && !start_mm && !start_cmp
+                   && !start_tot && !start_div_srt && !start_sqrt_srt;
     end
   end
 
