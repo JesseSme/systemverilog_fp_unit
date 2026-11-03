@@ -100,9 +100,9 @@ package fp_pkg;
     return (ndig + dps - 1) / dps + 2;
   endfunction
 
-  // fp_divsqrt_iter: K + 3 with K = ceil((W_MANT+3)/2) (one op at a time).
+  // fp_divsqrt_iter: K + 3 with K = floor((W_MANT+3)/2) (one op at a time).
   function automatic int lat_divsqrt_iter(input int w_mant);
-    return (w_mant + 4) / 2 + 3;
+    return (w_mant + 3) / 2 + 3;
   endfunction
 
   function automatic int max_int(input int x, input int y);

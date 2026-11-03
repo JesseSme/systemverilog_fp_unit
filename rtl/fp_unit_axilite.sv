@@ -41,9 +41,9 @@ module fp_unit_axilite #(
   parameter int W_EXP       = 8,
   parameter int W_MANT      = 23,
   parameter int ADDR_WIDTH  = 6,
-  // Passed through to fp_unit: 1 (default) selects the pipelined SRT
-  // div/sqrt datapaths, 0 the legacy combinational ones.
-  parameter int ITER_DIVSQRT = 1
+  // Passed through to fp_unit (see fp_unit.sv): 1 (default) pipelined SRT
+  // div/sqrt, 2 iterative engine, 0 combinational reference.
+  parameter int DIVSQRT_IMPL = 1
 ) (
   input  logic                  s_axi_aclk,
   input  logic                  s_axi_aresetn,
@@ -374,7 +374,7 @@ module fp_unit_axilite #(
   assign s_axi_rresp   = rdec.valid ? AXI_OKAY : AXI_DECERR;
 
   // ---- FPU core ---------------------------------------------------------------
-  fp_unit #(.W_EXP(W_EXP), .W_MANT(W_MANT), .ITER_DIVSQRT(ITER_DIVSQRT)) u_fp_unit (
+  fp_unit #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DIVSQRT_IMPL(DIVSQRT_IMPL)) u_fp_unit (
     .clk       (s_axi_aclk),
     .rst_n     (s_axi_aresetn),
     .in_valid  (fpu_in_valid),

@@ -38,3 +38,4 @@ clockInfo.txt
 
 # SRT differential harness builds (verification/srt/run_diff.py)
 srt_diff_build/
+syn/out/

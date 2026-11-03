@@ -9,7 +9,7 @@
 // overflow/underflow/inexact rules (7.2-7.6).
 //
 // THE LATENCY IS CONSTANT (input-independent), including for special cases:
-//   cycles from `start` to `done` = K + 3, with K = ceil((W_MANT+3)/2)
+//   cycles from `start` to `done` = K + 3, with K = floor((W_MANT+3)/2)
 // (e.g. binary32: 16 cycles; binary64: 30). One radix-4 digit is produced per
 // cycle: the digit selection (compare against the precomputed divisor
 // multiples / the current root candidates) and the remainder subtraction are

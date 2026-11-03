@@ -83,14 +83,24 @@ int main(int argc, char** argv) {
             top->a = va[v] & amask;
             top->b = vb[v] & amask;
             top->c = vc[v] & amask;
+            // Hold the request until fp_unit accepts it (in_ready at the edge);
+            // the latency is counted from the accepting edge.
             top->in_valid = 1;
             top->clk = 0;
-            top->eval();
+            top->eval();  // inputs presented
+            int waits = 0;
+            while (!top->in_ready && waits < 4096) {
+                top->clk = 1; top->eval();
+                top->clk = 0; top->eval();
+                waits++;
+            }
             int cycles = 0;
             do {
-                top->clk = 1; top->eval();   // posedge samples the start / advances
-                top->clk = 0; top->eval();
+                top->clk = 1;
+                top->eval();  // posedge samples the start / advances
+                top->clk = 0;
                 top->in_valid = 0;
+                top->eval();
                 cycles++;
             } while (!top->out_valid && cycles < 4096);
             if (first < 0) {

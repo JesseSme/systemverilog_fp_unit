@@ -5,8 +5,8 @@ SIM ?= verilator
 # oss-cad-suite provides SymbiYosys (sby) + Yosys for formal verification.
 OSS ?= /home/jesse/Documents/oss-cad-suite-linux-x64-20260813/oss-cad-suite
 
-.PHONY: regress regress-all regress-axilite smoke soak coverage formal lint bf16 stream regress-exp \
-        exhaustive-iter soak-iter regress-axilite-iter \
+.PHONY: regress regress-all regress-axilite smoke soak coverage formal lint bf16 stream regress-exp vivado \
+        exhaustive-iter soak-iter stream-iter regress-axilite-iter \
         metrics-area metrics-runtime metrics-latency metrics-compare clean
 
 regress:
@@ -39,16 +39,20 @@ bf16:
 stream:
 	uv run python tests/stream.py
 
-# Iterative div/sqrt engine (ITER_DIVSQRT=1): exhaustive 8-bit sweep and the
-# medium-width soak through the C++ harnesses, plus the AXI-Lite handshake.
+# Iterative div/sqrt engine (fp_unit DIVSQRT_IMPL=2, the 250 MHz build):
+# exhaustive 8-bit sweep, medium-width soak, streaming test and the AXI-Lite
+# handshake. (DIVSQRT_IMPL=1, the SRT pipelines, is the default everywhere.)
 exhaustive-iter:
 	uv run python tests/exhaustive.py --iter
 
 soak-iter:
 	uv run python tests/soak.py --iter
 
+stream-iter:
+	uv run python tests/stream.py --param DIVSQRT_IMPL=2 --allow-stall div sqrt
+
 regress-axilite-iter:
-	FP_ITER_DIVSQRT=1 uv run python tests/run_regression.py --top fp_unit_axilite --tests test_fp_unit_axilite
+	FP_DIVSQRT_IMPL=2 uv run python tests/run_regression.py --top fp_unit_axilite --tests test_fp_unit_axilite
 
 # Cross-width randomized soak (binary16, BF16, E4M3 by default; tens of
 # millions of vectors against the bit-exact oracle at C++ speed).
@@ -98,13 +102,24 @@ RTL  := $(shell cat rtl/filelist.f)
 WRAP := $(shell cat rtl/filelist_wrappers.f)
 VLINT := verilator --lint-only -Wall --timing
 
+# Vivado OOC implementation (needs vivado on PATH; not run by default):
+#   make vivado                      -> 5.600 ns, binary32, SRT div/sqrt
+#   make vivado VIVADO_ARGS="4.000 8 23 2"   -> 250 MHz iterative build
+VIVADO_ARGS ?= 5.600 8 23 1
+vivado:
+	@command -v vivado >/dev/null || { echo "vivado not on PATH; run: vivado -mode batch -source syn/vivado-impl.tcl -tclargs $(VIVADO_ARGS)"; exit 1; }
+	vivado -mode batch -nojournal -nolog -source syn/vivado-impl.tcl -tclargs $(VIVADO_ARGS)
+
 lint:
 	$(VLINT) --top-module fp_unit $(RTL)
-	$(VLINT) --top-module fp_unit -GITER_DIVSQRT=0 $(RTL)
+	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=0 $(RTL)
+	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=2 $(RTL)
+	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=2 -GW_EXP=11 -GW_MANT=52 $(RTL)
 	$(VLINT) --top-module fp_unit -GW_EXP=11 -GW_MANT=52 $(RTL)
 	$(VLINT) --top-module fp_unit -GW_EXP=8 -GW_MANT=0 $(RTL)
 	$(VLINT) --top-module fp_unit_axilite $(RTL) rtl/fp_unit_axilite.sv
 	$(VLINT) --top-module fp_exp_seq $(RTL) rtl/fp_exp_seq.sv
+	$(VLINT) --top-module fp_unit_timing $(RTL) syn/fp_unit_timing.sv
 	$(VLINT) rtl/fp32_to_bf16_round.sv
 	$(VLINT) rtl/fp_pkg.sv rtl/fp_add_e8m0.sv
 	$(VLINT) rtl/fp_pkg.sv rtl/fp_mul_e8m0.sv

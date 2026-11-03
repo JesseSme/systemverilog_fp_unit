@@ -37,14 +37,17 @@ module fp_unit #(
   parameter int W_EXP  = 8,
   parameter int W_MANT = 23,
   // Division / square-root implementation for the generic formats:
-  //   ITER_DIVSQRT != 0 (default): fully pipelined radix-4 SRT datapaths
-  //     (fp_div_srt / fp_sqrt_srt), one start per cycle.
-  //   ITER_DIVSQRT == 0: the combinational reference datapaths
-  //     (fp_div / fp_sqrt) registered once (latency 1, very long critical
-  //     path; kept for reference and formal).
-  // (The name is historical: it used to select the iterative engine
-  // fp_divsqrt_iter.)
-  parameter int ITER_DIVSQRT = 1,
+  //   1 (default): fully pipelined radix-4 SRT datapaths (fp_div_srt /
+  //     fp_sqrt_srt), one start per cycle; sets the clock (5.6 ns on
+  //     VU9P-2L, 178.6 MHz).
+  //   2: the shared iterative radix-4 engine fp_divsqrt_iter, latency
+  //     K+3 (K = floor((W_MANT+3)/2)), ONE div/sqrt in flight at a time
+  //     (in_ready is low for div/sqrt while it is busy); closes 4.0 ns
+  //     (250 MHz) with about half the LUTs.
+  //   0: the combinational reference datapaths (fp_div / fp_sqrt)
+  //     registered once (latency 1, very long critical path; reference and
+  //     formal only).
+  parameter int DIVSQRT_IMPL = 1,
   // Width of the request tag carried from in_tag to out_tag.
   parameter int TAG_W = 1
 ) (
@@ -76,19 +79,22 @@ module fp_unit #(
   assign op_reserved = !fp_pkg::op_defined(mode);
 
   localparam bit GENERIC  = (W_MANT > 0);
-  localparam bit SRT_DS   = GENERIC && (ITER_DIVSQRT != 0);
+  localparam bit SRT_DS   = GENERIC && (DIVSQRT_IMPL == 1);
+  localparam bit ITER_DS  = GENERIC && (DIVSQRT_IMPL == 2);
   localparam int DIV_DPS  = 2;  // radix-4 digits per fp_div_srt stage
   localparam int SQRT_DPS = 1;  // radix-4 digits per fp_sqrt_srt stage
 
   // ------------------------------------------------------------ latencies
   // Cycles from an accepted request to its out_valid. Ops that are not on a
-  // dedicated pipeline (E8M0, ITER_DIVSQRT = 0 div/sqrt, reserved opcodes)
+  // dedicated pipeline (E8M0, DIVSQRT_IMPL = 0 div/sqrt, reserved opcodes)
   // go through the 1-cycle output register below.
   localparam int LAT_ADD  = GENERIC ? fp_pkg::LAT_ADD : 1;
   localparam int LAT_MUL  = GENERIC ? fp_pkg::lat_mul(W_MANT) : 1;
   localparam int LAT_FMA  = GENERIC ? fp_pkg::lat_fma(W_MANT) : 1;
-  localparam int LAT_DIV  = SRT_DS ? fp_pkg::lat_div_srt(W_MANT, DIV_DPS) : 1;
-  localparam int LAT_SQRT = SRT_DS ? fp_pkg::lat_sqrt_srt(W_MANT, SQRT_DPS) : 1;
+  localparam int LAT_DIV  = SRT_DS  ? fp_pkg::lat_div_srt(W_MANT, DIV_DPS)
+                          : ITER_DS ? fp_pkg::lat_divsqrt_iter(W_MANT) : 1;
+  localparam int LAT_SQRT = SRT_DS  ? fp_pkg::lat_sqrt_srt(W_MANT, SQRT_DPS)
+                          : ITER_DS ? fp_pkg::lat_divsqrt_iter(W_MANT) : 1;
   localparam int LAT_RND  = GENERIC ? fp_pkg::LAT_RNDINT : 1;
   localparam int LAT_ORD  = 1;  // min/max/cmp/totalOrder
   localparam int LAT_REG  = 1;  // output-register path
@@ -120,7 +126,10 @@ module fp_unit #(
   // cycle; it exists so resv[lat_sel] is always in range.
   logic [MAXLAT:0] resv;
   logic            fire;
-  assign in_ready = !resv[lat_sel];
+  logic            busy_iter;   // DIVSQRT_IMPL = 2: engine occupied
+  logic            is_divsqrt;
+  assign is_divsqrt = (mode == fp_pkg::OP_DIV) || (mode == fp_pkg::OP_SQRT);
+  assign in_ready = !resv[lat_sel] && !(ITER_DS && is_divsqrt && busy_iter);
   assign fire     = in_valid && in_ready;
 
   always_ff @(posedge clk) begin
@@ -150,17 +159,23 @@ module fp_unit #(
   assign start_fma  = fire && GENERIC && (mode == fp_pkg::OP_FMA);
   assign start_div  = fire && SRT_DS  && (mode == fp_pkg::OP_DIV);
   assign start_sqrt = fire && SRT_DS  && (mode == fp_pkg::OP_SQRT);
+  logic start_iter;
+  assign start_iter = fire && ITER_DS && is_divsqrt;
   assign start_rnd  = fire && GENERIC && (mode == fp_pkg::OP_RNDINT);
   assign start_mm   = fire && (mode == fp_pkg::OP_MIN || mode == fp_pkg::OP_MAX);
   assign start_cmp  = fire && (mode == fp_pkg::OP_CMP);
   assign start_tot  = fire && (mode == fp_pkg::OP_TOTALORDER);
   assign start_reg  = fire && !start_add && !start_mul && !start_fma && !start_div
-                    && !start_sqrt && !start_rnd && !start_mm && !start_cmp && !start_tot;
+                    && !start_sqrt && !start_iter && !start_rnd && !start_mm && !start_cmp
+                    && !start_tot;
 
   // ---------------------------------------------------------- pipelines
   logic [W-1:0] y_add_p, y_mul_p, y_fma_p, y_div_p, y_sqrt_p, y_rnd_p;
   logic [4:0]   f_add_p, f_mul_p, f_fma_p, f_div_p, f_sqrt_p, f_rnd_p;
   logic         v_add, v_mul, v_fma, v_div, v_sqrt, v_rnd;
+  logic [W-1:0] y_iter_p;
+  logic [4:0]   f_iter_p;
+  logic         v_iter;
 
   generate
     if (GENERIC) begin : g_generic_pipes
@@ -206,6 +221,18 @@ module fp_unit #(
       assign {y_div_p, f_div_p, v_div}    = '0;
       assign {y_sqrt_p, f_sqrt_p, v_sqrt} = '0;
     end
+
+    if (ITER_DS) begin : g_iter
+      // One div/sqrt at a time; it accepts a new start in its done cycle
+      // (busy is already low then), so back-to-back div/sqrt lose no cycle.
+      fp_divsqrt_iter #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_divsqrt_iter (
+        .a(a), .b(b), .rm(rm_eff), .is_sqrt(mode == fp_pkg::OP_SQRT),
+        .start(start_iter), .y(y_iter_p), .flags(f_iter_p),
+        .clk(clk), .rst_n(rst_n), .busy(busy_iter), .done(v_iter)
+      );
+    end else begin : g_no_iter
+      assign {y_iter_p, f_iter_p, v_iter, busy_iter} = '0;
+    end
   endgenerate
 
   // Format-generic min/max, comparison and totalOrder (every width).
@@ -232,7 +259,7 @@ module fp_unit #(
   );
 
   // ---------------------------------- 1-cycle output-register datapaths
-  // E8M0 (all non-ordering ops), ITER_DIVSQRT = 0 div/sqrt, reserved
+  // E8M0 (all non-ordering ops), DIVSQRT_IMPL = 0 div/sqrt, reserved
   // opcodes (y = 0, invalid): combinational datapaths sampled into
   // y_r/flags_r.
   logic [W-1:0] y_c;
@@ -242,7 +269,7 @@ module fp_unit #(
     if (GENERIC) begin : g_generic_comb
       logic [W-1:0] y_div_c, y_sqrt_c;
       logic [4:0]   f_div_c, f_sqrt_c;
-      if (!SRT_DS) begin : g_comb_divsqrt
+      if (!SRT_DS && !ITER_DS) begin : g_comb_divsqrt
         fp_div #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_div (
           .a(a), .b(b), .rm(rm_eff), .y(y_div_c), .flags(f_div_c)
         );
@@ -327,11 +354,12 @@ module fp_unit #(
     if (v_rnd)  begin y = y_rnd_p;  flags = f_rnd_p;  end
     if (v_div)  begin y = y_div_p;  flags = f_div_p;  end
     if (v_sqrt) begin y = y_sqrt_p; flags = f_sqrt_p; end
+    if (v_iter) begin y = y_iter_p; flags = f_iter_p; end
     if (v_mm)   begin y = y_mm_p;   flags = f_mm_p;   end
     if (v_cmp)  begin y = y_cmp_p;  flags = f_cmp_p;  cmp = c_cmp_p; end
     if (v_tot)  begin y = '0;       flags = 5'd0;     cmp = c_tot_p; end
   end
-  assign out_valid = v_mul | v_fma | v_add | v_rnd | v_div | v_sqrt
+  assign out_valid = v_mul | v_fma | v_add | v_rnd | v_div | v_sqrt | v_iter
                    | v_mm | v_cmp | v_tot | v_reg;
 
 `ifndef SYNTHESIS
@@ -343,7 +371,7 @@ module fp_unit #(
       assert (out_valid == resv[0])
         else $error("fp_unit: out_valid=%0b but resv[0]=%0b (latency table mismatch)",
                     out_valid, resv[0]);
-      assert ($onehot0({v_mul, v_fma, v_add, v_rnd, v_div, v_sqrt,
+      assert ($onehot0({v_mul, v_fma, v_add, v_rnd, v_div, v_sqrt, v_iter,
                         v_mm, v_cmp, v_tot, v_reg}))
         else $error("fp_unit: result-port collision");
     end

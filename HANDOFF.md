@@ -648,7 +648,7 @@ optimization captures `metrics/area-after*.json` and diffs with
 - Landed: the engine is radix-4 (two quotient/root bits per cycle) with the
   top digit precomputed in the start cycle and a radix-2 half-step for odd
   W_MANT. The div/sqrt latency is CONSTANT for every input, including special
-  cases: K+1 cycles with K = ceil((W_MANT+3)/2) (binary32: 14, binary64: 28,
+  cases: K+1 cycles with K = floor((W_MANT+3)/2) (binary32: 14, binary64: 28,
   vs 52/29 and 110/58 before). The fp_unit output register is bypassed for
   engine results and the engine accepts a new start in the done cycle, so
   back-to-back div/sqrt have no dead cycle. The `--iter` harnesses now assert
@@ -703,7 +703,7 @@ optimization captures `metrics/area-after*.json` and diffs with
     binary64).
   * div/sqrt: one radix-4 digit per cycle (the digit-select compare, the
     multiple mux and the remainder subtraction are fused into one registered
-    step) plus a publish cycle: latency K+4 with K = ceil((W_MANT+3)/2)
+    step) plus a publish cycle: latency K+4 with K = floor((W_MANT+3)/2)
     (binary32 29 -> 17, binary64 57 -> 31). The restoring recurrence is
     unchanged, so bit-exactness is structural. The publish cycle rounds the
     *registered* quotient/root and remainder: reading the step's next-state

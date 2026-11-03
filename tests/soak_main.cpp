@@ -37,8 +37,8 @@ int main(int argc, char** argv) {
     const char* path = argv[1];
     const int w = atoi(argv[2]);
     const uint64_t C = strtoull(argv[3], nullptr, 10);  // 64-bit safe (binary64 FMA c)
-    // iter=1: fp_unit was built with ITER_DIVSQRT=1; div (op 3) and sqrt
-    // (op 4) use the in_valid/busy/out_valid handshake.
+    // iter: fp_unit DIVSQRT_IMPL (informational; every request is held
+    // until in_ready, so all implementations use the same drive loop).
     const int iter = (argc > 4) ? atoi(argv[4]) : 0;
     // Expected constant div/sqrt latency (0 = do not check): K+4 with
     // K = ceil((W_MANT+3)/2), supplied by the Python driver.
@@ -103,16 +103,24 @@ int main(int argc, char** argv) {
         top->a = a;
         top->b = b;
         top->c = C;
+        // Hold the request until fp_unit accepts it (in_ready at the edge);
+        // the latency is counted from the accepting edge.
         top->in_valid = 1;
         top->clk = 0;
         top->eval();  // inputs presented
+        int waits = 0;
+        while (!top->in_ready && waits < 1024) {
+            top->clk = 1; top->eval();
+            top->clk = 0; top->eval();
+            waits++;
+        }
         int cycles = 0;
         do {
             top->clk = 1;
-            top->eval();  // posedge samples the start / advances the pipeline
+            top->eval();  // posedge samples the start / advances
             top->clk = 0;
-            top->eval();
             top->in_valid = 0;
+            top->eval();
             cycles++;
         } while (!top->out_valid && cycles < 1024);
         // Constant per-operation latency: every vector of an op must take the

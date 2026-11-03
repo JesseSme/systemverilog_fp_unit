@@ -65,11 +65,12 @@ def _read_stamp(build_dir: str, name: str) -> str | None:
     return open(p).read().strip()
 
 
-def build(wexp: int, wmant: int) -> str:
-    build_dir = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}")
+def build(wexp: int, wmant: int, impl: int = 1) -> str:
+    build_dir = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}"
+                             + ("" if impl == 1 else f"_ds{impl}"))
     os.makedirs(build_dir, exist_ok=True)
     binary = os.path.join(build_dir, "fp_latency")
-    want = _stamp()
+    want = _stamp() + f"_ds{impl}"
     if (os.path.exists(binary) and os.environ.get("FORCE_REBUILD", "0") != "1"
             and _read_stamp(build_dir, "binary.stamp") == want):
         return binary
@@ -78,6 +79,7 @@ def build(wexp: int, wmant: int) -> str:
         "--top-module", "fp_unit",
         "-CFLAGS", f"-DNUM_OPS={NUM_OPS}",
         f"-GW_EXP={wexp}", f"-GW_MANT={wmant}",
+        *([f"-GDIVSQRT_IMPL={impl}"] if impl != 1 else []),
         "--Mdir", build_dir, "--prefix", "Vfp_unit",
         "-o", "fp_latency",
         *RTL, HARNESS,
@@ -88,8 +90,8 @@ def build(wexp: int, wmant: int) -> str:
 
 
 def run_width(job: tuple) -> tuple:
-    wexp, wmant = job
-    binary = build(wexp, wmant)
+    wexp, wmant, impl = job
+    binary = build(wexp, wmant, impl)
     proc = subprocess.run([binary, str(wexp), str(wmant)],
                           capture_output=True, text=True)
     sys.stderr.write(proc.stderr)
@@ -109,13 +111,15 @@ def main() -> int:
                     help="single format to probe (repeatable; default: matrix)")
     ap.add_argument("--json", type=str, default=None,
                     help="write the measured table as JSON")
+    ap.add_argument("--divsqrt", type=int, choices=(0, 1, 2), default=1,
+                    help="fp_unit DIVSQRT_IMPL (1 SRT default, 2 iterative, 0 comb)")
     ap.add_argument("--jobs", type=int, default=0,
                     help="widths to run concurrently (0 = one per core)")
     args = ap.parse_args()
 
     formats = [tuple(w) for w in args.width] if args.width else DEFAULT_FORMATS
     jobs = args.jobs if args.jobs > 0 else min(len(formats), os.cpu_count() or 1)
-    work = [(wexp, wmant) for wexp, wmant in formats]
+    work = [(wexp, wmant, args.divsqrt) for wexp, wmant in formats]
     if jobs > 1 and len(work) > 1:
         with ProcessPoolExecutor(max_workers=jobs) as ex:
             results = list(ex.map(run_width, work))

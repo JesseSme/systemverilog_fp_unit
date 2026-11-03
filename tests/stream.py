@@ -145,17 +145,21 @@ def main() -> int:
     ap.add_argument("--seed", type=lambda s: int(s, 0), default=0x57EA)
     ap.add_argument("--mode", choices=("same", "mixed", "both"), default="both")
     ap.add_argument("--param", action="append", default=[],
-                    help="extra Verilator -G parameter, e.g. --param ITER_DIVSQRT=0")
-    ap.add_argument("--nostall", type=lambda s: int(s, 0), default=(1 << NUM_OPS) - 1,
-                    help="bitmask of ops that must stream without stalls (same mode)")
+                    help="extra Verilator -G parameter, e.g. --param DIVSQRT_IMPL=2")
+    ap.add_argument("--allow-stall", nargs="*", default=[], metavar="OP",
+                    help="ops allowed to stall in same-op mode (e.g. div sqrt for "
+                         "the iterative engine, DIVSQRT_IMPL=2)")
     ap.add_argument("--jobs", type=int, default=0)
     args = ap.parse_args()
 
     widths = [tuple(w) for w in args.width] if args.width else DEFAULT_WIDTHS
     modes = ("same", "mixed") if args.mode == "both" else (args.mode,)
     params = [f"-G{p}" for p in args.param]
+    nostall = (1 << NUM_OPS) - 1
+    for name in args.allow_stall:
+        nostall &= ~(1 << OP_NAMES.index(name))
     tag = "".join("_" + p.replace("=", "") for p in args.param)
-    work = [(we, wm, args.vectors, args.seed, modes, params, tag, args.nostall)
+    work = [(we, wm, args.vectors, args.seed, modes, params, tag, nostall)
             for we, wm in widths]
     jobs = args.jobs if args.jobs > 0 else min(len(work), os.cpu_count() or 1)
     if jobs > 1 and len(work) > 1:
