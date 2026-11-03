@@ -5,7 +5,7 @@ SIM ?= verilator
 # oss-cad-suite provides SymbiYosys (sby) + Yosys for formal verification.
 OSS ?= /home/jesse/Documents/oss-cad-suite-linux-x64-20260813/oss-cad-suite
 
-.PHONY: regress regress-all regress-axilite smoke soak coverage formal lint \
+.PHONY: regress regress-all regress-axilite smoke soak coverage formal lint bf16 stream \
         exhaustive-iter soak-iter regress-axilite-iter \
         metrics-area metrics-runtime metrics-latency metrics-compare clean
 
@@ -23,6 +23,16 @@ smoke:
 # AXI-Lite wrapper regression (fp_unit_axilite) across the width matrix.
 regress-axilite:
 	uv run python tests/run_regression.py --top fp_unit_axilite --tests test_fp_unit_axilite
+
+# fp32_to_bf16_round: oracle records + exhaustive 2^32 sweep (~1.5 min).
+bf16:
+	uv run python tests/bf16.py
+
+# Streaming / mixed-issue test: a request every cycle, results matched by tag
+# (same-op back-to-back per pipeline + mixed ops through the in_ready
+# backpressure), binary16/BF16/E4M3/binary32.
+stream:
+	uv run python tests/stream.py
 
 # Iterative div/sqrt engine (ITER_DIVSQRT=1): exhaustive 8-bit sweep and the
 # medium-width soak through the C++ harnesses, plus the AXI-Lite handshake.

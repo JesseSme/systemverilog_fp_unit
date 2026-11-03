@@ -511,3 +511,25 @@ def dispatch(op: int, a: int, b: int, c: int, rm: int,
         raise ValueError(f"no reference for opcode {op}")
     return y, flags, 0
 
+
+_F32 = BinFormat(8, 23)
+_BF16 = BinFormat(8, 7)
+
+
+def f32_to_bf16_rne(x: int) -> int:
+    """Reference for rtl/fp32_to_bf16_round.sv: binary32 -> bfloat16, RNE.
+
+    Finite values are rounded exactly (roundTiesToEven); +-Inf is returned
+    unchanged; a NaN becomes a quiet NaN keeping the sign and the top 6
+    payload bits (quiet bit forced, never infinity). No flags.
+    """
+    cls, sign, value, payload = decode(x, _F32)
+    if cls == INF:
+        return encode_inf(sign, _BF16)
+    if cls in (QNAN, SNAN):
+        top6 = (payload >> 16) & 0x3F
+        return (sign << 15) | (0xFF << 7) | (1 << 6) | top6
+    if cls == ZERO:
+        return encode_zero(sign, _BF16)
+    y, _flags = round_to_format(sign, value, MODE_RNE, _BF16)
+    return y
