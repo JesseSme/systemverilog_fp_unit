@@ -8,12 +8,24 @@
 //
 //   exp(x) = exp(x/32)^32,   exp(r) ~= 1 + r*(1 + r*(1/2 + r*(1/6 +
 //                                        r*(1/24 + r*(1/120 + r/720)))))
-// with |x/32| <= 0.5, giving ~1e-6 relative error.
+// with |x/32| <= 0.5 (all operations RNE).
+//
+// Measured accuracy (tests/test_fp_exp_seq.py, vs math.exp rounded to
+// binary32): <= ~45 ulp (~5e-6 relative) for |x| <= 8, rising to ~1.3k ulp
+// (~1.5e-4 relative) as |x| approaches 16. The squarings multiply the
+// relative error of exp(x/32) (polynomial truncation ~r^7/5040 plus the
+// rounding of 13 operations) by 32. A higher polynomial degree or a smaller
+// scaling exponent with an ln2 range reduction would be needed for
+// single-digit-ulp accuracy.
+//
+// Inputs: |x| > 16 (including +-Inf) clamps to +-16. A NaN compares as a
+// huge magnitude and also clamps to +-16 (sign of the NaN), i.e. a NaN input
+// does NOT produce a NaN.
 //
 // The caller pulses `start` with `x`; `done` pulses one cycle with `y` valid
-// (held until the next start). The sequencer issues one fp_unit operation at
-// a time and waits for its out_valid, so it is compatible with the pipelined
-// (multi-cycle) fp_unit.
+// (held until the next start). Latency: 87 cycles (binary32 fp_unit
+// latencies: mul 4, add 3). The sequencer issues one fp_unit operation at a
+// time (held until in_ready) and waits for its out_valid.
 
 /* verilator lint_off WIDTHEXPAND */
 /* verilator lint_off WIDTHTRUNC */
@@ -48,35 +60,37 @@ module fp_exp_seq (
   fp_pkg::op_t       mul_mode;
   fp_pkg::rounding_t mul_rm;
   logic [31:0]       mul_a, mul_b, mul_y;
-  logic              mul_in_valid, mul_valid;
+  logic              mul_in_valid, mul_valid, mul_ready;
   /* verilator lint_off UNUSEDSIGNAL */
   logic [1:0]        mul_cmp;
   logic [4:0]        mul_flags;
+  logic              mul_tag;
   /* verilator lint_on UNUSEDSIGNAL */
 
   fp_unit #(.W_EXP(8), .W_MANT(23)) u_mul (
     .clk(clk), .rst_n(rst_n),
-    .in_valid(mul_in_valid), .out_valid(mul_valid),
+    .in_valid(mul_in_valid), .in_ready(mul_ready), .out_valid(mul_valid),
     .mode(mul_mode), .rm(mul_rm),
-    .a(mul_a), .b(mul_b), .c('0),
-    .y(mul_y), .cmp(mul_cmp), .flags(mul_flags)
+    .a(mul_a), .b(mul_b), .c('0), .in_tag(1'b0),
+    .y(mul_y), .cmp(mul_cmp), .flags(mul_flags), .out_tag(mul_tag)
   );
 
   fp_pkg::op_t       add_mode;
   fp_pkg::rounding_t add_rm;
   logic [31:0]       add_a, add_b, add_y;
-  logic              add_in_valid, add_valid;
+  logic              add_in_valid, add_valid, add_ready;
   /* verilator lint_off UNUSEDSIGNAL */
   logic [1:0]        add_cmp;
   logic [4:0]        add_flags;
+  logic              add_tag;
   /* verilator lint_on UNUSEDSIGNAL */
 
   fp_unit #(.W_EXP(8), .W_MANT(23)) u_add (
     .clk(clk), .rst_n(rst_n),
-    .in_valid(add_in_valid), .out_valid(add_valid),
+    .in_valid(add_in_valid), .in_ready(add_ready), .out_valid(add_valid),
     .mode(add_mode), .rm(add_rm),
-    .a(add_a), .b(add_b), .c('0),
-    .y(add_y), .cmp(add_cmp), .flags(add_flags)
+    .a(add_a), .b(add_b), .c('0), .in_tag(1'b0),
+    .y(add_y), .cmp(add_cmp), .flags(add_flags), .out_tag(add_tag)
   );
 
   assign mul_mode = fp_pkg::OP_MUL;
@@ -123,7 +137,7 @@ module fp_exp_seq (
     endcase
   end
 
-  // One-cycle issue pulses (only in the cycle a step starts).
+  // Issue requests (held until accepted by in_ready).
   assign mul_in_valid = !waiting && op_is_mul;
   assign add_in_valid = !waiting && op_is_add;
   logic any_valid;
@@ -151,9 +165,10 @@ module fp_exp_seq (
         end
       end else if (!waiting) begin
         if (op_is_mul || op_is_add) begin
-          // The issue pulse is asserted combinationally this cycle; wait for
-          // the result.
-          waiting <= 1'b1;
+          // The request is asserted combinationally this cycle; once the unit
+          // accepts it (in_ready), wait for the result.
+          if ((op_is_mul && mul_ready) || (op_is_add && add_ready))
+            waiting <= 1'b1;
         end else begin
           // No-op steps: 2 (load 1/720) and 20 (publish the result).
           case (step)

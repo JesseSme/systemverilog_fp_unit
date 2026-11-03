@@ -33,17 +33,16 @@
 // CTRL.GO = 1. The wrapper latches the operands/opcode into working
 // registers, asserts STATUS.BUSY, and publishes the result in
 // RESULT/RES_CMP and STATUS.flags with STATUS.VALID = 1 and STATUS.BUSY = 0
-// when the FPU's out_valid pulses (the cycle after GO for single-cycle
-// operations; after the iterative div/sqrt engine finishes when
-// ITER_DIVSQRT = 1). Reads/writes outside the register map are answered with
+// when the FPU's out_valid pulses (after the operation's fixed pipeline
+// latency; see the README latency table). Reads/writes outside the register map are answered with
 // DECERR; writes to read-only registers are ignored (OKAY).
 
 module fp_unit_axilite #(
   parameter int W_EXP       = 8,
   parameter int W_MANT      = 23,
   parameter int ADDR_WIDTH  = 6,
-  // Passed through to fp_unit: 1 (default) selects the iterative div/sqrt
-  // engine, 0 the legacy combinational datapaths.
+  // Passed through to fp_unit: 1 (default) selects the pipelined SRT
+  // div/sqrt datapaths, 0 the legacy combinational ones.
   parameter int ITER_DIVSQRT = 1
 ) (
   input  logic                  s_axi_aclk,
@@ -183,7 +182,7 @@ module fp_unit_axilite #(
   logic [31:0] status_vec;
   assign status_vec = { {W_MANT[7:0], W_EXP[7:0]}, 6'b0, valid, busy, 3'b0, reg_flags };
 
-  // ---- Compute control (GO strobe -> BUSY -> 3 cycles -> VALID) ----------------
+  // ---- Compute control (GO strobe -> BUSY -> op latency -> VALID) -------------
   logic [W-1:0]      a_w;
   logic [W-1:0]      b_w;
   logic [W-1:0]      c_w;
@@ -200,13 +199,17 @@ module fp_unit_axilite #(
   logic [1:0]   fpu_cmp;
   logic [4:0]   fpu_flags;
   logic         fpu_in_valid;
+  logic         fpu_in_ready;
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic         fpu_out_tag;  // one request at a time: no tag needed
+  /* verilator lint_on UNUSEDSIGNAL */
   logic         fpu_out_valid;
   logic         start_req;
 
-  // One-cycle start pulse for the FPU, issued in the first S_WAIT cycle so the
-  // operands latched on the S_IDLE -> S_WAIT edge are already stable. Single-
-  // cycle ops pulse out_valid the next cycle; div/sqrt under
-  // ITER_DIVSQRT = 1 when the iterative engine finishes.
+  // Start request for the FPU, issued from the first S_WAIT cycle (the
+  // operands latched on the S_IDLE -> S_WAIT edge are already stable) and
+  // held until fp_unit's in_ready accepts it. The result arrives on
+  // out_valid after the op's fixed latency (README latency table).
   assign fpu_in_valid = (cstate == S_WAIT) && start_req;
 
   always_ff @(posedge s_axi_aclk) begin
@@ -241,7 +244,8 @@ module fp_unit_axilite #(
           end
         end
         S_WAIT: begin
-          start_req <= 1'b0;
+          // The request is held until fp_unit accepts it (in_ready).
+          if (fpu_in_ready) start_req <= 1'b0;
           if (fpu_out_valid) begin
             reg_result <= {{(REG_W-W){1'b0}}, fpu_y};
             reg_flags  <= fpu_flags;
@@ -374,15 +378,18 @@ module fp_unit_axilite #(
     .clk       (s_axi_aclk),
     .rst_n     (s_axi_aresetn),
     .in_valid  (fpu_in_valid),
+    .in_ready  (fpu_in_ready),
     .mode      (mode_w),
     .rm        (rm_w),
     .a         (a_w),
     .b         (b_w),
     .c         (c_w),
+    .in_tag    (1'b0),
     .y         (fpu_y),
     .cmp       (fpu_cmp),
     .flags     (fpu_flags),
-    .out_valid (fpu_out_valid)
+    .out_valid (fpu_out_valid),
+    .out_tag   (fpu_out_tag)
   );
 
 endmodule

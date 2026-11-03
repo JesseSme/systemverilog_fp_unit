@@ -38,6 +38,9 @@ from rtl_files import rtl_files  # noqa: E402
 
 RTL = rtl_files(wrappers=True)
 
+# Toplevels that take no W_EXP/W_MANT parameters.
+FIXED_FORMAT_TOPS = {"fp_exp_seq"}
+
 # (W_EXP, W_MANT) matrix: standard interchange formats plus FP8/BF16/E8M0.
 # Default = the formats the user exercises routinely; --all adds odd sizes.
 WIDTHS = [(5, 10), (8, 23), (11, 52), (4, 3), (8, 7), (8, 0)]
@@ -171,11 +174,15 @@ def main() -> int:
     iter_mode = int(os.environ.get("FP_ITER_DIVSQRT", "0"))
     failures = 0
     for wexp, wmant in widths:
-        params = {"W_EXP": wexp, "W_MANT": wmant}
-        if iter_mode:
+        # Tops without format parameters (fp_exp_seq is fixed binary32).
+        params = {} if args.top in FIXED_FORMAT_TOPS else {"W_EXP": wexp, "W_MANT": wmant}
+        if iter_mode and args.top not in FIXED_FORMAT_TOPS:
             params["ITER_DIVSQRT"] = 1
+        # One build dir per (top, width, mode): sharing an Mdir between tops
+        # forces a full rebuild on every switch.
         build_dir = ROOT / "sim_build" / (
-            f"exp{wexp}_mant{wmant}" + ("_iter" if iter_mode else ""))
+            f"exp{wexp}_mant{wmant}" + ("_iter" if iter_mode else "")
+            + ("" if args.top == "fp_unit" else f"_{args.top}"))
         env = _sim_env(tests_dir, wexp, wmant)
         print(f"=== width W_EXP={wexp} W_MANT={wmant} ===", flush=True)
         runner = get_runner("verilator")
@@ -183,7 +190,7 @@ def main() -> int:
             sources=RTL,
             hdl_toplevel=args.top,
             parameters=params,
-            build_args=["--timing"],
+            build_args=["--timing", "--assert"],
             timescale=("1ns", "1ps"),
             build_dir=build_dir,
         )

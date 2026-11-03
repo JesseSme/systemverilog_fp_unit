@@ -107,7 +107,7 @@ def build(wexp: int, wmant: int, iter_mode: bool) -> str:
             and _read_stamp(build_dir, "binary.stamp") == want):
         return binary
     subprocess.check_call([
-        "verilator", "--cc", "--exe", "--build", "--timing",
+        "verilator", "--cc", "--exe", "--build", "--timing", "--assert",
         "--coverage", "--coverage-line", "--coverage-toggle",
         "--top-module", "fp_unit",
         "-CFLAGS", f"-DNUM_OPS={N_OPS}",

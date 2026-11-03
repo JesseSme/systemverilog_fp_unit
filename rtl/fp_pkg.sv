@@ -55,4 +55,52 @@ package fp_pkg;
   localparam int FLAG_INEXACT   = 0;  // 7.6
   /* verilator lint_on UNUSEDPARAM */
 
+  // ------------------------------------------------------------------
+  // Pipeline latencies (cycles from an accepted request to out_valid) of the
+  // generic-format (W_MANT > 0) datapaths. fp_unit uses these to schedule the
+  // shared result port; they must match the pipeline structure exactly (the
+  // fp_unit simulation assertion `out_valid == resv[0]` and tests/latency.py
+  // check this).
+  /* verilator lint_off UNUSEDPARAM */
+  localparam int LAT_ADD    = 3;  // fp_add_pipe
+  localparam int LAT_RNDINT = 2;  // fp_roundint_pipe
+  /* verilator lint_on UNUSEDPARAM */
+
+  // fp_mul_core uses 2 reduction stages when the significand width
+  // W_MANT+1 <= 32, else 3.
+  function automatic int lat_mul(input int w_mant);
+    return (w_mant + 1 <= 32) ? 4 : 5;
+  endfunction
+
+  function automatic int lat_fma(input int w_mant);
+    return (w_mant + 1 <= 32) ? 7 : 8;
+  endfunction
+
+  // fp_div_srt: NSTG + 2 with NSTG = ceil(NDIG / dps).
+  function automatic int lat_div_srt(input int w_mant, input int dps);
+    int s_w, target, ndig;
+    s_w    = w_mant + 1;
+    target = s_w + 2;
+    ndig   = (target % 2 == 0) ? (target / 2 + 1) : ((target + 1) / 2 + 1);
+    return (ndig + dps - 1) / dps + 2;
+  endfunction
+
+  // fp_sqrt_srt: NSTG + 2 with NDIG = (R_W + PAD - 4) / 4.
+  function automatic int lat_sqrt_srt(input int w_mant, input int dps);
+    int s_w, re, ndig;
+    s_w  = w_mant + 1;
+    re   = 2 * s_w + 6 + ((s_w % 2 == 0) ? 2 : 0);
+    ndig = (re - 4) / 4;
+    return (ndig + dps - 1) / dps + 2;
+  endfunction
+
+  // fp_divsqrt_iter: K + 3 with K = ceil((W_MANT+3)/2) (one op at a time).
+  function automatic int lat_divsqrt_iter(input int w_mant);
+    return (w_mant + 4) / 2 + 3;
+  endfunction
+
+  function automatic int max_int(input int x, input int y);
+    return (x > y) ? x : y;
+  endfunction
+
 endpackage

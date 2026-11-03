@@ -48,8 +48,18 @@ int main(int argc, char** argv) {
 
     Verilated::commandArgs(argc, argv);
     Vfp_unit* top = new Vfp_unit;
+    // Synchronous active-low reset (clears the pipeline valids and the
+    // fp_unit result-port reservation), released before the vectors.
     top->clk = 0;
-    top->rst_n = 1;  // synchronous active-low reset released before vectors
+    top->rst_n = 0;
+    top->in_valid = 0;
+    top->eval();
+    for (int i = 0; i < 4; i++) {
+        top->clk = 1; top->eval();
+        top->clk = 0; top->eval();
+    }
+    top->rst_n = 1;
+    top->eval();
 
     FILE* f = fopen(path, "rb");
     if (!f) {
