@@ -37,17 +37,21 @@ from reference.formats import (
     max_finite_bits,
 )
 
-OP_ADD = 0
-OP_SUB = 1
-OP_MUL = 2
-OP_DIV = 3
-OP_SQRT = 4
-OP_FMA = 5
-OP_MIN = 6
-OP_MAX = 7
-OP_CMP = 8
-OP_RNDINT = 9
-OP_TOTALORDER = 10
+from reference.formats import (  # noqa: E402  (op table: single source of truth)
+    NUM_OPS,
+    OP_ADD,
+    OP_CMP,
+    OP_DIV,
+    OP_FMA,
+    OP_MAX,
+    OP_MIN,
+    OP_MUL,
+    OP_NAMES,
+    OP_RNDINT,
+    OP_SQRT,
+    OP_SUB,
+    OP_TOTALORDER,
+)
 
 W_EXP = int(os.environ.get("FP_W_EXP", "8"))
 W_MANT = int(os.environ.get("FP_W_MANT", "23"))
@@ -93,9 +97,7 @@ async def check(dut, mode, rm, a, b, exp_y, exp_f, what, c=0, exp_cmp=0):
     cc = int(dut.cmp.value)
     if y != exp_y or f != exp_f or cc != exp_cmp:
         w = (W_EXP + W_MANT + 1) // 4 + 1
-        opname = {OP_ADD: "add", OP_SUB: "sub", OP_MUL: "mul", OP_DIV: "div",
-                  OP_SQRT: "sqrt", OP_FMA: "fma", OP_MIN: "min", OP_MAX: "max",
-                  OP_CMP: "cmp", OP_RNDINT: "rndint", OP_TOTALORDER: "totalorder"}[mode]
+        opname = OP_NAMES[mode] if mode < NUM_OPS else f"op{mode}"
         dut._log.error(
             "%s: mode=%s rm=%s a=%0*x b=%0*x: got y=%0*x flags=%s cmp=%d, "
             "want y=%0*x flags=%s cmp=%d",
@@ -1268,32 +1270,12 @@ async def test_random_mixed(dut):
     rng = random.Random(SEED)
     for i in range(ITERS):
         a, b = gen.pair_stream(rng, FMT, 1)[0]
-        mode = rng.randrange(11)
+        mode = rng.randrange(NUM_OPS)
         rm = rng.randrange(5)
-        exp_c = 0
-        if mode == OP_MUL:
-            exp_y, exp_f = ops.fp_mul(a, b, rm, FMT)
-        elif mode == OP_DIV:
-            exp_y, exp_f = ops.fp_div(a, b, rm, FMT)
-        elif mode == OP_SQRT:
-            exp_y, exp_f = ops.fp_sqrt(a, rm, FMT)
-        elif mode == OP_FMA:
-            c = gen.operand(rng, FMT)
-            exp_y, exp_f = ops.fp_fma(a, b, c, rm, FMT)
-        elif mode == OP_MIN:
-            exp_y, exp_f = ops.fp_min(a, b, FMT)
-        elif mode == OP_MAX:
-            exp_y, exp_f = ops.fp_max(a, b, FMT)
-        elif mode == OP_CMP:
-            exp_y, exp_c, exp_f = ops.fp_cmp(a, b, FMT)
-        elif mode == OP_RNDINT:
-            exp_y, exp_f = ops.fp_roundint(a, rm, FMT)
-        elif mode == OP_TOTALORDER:
-            exp_y, exp_c, exp_f = ops.fp_totalorder(a, b, FMT)
-        else:
-            exp_y, exp_f = ops.fp_add(a, b, rm, FMT, sub=(mode == OP_SUB))
+        c = gen.operand(rng, FMT) if mode == OP_FMA else 0
+        exp_y, exp_f, exp_c = ops.dispatch(mode, a, b, c, rm, FMT)
         await check(dut, mode, rm, a, b, exp_y, exp_f, f"random[{i}]",
-                    c=c if mode == OP_FMA else 0, exp_cmp=exp_c)
+                    c=c, exp_cmp=exp_c)
 
 
 @cocotb.test()

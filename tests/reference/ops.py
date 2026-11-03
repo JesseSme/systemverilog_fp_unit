@@ -474,3 +474,40 @@ def fp_roundint(a_bits: int, rm: int, fmt: BinFormat) -> tuple[int, int]:
 
 def _flip_sign(bits: int, fmt: BinFormat) -> int:
     return bits ^ (1 << (fmt.width - 1))
+
+
+def dispatch(op: int, a: int, b: int, c: int, rm: int,
+             fmt: BinFormat) -> tuple[int, int, int]:
+    """Reference result (y, flags, cmp) of fp_unit opcode `op` (fp_pkg::op_t).
+
+    Single op -> oracle mapping shared by every harness (exhaustive, soak,
+    stream, cocotb). Ops without a cmp result report cmp = 0.
+    """
+    from . import formats as F
+
+    if op in (F.OP_ADD, F.OP_SUB):
+        y, flags = fp_add(a, b, rm, fmt, sub=(op == F.OP_SUB))
+    elif op == F.OP_MUL:
+        y, flags = fp_mul(a, b, rm, fmt)
+    elif op == F.OP_DIV:
+        y, flags = fp_div(a, b, rm, fmt)
+    elif op == F.OP_SQRT:
+        y, flags = fp_sqrt(a, rm, fmt)
+    elif op == F.OP_FMA:
+        y, flags = fp_fma(a, b, c, rm, fmt)
+    elif op == F.OP_MIN:
+        y, flags = fp_min(a, b, fmt)
+    elif op == F.OP_MAX:
+        y, flags = fp_max(a, b, fmt)
+    elif op == F.OP_CMP:
+        y, cmp, flags = fp_cmp(a, b, fmt)
+        return y, flags, cmp
+    elif op == F.OP_RNDINT:
+        y, flags = fp_roundint(a, rm, fmt)
+    elif op == F.OP_TOTALORDER:
+        y, cmp, flags = fp_totalorder(a, b, fmt)
+        return y, flags, cmp
+    else:
+        raise ValueError(f"no reference for opcode {op}")
+    return y, flags, 0
+

@@ -16,6 +16,9 @@
 
 #include "Vfp_unit.h"
 #include "verilated.h"
+#ifndef NUM_OPS
+#error "NUM_OPS must be defined by the driver (-CFLAGS -DNUM_OPS=<n>)"
+#endif
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -70,8 +73,8 @@ int main(int argc, char** argv) {
     top->eval();
 
     int total_errors = 0;
-    int lat[11] = {0};
-    for (int op = 0; op <= 10; op++) {
+    int lat[NUM_OPS] = {0};
+    for (int op = 0; op < NUM_OPS; op++) {
         int first = -1;
         int errors = 0;
         for (int v = 0; v < NV; v++) {
@@ -109,10 +112,8 @@ int main(int argc, char** argv) {
     top->final();
     delete top;
     printf("LATENCY %s\n", total_errors ? "FAIL" : "PASS");
-    fprintf(stderr,
-            "latency table (W_EXP=%d W_MANT=%d): "
-            "add %d sub %d mul %d div %d sqrt %d fma %d min %d max %d cmp %d rndint %d totalorder %d\n",
-            wexp, wmant, lat[0], lat[1], lat[2], lat[3], lat[4], lat[5], lat[6],
-            lat[7], lat[8], lat[9], lat[10]);
+    fprintf(stderr, "latency table (W_EXP=%d W_MANT=%d):", wexp, wmant);
+    for (int op = 0; op < NUM_OPS; op++) fprintf(stderr, " op%d=%d", op, lat[op]);
+    fprintf(stderr, "\n");
     return total_errors ? 1 : 0;
 }

@@ -15,6 +15,9 @@
 #include "Vfp_unit.h"
 #include "verilated.h"
 #include "verilated_cov.h"
+#ifndef NUM_OPS
+#error "NUM_OPS must be defined by the driver (-CFLAGS -DNUM_OPS=<n>)"
+#endif
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -41,8 +44,8 @@ int main(int argc, char** argv) {
     // K = ceil((W_MANT+3)/2), supplied by the Python driver.
     const int divsqrt_cycles = (argc > 5) ? atoi(argv[5]) : 0;
     (void)divsqrt_cycles;
-    int seen_cycles[11];
-    for (int i = 0; i < 11; i++) seen_cycles[i] = -1;
+    int seen_cycles[NUM_OPS];
+    for (int i = 0; i < NUM_OPS; i++) seen_cycles[i] = -1;
     const int opbytes = (w + 7) / 8;
     if (opbytes > 8) {
         fprintf(stderr, "width %d too wide for the soak harness (max 64)\n", w);

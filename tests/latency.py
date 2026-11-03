@@ -11,7 +11,8 @@ Usage:
     uv run python tests/latency.py --width 8 23       # single format
     uv run python tests/latency.py --json out.json    # machine-readable
 
-The cycle counts are measured at the design's operating clock (250 MHz here);
+The cycle counts are clock cycles (the operating clock is set by the
+implementation run; see README);
 the printed table is the canonical per-op latency reference (README/HANDOFF).
 """
 
@@ -25,23 +26,19 @@ from concurrent.futures import ProcessPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from reference.formats import NUM_OPS, OP_NAMES  # noqa: E402
+from rtl_files import rtl_paths  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-RTL = [os.path.join(ROOT, "rtl", f) for f in
-       ("fp_pkg.sv", "fp_add.sv", "fp_add_pipe.sv", "fp_add_e8m0.sv",
-        "fp_mul.sv", "fp_mul_core.sv", "fp_mul_pipe.sv", "fp_mul_e8m0.sv", "fp_div.sv", "fp_div_srt.sv", "fp_sqrt_srt.sv", "fp_div_e8m0.sv",
-        "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_divsqrt_iter.sv",
-        "fp_fma.sv", "fp_fma_pipe.sv", "fp_fma_e8m0.sv",
-        "fp_minmax.sv", "fp_minmax_pipe.sv", "fp_cmp.sv", "fp_cmp_pipe.sv", "fp_totalorder.sv", "fp_totalorder_pipe.sv",
-        "fp_roundint.sv", "fp_roundint_pipe.sv", "fp_roundint_e8m0.sv", "fp_unit.sv")]
+RTL = rtl_paths()
 HARNESS = os.path.join(HERE, "latency_main.cpp")
 BUILD_DIR = os.path.join(ROOT, "latency_build")
 
 # Standard width matrix (binary16, binary32, E4M3, BF16, E8M0).
 DEFAULT_FORMATS = [(5, 10), (8, 23), (4, 3), (8, 7), (8, 0)]
 
-OPS = ["add", "sub", "mul", "div", "sqrt", "fma",
-       "min", "max", "cmp", "rndint", "totalorder"]
+OPS = list(OP_NAMES)
 
 
 def _env() -> dict:
@@ -79,6 +76,7 @@ def build(wexp: int, wmant: int) -> str:
     subprocess.check_call([
         "verilator", "--cc", "--exe", "--build", "--timing",
         "--top-module", "fp_unit",
+        "-CFLAGS", f"-DNUM_OPS={NUM_OPS}",
         f"-GW_EXP={wexp}", f"-GW_MANT={wmant}",
         "--Mdir", build_dir, "--prefix", "Vfp_unit",
         "-o", "fp_latency",
@@ -100,7 +98,7 @@ def run_width(job: tuple) -> tuple:
         if line.startswith("LATENCY op="):
             fields = dict(kv.split("=") for kv in line.split()[1:])
             cycles[int(fields["op"])] = int(fields["cycles"])
-    ok = proc.returncode == 0 and len(cycles) == 11
+    ok = proc.returncode == 0 and len(cycles) == NUM_OPS
     return (wexp, wmant, cycles, ok)
 
 
@@ -132,9 +130,9 @@ def main() -> int:
     table = {}
     ok = True
     for (wexp, wmant, cycles, wok), name in zip(results, names):
-        row = "  ".join(f"{cycles.get(i, 0):>9}" for i in range(11))
+        row = "  ".join(f"{cycles.get(i, 0):>9}" for i in range(NUM_OPS))
         print(f"{name:<{colw}}{row}")
-        table[f"{wexp}x{wmant}"] = {OPS[i]: cycles.get(i) for i in range(11)}
+        table[f"{wexp}x{wmant}"] = {OPS[i]: cycles.get(i) for i in range(NUM_OPS)}
         ok = ok and wok
     print("ALL LATENCY PROBES PASS" if ok else "SOME LATENCY PROBES FAILED")
 

@@ -37,17 +37,12 @@ from concurrent.futures import ProcessPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from reference import gen, ops  # noqa: E402
-from reference.formats import BinFormat, encode_finite  # noqa: E402
+from reference.formats import NUM_OPS, BinFormat, encode_finite  # noqa: E402
+from rtl_files import rtl_paths  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-RTL = [os.path.join(ROOT, "rtl", f) for f in
-       ("fp_pkg.sv", "fp_add.sv", "fp_add_pipe.sv", "fp_add_e8m0.sv",
-        "fp_mul.sv", "fp_mul_core.sv", "fp_mul_pipe.sv", "fp_mul_e8m0.sv", "fp_div.sv", "fp_div_srt.sv", "fp_sqrt_srt.sv", "fp_div_e8m0.sv",
-        "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_divsqrt_iter.sv",
-        "fp_fma.sv", "fp_fma_pipe.sv", "fp_fma_e8m0.sv",
-        "fp_minmax.sv", "fp_minmax_pipe.sv", "fp_cmp.sv", "fp_cmp_pipe.sv", "fp_totalorder.sv", "fp_totalorder_pipe.sv", "fp_roundint.sv", "fp_roundint_pipe.sv",
-        "fp_roundint_e8m0.sv", "fp_unit.sv")]
+RTL = rtl_paths()
 REF = [os.path.join(HERE, "reference", f) for f in
        ("formats.py", "rounding.py", "ops.py", "gen.py")]
 HARNESS = os.path.join(HERE, "soak_main.cpp")
@@ -57,7 +52,7 @@ BUILD_DIR = os.path.join(ROOT, "soak_build")
 DEFAULT_WIDTHS = [(5, 10), (8, 7), (4, 3)]  # binary16, BF16, E4M3
 DEFAULT_VECTORS = 5_000_000
 
-N_OPS = 11  # add, sub, mul, div, sqrt, fma, min, max, cmp, rndint, totalorder
+N_OPS = NUM_OPS  # tests/reference/formats.py OP_NAMES
 
 
 def _stamp() -> str:
@@ -100,27 +95,7 @@ def generate_expected(fmt: BinFormat, path: str, n: int, seed: int) -> None:
             a, b = gen.pair_stream(rng, fmt, 1)[0]
             rm = rng.randrange(5)
             op = rng.randrange(N_OPS)
-            cmp = 0
-            if op == 2:
-                y, flags = ops.fp_mul(a, b, rm, fmt)
-            elif op == 3:
-                y, flags = ops.fp_div(a, b, rm, fmt)
-            elif op == 4:
-                y, flags = ops.fp_sqrt(a, rm, fmt)
-            elif op == 5:
-                y, flags = ops.fp_fma(a, b, c, rm, fmt)
-            elif op == 6:
-                y, flags = ops.fp_min(a, b, fmt)
-            elif op == 7:
-                y, flags = ops.fp_max(a, b, fmt)
-            elif op == 8:
-                y, cmp, flags = ops.fp_cmp(a, b, fmt)
-            elif op == 9:
-                y, flags = ops.fp_roundint(a, rm, fmt)
-            elif op == 10:
-                y, cmp, flags = ops.fp_totalorder(a, b, fmt)
-            else:
-                y, flags = ops.fp_add(a, b, rm, fmt, sub=(op == 1))
+            y, flags, cmp = ops.dispatch(op, a, b, c, rm, fmt)
             f.write(rec.pack(a, b, y, flags, cmp, op, rm))
 
 
@@ -158,6 +133,7 @@ def build(wexp: int, wmant: int, iter_mode: bool) -> str:
         "verilator", "--cc", "--exe", "--build", "--timing",
         "--coverage", "--coverage-line", "--coverage-toggle",
         "--top-module", "fp_unit",
+        "-CFLAGS", f"-DNUM_OPS={N_OPS}",
         f"-GW_EXP={wexp}", f"-GW_MANT={wmant}",
         *(["-GITER_DIVSQRT=1"] if iter_mode else []),
         "--Mdir", build_dir, "--prefix", "Vfp_unit",

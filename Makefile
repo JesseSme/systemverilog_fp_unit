@@ -77,19 +77,26 @@ metrics-latency:
 metrics-compare:
 	uv run python tests/metrics.py --compare $(BEFORE) $(AFTER)
 
+# RTL file lists: rtl/filelist.f (fp_unit + datapaths) and
+# rtl/filelist_wrappers.f (fp_unit_axilite, fp32_to_bf16_round, fp_exp_seq).
+RTL  := $(shell cat rtl/filelist.f)
+WRAP := $(shell cat rtl/filelist_wrappers.f)
+VLINT := verilator --lint-only -Wall --timing
+
 lint:
-	verilator --lint-only -Wall --timing --top-module fp_unit rtl/fp_pkg.sv rtl/fp_add.sv rtl/fp_add_pipe.sv rtl/fp_mul.sv rtl/fp_mul_core.sv rtl/fp_mul_pipe.sv rtl/fp_div.sv rtl/fp_div_srt.sv rtl/fp_sqrt.sv rtl/fp_sqrt_srt.sv rtl/fp_divsqrt_iter.sv rtl/fp_fma.sv rtl/fp_fma_pipe.sv rtl/fp_minmax.sv rtl/fp_minmax_pipe.sv rtl/fp_cmp.sv rtl/fp_cmp_pipe.sv rtl/fp_totalorder.sv rtl/fp_totalorder_pipe.sv rtl/fp_roundint.sv rtl/fp_roundint_pipe.sv rtl/fp_unit.sv
-	verilator --lint-only -Wall --timing --top-module fp_unit -GITER_DIVSQRT=1 rtl/fp_pkg.sv rtl/fp_add.sv rtl/fp_add_pipe.sv rtl/fp_mul.sv rtl/fp_mul_core.sv rtl/fp_mul_pipe.sv rtl/fp_div.sv rtl/fp_div_srt.sv rtl/fp_sqrt.sv rtl/fp_sqrt_srt.sv rtl/fp_divsqrt_iter.sv rtl/fp_fma.sv rtl/fp_fma_pipe.sv rtl/fp_minmax.sv rtl/fp_minmax_pipe.sv rtl/fp_cmp.sv rtl/fp_cmp_pipe.sv rtl/fp_totalorder.sv rtl/fp_totalorder_pipe.sv rtl/fp_roundint.sv rtl/fp_roundint_pipe.sv rtl/fp_unit.sv
-	verilator --lint-only -Wall --timing --top-module fp_unit rtl/fp_pkg.sv rtl/fp_add.sv rtl/fp_add_pipe.sv rtl/fp_mul.sv rtl/fp_mul_core.sv rtl/fp_mul_pipe.sv rtl/fp_div.sv rtl/fp_div_srt.sv rtl/fp_sqrt.sv rtl/fp_sqrt_srt.sv rtl/fp_divsqrt_iter.sv rtl/fp_fma.sv rtl/fp_fma_pipe.sv rtl/fp_minmax.sv rtl/fp_minmax_pipe.sv rtl/fp_cmp.sv rtl/fp_cmp_pipe.sv rtl/fp_totalorder.sv rtl/fp_totalorder_pipe.sv rtl/fp_roundint.sv rtl/fp_roundint_pipe.sv rtl/fp_unit.sv rtl/fp_exp_seq.sv
-	verilator --lint-only -Wall --timing rtl/fp32_to_bf16_round.sv
-	verilator --lint-only -Wall --timing rtl/fp_pkg.sv rtl/fp_add_e8m0.sv
-	verilator --lint-only -Wall --timing rtl/fp_pkg.sv rtl/fp_mul_e8m0.sv
-	verilator --lint-only -Wall --timing rtl/fp_pkg.sv rtl/fp_div_e8m0.sv
-	verilator --lint-only -Wall --timing rtl/fp_pkg.sv rtl/fp_sqrt_e8m0.sv
-	verilator --lint-only -Wall --timing rtl/fp_pkg.sv rtl/fp_fma_e8m0.sv
-	verilator --lint-only -Wall --timing rtl/fp_pkg.sv rtl/fp_roundint_e8m0.sv
-	verilator --lint-only -Wall --timing --top-module fp_unit rtl/fp_pkg.sv rtl/fp_add.sv rtl/fp_add_pipe.sv rtl/fp_mul.sv rtl/fp_mul_core.sv rtl/fp_mul_pipe.sv rtl/fp_div.sv rtl/fp_div_srt.sv rtl/fp_sqrt.sv rtl/fp_sqrt_srt.sv rtl/fp_divsqrt_iter.sv rtl/fp_fma.sv rtl/fp_fma_pipe.sv rtl/fp_minmax.sv rtl/fp_minmax_pipe.sv rtl/fp_cmp.sv rtl/fp_cmp_pipe.sv rtl/fp_totalorder.sv rtl/fp_totalorder_pipe.sv rtl/fp_roundint.sv rtl/fp_roundint_pipe.sv rtl/fp_unit.sv rtl/fp_unit_axilite.sv
-	verilator --lint-only -Wall --timing --top-module fp_unit -GITER_DIVSQRT=1 rtl/fp_pkg.sv rtl/fp_add.sv rtl/fp_add_pipe.sv rtl/fp_mul.sv rtl/fp_mul_core.sv rtl/fp_mul_pipe.sv rtl/fp_div.sv rtl/fp_div_srt.sv rtl/fp_sqrt.sv rtl/fp_sqrt_srt.sv rtl/fp_divsqrt_iter.sv rtl/fp_fma.sv rtl/fp_fma_pipe.sv rtl/fp_minmax.sv rtl/fp_minmax_pipe.sv rtl/fp_cmp.sv rtl/fp_cmp_pipe.sv rtl/fp_totalorder.sv rtl/fp_totalorder_pipe.sv rtl/fp_roundint.sv rtl/fp_roundint_pipe.sv rtl/fp_unit.sv rtl/fp_unit_axilite.sv
+	$(VLINT) --top-module fp_unit $(RTL)
+	$(VLINT) --top-module fp_unit -GITER_DIVSQRT=0 $(RTL)
+	$(VLINT) --top-module fp_unit -GW_EXP=11 -GW_MANT=52 $(RTL)
+	$(VLINT) --top-module fp_unit -GW_EXP=8 -GW_MANT=0 $(RTL)
+	$(VLINT) --top-module fp_unit_axilite $(RTL) rtl/fp_unit_axilite.sv
+	$(VLINT) --top-module fp_exp_seq $(RTL) rtl/fp_exp_seq.sv
+	$(VLINT) rtl/fp32_to_bf16_round.sv
+	$(VLINT) rtl/fp_pkg.sv rtl/fp_add_e8m0.sv
+	$(VLINT) rtl/fp_pkg.sv rtl/fp_mul_e8m0.sv
+	$(VLINT) rtl/fp_pkg.sv rtl/fp_div_e8m0.sv
+	$(VLINT) rtl/fp_pkg.sv rtl/fp_sqrt_e8m0.sv
+	$(VLINT) rtl/fp_pkg.sv rtl/fp_fma_e8m0.sv
+	$(VLINT) rtl/fp_pkg.sv rtl/fp_roundint_e8m0.sv
 
 clean:
 	rm -rf sim_build

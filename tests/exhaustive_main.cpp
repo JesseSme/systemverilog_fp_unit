@@ -5,12 +5,12 @@
 // the result against a precomputed expected file written by
 // tests/exhaustive.py (the bit-exact reference oracle). This path avoids the
 // cocotb VPI overhead, which would make an exhaustive 8-bit sweep
-// (11*5*256*256 = 3,604,480 vectors per format) impractical. The `c` operand
+// (NUM_OPS*5*256*256 vectors per format) impractical. The `c` operand
 // for the FMA op is fixed per format (passed on the command line); the other
 // ops ignore it.
 //
 // Expected file layout (little-endian, one record per combination):
-//   for op in {0..10}: for rm in {0..4}: for a in [0,2^w): for b in [0,2^w):
+//   for op in {0..NUM_OPS-1}: for rm in {0..4}: for a in [0,2^w): for b in [0,2^w):
 //     uint8 y, uint8 flags, uint8 cmp
 // cmp is the 2-bit comparison condition code (OP_CMP) or the totalOrder
 // boolean (OP_TOTALORDER, cmp[0]); every other op drives cmp = 0.
@@ -18,6 +18,9 @@
 #include "Vfp_unit.h"
 #include "verilated.h"
 #include "verilated_cov.h"
+#ifndef NUM_OPS
+#error "NUM_OPS must be defined by the driver (-CFLAGS -DNUM_OPS=<n>)"
+#endif
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -39,8 +42,8 @@ int main(int argc, char** argv) {
     const int divsqrt_cycles = (argc > 5) ? atoi(argv[5]) : 0;
     (void)iter;
     (void)divsqrt_cycles;
-    int seen_cycles[11];
-    for (int i = 0; i < 11; i++) seen_cycles[i] = -1;
+    int seen_cycles[NUM_OPS];
+    for (int i = 0; i < NUM_OPS; i++) seen_cycles[i] = -1;
     const int A = 1 << w;  // values per operand
 
     Verilated::commandArgs(argc, argv);
@@ -54,12 +57,12 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    const uint64_t expected = 11 * 5ull * (uint64_t)A * (uint64_t)A;
+    const uint64_t expected = NUM_OPS * 5ull * (uint64_t)A * (uint64_t)A;
     uint64_t errors = 0;
     uint64_t lat_errors = 0;
     uint64_t total = 0;
     uint8_t exp_y = 0, exp_flags = 0, exp_cmp = 0;
-    for (int op = 0; op < 11; op++) {
+    for (int op = 0; op < NUM_OPS; op++) {
         top->mode = op;
         for (int rm = 0; rm < 5; rm++) {
             top->rm = rm;

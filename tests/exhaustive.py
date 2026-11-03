@@ -5,7 +5,7 @@ reference oracle (tests/reference/ops.py).
 For each 8-bit format (1 + W_EXP + W_MANT == 8), every (op, rm, a, b)
 combination -- op in {add, sub, mul, div, sqrt, fma, min, max, cmp, rndint,
 totalorder}, all five rounding modes, and all 2^8 values for each operand --
-is checked. This is 11*5*256*256 = 3,604,480 vectors per format. The cocotb
+is checked. This is NUM_OPS*5*256*256 vectors per format (11 ops: 3,604,480). The cocotb
 VPI path is far too slow for that volume, so the DUT is exercised through a
 standalone Verilator C++ harness (tests/exhaustive_main.cpp) instead.
 
@@ -33,17 +33,12 @@ from concurrent.futures import ProcessPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from reference import ops  # noqa: E402
-from reference.formats import BinFormat, encode_finite  # noqa: E402
+from reference.formats import NUM_OPS, BinFormat, encode_finite  # noqa: E402
+from rtl_files import rtl_paths  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-RTL = [os.path.join(ROOT, "rtl", f) for f in
-       ("fp_pkg.sv", "fp_add.sv", "fp_add_pipe.sv", "fp_add_e8m0.sv",
-        "fp_mul.sv", "fp_mul_core.sv", "fp_mul_pipe.sv", "fp_mul_e8m0.sv", "fp_div.sv", "fp_div_srt.sv", "fp_sqrt_srt.sv", "fp_div_e8m0.sv",
-        "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_divsqrt_iter.sv",
-        "fp_fma.sv", "fp_fma_pipe.sv", "fp_fma_e8m0.sv",
-        "fp_minmax.sv", "fp_minmax_pipe.sv", "fp_cmp.sv", "fp_cmp_pipe.sv", "fp_totalorder.sv", "fp_totalorder_pipe.sv", "fp_roundint.sv", "fp_roundint_pipe.sv",
-        "fp_roundint_e8m0.sv", "fp_unit.sv")]
+RTL = rtl_paths()
 REF = [os.path.join(HERE, "reference", f) for f in
        ("formats.py", "rounding.py", "ops.py", "gen.py")]
 HARNESS = os.path.join(HERE, "exhaustive_main.cpp")
@@ -52,7 +47,7 @@ BUILD_DIR = os.path.join(ROOT, "exhaustive_build")
 # All 8-bit formats the RTL supports (W_EXP >= 1, W_MANT >= 0).
 FORMATS_8BIT = [(1, 6), (2, 5), (3, 4), (4, 3), (5, 2), (6, 1), (7, 0)]
 
-N_OPS = 11  # add, sub, mul, div, sqrt, fma, min, max, cmp, rndint, totalorder
+N_OPS = NUM_OPS  # tests/reference/formats.py OP_NAMES
 
 
 def _stamp() -> str:
@@ -96,27 +91,7 @@ def generate_expected(fmt: BinFormat, path: str) -> None:
             for rm in range(5):
                 for a in range(a_max):
                     for b in range(a_max):
-                        cmp = 0
-                        if op == 2:
-                            y, flags = ops.fp_mul(a, b, rm, fmt)
-                        elif op == 3:
-                            y, flags = ops.fp_div(a, b, rm, fmt)
-                        elif op == 4:
-                            y, flags = ops.fp_sqrt(a, rm, fmt)
-                        elif op == 5:
-                            y, flags = ops.fp_fma(a, b, c, rm, fmt)
-                        elif op == 6:
-                            y, flags = ops.fp_min(a, b, fmt)
-                        elif op == 7:
-                            y, flags = ops.fp_max(a, b, fmt)
-                        elif op == 8:
-                            y, cmp, flags = ops.fp_cmp(a, b, fmt)
-                        elif op == 9:
-                            y, flags = ops.fp_roundint(a, rm, fmt)
-                        elif op == 10:
-                            y, cmp, flags = ops.fp_totalorder(a, b, fmt)
-                        else:
-                            y, flags = ops.fp_add(a, b, rm, fmt, sub=(op == 1))
+                        y, flags, cmp = ops.dispatch(op, a, b, c, rm, fmt)
                         f.write(struct.pack("BBB", y, flags, cmp))
 
 
@@ -135,6 +110,7 @@ def build(wexp: int, wmant: int, iter_mode: bool) -> str:
         "verilator", "--cc", "--exe", "--build", "--timing",
         "--coverage", "--coverage-line", "--coverage-toggle",
         "--top-module", "fp_unit",
+        "-CFLAGS", f"-DNUM_OPS={N_OPS}",
         f"-GW_EXP={wexp}", f"-GW_MANT={wmant}",
         *(["-GITER_DIVSQRT=1"] if iter_mode else []),
         "--Mdir", build_dir, "--prefix", "Vfp_unit",

@@ -43,6 +43,24 @@ CMP_EQ = 1  # a == b
 CMP_GT = 2  # a > b
 CMP_UN = 3  # unordered (a NaN operand)
 
+# Operation codes (mirror fp_pkg::op_t). NUM_OPS is the number of defined
+# opcodes; every harness loops over range(NUM_OPS) and the C++ harnesses get
+# it as -DNUM_OPS=<n>, so adding an op is a one-place change here.
+OP_ADD = 0
+OP_SUB = 1
+OP_MUL = 2
+OP_DIV = 3
+OP_SQRT = 4
+OP_FMA = 5
+OP_MIN = 6
+OP_MAX = 7
+OP_CMP = 8
+OP_RNDINT = 9
+OP_TOTALORDER = 10
+OP_NAMES = ("add", "sub", "mul", "div", "sqrt", "fma",
+            "min", "max", "cmp", "rndint", "totalorder")
+NUM_OPS = len(OP_NAMES)
+
 
 @dataclass(frozen=True)
 class BinFormat:

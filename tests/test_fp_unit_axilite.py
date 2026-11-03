@@ -22,17 +22,20 @@ from cocotb.triggers import FallingEdge, RisingEdge
 from reference import gen, ops
 from reference.formats import BinFormat, MODE_NAMES, encode_finite
 
-OP_ADD = 0
-OP_SUB = 1
-OP_MUL = 2
-OP_DIV = 3
-OP_SQRT = 4
-OP_FMA = 5
-OP_MIN = 6
-OP_MAX = 7
-OP_CMP = 8
-OP_RNDINT = 9
-OP_TOTALORDER = 10
+from reference.formats import (  # noqa: E402  (op table: single source of truth)
+    NUM_OPS,
+    OP_ADD,
+    OP_CMP,
+    OP_DIV,
+    OP_FMA,
+    OP_MAX,
+    OP_MIN,
+    OP_MUL,
+    OP_RNDINT,
+    OP_SQRT,
+    OP_SUB,
+    OP_TOTALORDER,
+)
 
 W_EXP = int(os.environ.get("FP_W_EXP", "8"))
 W_MANT = int(os.environ.get("FP_W_MANT", "23"))
@@ -261,29 +264,9 @@ async def test_random_mixed(dut):
     rng = random.Random(SEED)
     for i in range(ITERS):
         a, b = gen.pair_stream(rng, FMT, 1)[0]
-        mode = rng.randrange(11)
+        mode = rng.randrange(NUM_OPS)
         rm = rng.randrange(5)
-        exp_c = 0
-        if mode == OP_MUL:
-            exp_y, exp_f = ops.fp_mul(a, b, rm, FMT)
-        elif mode == OP_DIV:
-            exp_y, exp_f = ops.fp_div(a, b, rm, FMT)
-        elif mode == OP_SQRT:
-            exp_y, exp_f = ops.fp_sqrt(a, rm, FMT)
-        elif mode == OP_FMA:
-            c = gen.operand(rng, FMT)
-            exp_y, exp_f = ops.fp_fma(a, b, c, rm, FMT)
-        elif mode == OP_MIN:
-            exp_y, exp_f = ops.fp_min(a, b, FMT)
-        elif mode == OP_MAX:
-            exp_y, exp_f = ops.fp_max(a, b, FMT)
-        elif mode == OP_CMP:
-            exp_y, exp_c, exp_f = ops.fp_cmp(a, b, FMT)
-        elif mode == OP_RNDINT:
-            exp_y, exp_f = ops.fp_roundint(a, rm, FMT)
-        elif mode == OP_TOTALORDER:
-            exp_y, exp_c, exp_f = ops.fp_totalorder(a, b, FMT)
-        else:
-            exp_y, exp_f = ops.fp_add(a, b, rm, FMT, sub=(mode == OP_SUB))
+        c = gen.operand(rng, FMT) if mode == OP_FMA else 0
+        exp_y, exp_f, exp_c = ops.dispatch(mode, a, b, c, rm, FMT)
         await check(dut, mode, rm, a, b, exp_y, exp_f, f"random[{i}]",
-                    c=c if mode == OP_FMA else 0, exp_cmp=exp_c)
+                    c=c, exp_cmp=exp_c)
