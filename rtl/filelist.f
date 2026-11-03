@@ -25,4 +25,5 @@ rtl/fp_totalorder_pipe.sv
 rtl/fp_roundint.sv
 rtl/fp_roundint_pipe.sv
 rtl/fp_roundint_e8m0.sv
+rtl/fp_misc_pipe.sv
 rtl/fp_unit.sv

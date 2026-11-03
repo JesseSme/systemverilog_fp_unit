@@ -31,8 +31,10 @@ from .formats import (
     MODE_RNA,
     MODE_RP,
     MODE_RZ,
+    NORMAL,
     QNAN,
     SNAN,
+    SUBNORMAL,
     ZERO,
     BinFormat,
     decode,
@@ -477,7 +479,7 @@ def _flip_sign(bits: int, fmt: BinFormat) -> int:
 
 
 def dispatch(op: int, a: int, b: int, c: int, rm: int,
-             fmt: BinFormat) -> tuple[int, int, int]:
+             fmt: BinFormat, ops_en: int = 0xFFFF) -> tuple[int, int, int]:
     """Reference result (y, flags, cmp) of fp_unit opcode `op` (fp_pkg::op_t).
 
     Single op -> oracle mapping shared by every harness (exhaustive, soak,
@@ -485,13 +487,13 @@ def dispatch(op: int, a: int, b: int, c: int, rm: int,
 
     Reserved encodings: a rounding mode > 4 behaves as roundTiesToEven; an
     opcode >= NUM_OPS (or disabled in the build) returns y = 0 with the
-    invalid flag.
+    invalid flag. `ops_en` mirrors fp_unit's OPS_EN mask (bit i = opcode i).
     """
     from . import formats as F
 
     if rm > F.MODE_RM:
         rm = F.MODE_RNE
-    if op >= F.NUM_OPS:
+    if op >= F.NUM_OPS or not (ops_en >> op) & 1:
         return 0, 1 << FLAG_INVALID, 0
 
     if op in (F.OP_ADD, F.OP_SUB):
@@ -516,6 +518,16 @@ def dispatch(op: int, a: int, b: int, c: int, rm: int,
     elif op == F.OP_TOTALORDER:
         y, cmp, flags = fp_totalorder(a, b, fmt)
         return y, flags, cmp
+    elif op == F.OP_SGNJ:
+        y, flags = fp_sgnj(a, b, rm, fmt)
+    elif op == F.OP_CLASS:
+        y, flags = fp_class(a, fmt)
+    elif op == F.OP_NEXT:
+        y, flags = fp_next(a, rm, fmt)
+    elif op == F.OP_MINMAXNUM:
+        y, flags = fp_minmaxnum(a, b, rm, fmt)
+    elif op == F.OP_RNDINTX:
+        y, flags = fp_roundint_exact(a, rm, fmt)
     else:  # pragma: no cover - every op < NUM_OPS is handled above
         raise ValueError(f"no reference for opcode {op}")
     return y, flags, 0
@@ -542,3 +554,133 @@ def f32_to_bf16_rne(x: int) -> int:
         return encode_zero(sign, _BF16)
     y, _flags = round_to_format(sign, value, MODE_RNE, _BF16)
     return y
+
+
+# ---------------------------------------------------------------------------
+# Non-rounding operations (Phase 3). Sub-operations are selected by the
+# rounding-mode field `rm`, which these operations do not otherwise use.
+
+def fp_sgnj(a_bits: int, b_bits: int, sub: int, fmt: BinFormat) -> tuple[int, int]:
+    """Sign bit operations (5.5.1): sub 0 copy(a), 1 negate(a), 2 abs(a),
+    3 copySign(a, b), other values copy(a). Quiet: never signal, NaNs are not
+    quieted (only the sign bit changes)."""
+    signbit = 1 << (fmt.width - 1)
+    if sub == 1:
+        return a_bits ^ signbit, 0
+    if sub == 2:
+        return a_bits & ~signbit, 0
+    if sub == 3:
+        return (a_bits & ~signbit) | (b_bits & signbit), 0
+    return a_bits, 0
+
+
+CLASS_SNAN, CLASS_QNAN = 0, 1
+CLASS_NEG_INF, CLASS_NEG_NORMAL, CLASS_NEG_SUBNORMAL, CLASS_NEG_ZERO = 2, 3, 4, 5
+CLASS_POS_ZERO, CLASS_POS_SUBNORMAL, CLASS_POS_NORMAL, CLASS_POS_INF = 6, 7, 8, 9
+
+
+def fp_class(a_bits: int, fmt: BinFormat) -> tuple[int, int]:
+    """class (5.7.2): y = class index (754-2019 enumeration order:
+    signalingNaN, quietNaN, negativeInfinity, negativeNormal,
+    negativeSubnormal, negativeZero, positiveZero, positiveSubnormal,
+    positiveNormal, positiveInfinity = 0..9). Never signals."""
+    cls, s, _v, _p = decode(a_bits, fmt)
+    if cls == SNAN:
+        return CLASS_SNAN, 0
+    if cls == QNAN:
+        return CLASS_QNAN, 0
+    table = {INF: (CLASS_POS_INF, CLASS_NEG_INF),
+             NORMAL: (CLASS_POS_NORMAL, CLASS_NEG_NORMAL),
+             SUBNORMAL: (CLASS_POS_SUBNORMAL, CLASS_NEG_SUBNORMAL),
+             ZERO: (CLASS_POS_ZERO, CLASS_NEG_ZERO)}
+    return table[cls][s], 0
+
+
+def _next_up(a_bits: int, fmt: BinFormat) -> int:
+    """nextUp of a non-NaN encoding (5.3.1), from the definition rather than
+    the RTL's encoding increment: the least representable number > x is
+    round_toward_positive(x + eps) for any 0 < eps below the smallest spacing
+    of the format (the least positive number); eps = half of it."""
+    cls, s, v, _p = decode(a_bits, fmt)
+    if cls == INF:
+        return a_bits if s == 0 else max_finite_bits(1, fmt)
+    x = Fraction(0) if cls == ZERO else v
+    if fmt.W_MANT > 0:
+        min_pos = Fraction(2) ** (fmt.emin - fmt.W_MANT)
+    else:
+        min_pos = Fraction(2) ** fmt.emin
+    y, _flags = round_to_format(1, x + min_pos / 2, MODE_RP, fmt)
+    return y
+
+
+def fp_next(a_bits: int, sub: int, fmt: BinFormat) -> tuple[int, int]:
+    """nextUp (sub != 1) / nextDown (sub == 1) (5.3.1).
+
+    nextDown(x) = -nextUp(-x). A NaN operand gives the unit's NaN result
+    (quiet, sign 0, payload of the operand); only a signaling NaN signals
+    invalid. Otherwise quiet (no inexact/overflow: nextUp(max finite) = +Inf
+    is exact)."""
+    cls, _s, _v, pay = decode(a_bits, fmt)
+    if cls in (QNAN, SNAN):
+        return _nan_result(cls, pay, ZERO, 0, fmt)
+    if sub == 1:
+        return _flip_sign(_next_up(_flip_sign(a_bits, fmt), fmt), fmt), 0
+    return _next_up(a_bits, fmt), 0
+
+
+def fp_minmaxnum(a_bits: int, b_bits: int, sub: int, fmt: BinFormat) -> tuple[int, int]:
+    """9.6: sub 0 minimumNumber, 1 maximumNumber, 2 minimumMagnitudeNumber,
+    3 maximumMagnitudeNumber, other values minimumNumber.
+
+    One NaN operand: the other operand is returned. Both NaN: the unit's NaN
+    result (quiet, sign 0, payload of the first). Invalid iff either operand
+    is a signaling NaN. -0 < +0. The Magnitude variants compare |a| and |b|
+    first and use the non-magnitude rule on a tie."""
+    a_cls, a_s, a_v, a_pay = decode(a_bits, fmt)
+    b_cls, b_s, b_v, b_pay = decode(b_bits, fmt)
+    is_max = sub in (1, 3)
+    is_mag = sub in (2, 3)
+    flags = (1 << FLAG_INVALID) if a_cls == SNAN or b_cls == SNAN else 0
+    a_nan = a_cls in (QNAN, SNAN)
+    b_nan = b_cls in (QNAN, SNAN)
+    if a_nan and b_nan:
+        return encode_nan(a_pay, fmt), flags
+    if a_nan:
+        return b_bits, flags
+    if b_nan:
+        return a_bits, flags
+
+    def mag(cls, v):
+        if cls == INF:
+            return (1, 0)
+        if cls == ZERO:
+            return (0, Fraction(0))
+        return (0, -v if v < 0 else v)
+
+    if is_mag:
+        ma, mb = mag(a_cls, a_v), mag(b_cls, b_v)
+        if ma != mb:
+            return (a_bits if (ma < mb) == (not is_max) else b_bits), flags
+
+    # Signed order with -0 < +0: (value, sign rank).
+    def key(cls, s, v):
+        if cls == INF:
+            return (-2 if s else 2, 0, 0)
+        if cls == ZERO:
+            return (0, Fraction(0), -1 if s else 0)
+        return (0, v, 0)
+
+    ka, kb = key(a_cls, a_s, a_v), key(b_cls, b_s, b_v)
+    if ka == kb:
+        return a_bits, flags
+    return (a_bits if (ka < kb) == (not is_max) else b_bits), flags
+
+
+def fp_roundint_exact(a_bits: int, rm: int, fmt: BinFormat) -> tuple[int, int]:
+    """roundToIntegralExact (5.3.1, 5.9): roundToIntegral that signals
+    inexact when the (finite) result differs from the operand."""
+    y, flags = fp_roundint(a_bits, rm, fmt)
+    cls, _s, v, _p = decode(a_bits, fmt)
+    if cls in (NORMAL, SUBNORMAL) and v.denominator != 1:
+        flags |= 1 << FLAG_INEXACT
+    return y, flags

@@ -24,8 +24,14 @@ module fp_m6_props_e8m0 #(
   // ---------------------------------------------- roundToIntegral (5.9)
   logic [W_EXP:0] r_y, r_y2;
   logic [4:0]     r_f, r_f2;
-  fp_roundint_e8m0 #(.W_EXP(W_EXP)) u_r  (.a(a), .rm(rm), .y(r_y), .flags(r_f));
-  fp_roundint_e8m0 #(.W_EXP(W_EXP)) u_r2 (.a(r_y), .rm(rm), .y(r_y2), .flags(r_f2));
+  fp_roundint_e8m0 #(.W_EXP(W_EXP)) u_r  (.a(a), .rm(rm), .exact(1'b0), .y(r_y), .flags(r_f));
+  fp_roundint_e8m0 #(.W_EXP(W_EXP)) u_r2 (.a(r_y), .rm(rm), .exact(1'b0), .y(r_y2), .flags(r_f2));
+  // roundToIntegralExact: same result; inexact iff the result differs from a.
+  logic [W_EXP:0] rx_y;
+  logic [4:0]     rx_f;
+  fp_roundint_e8m0 #(.W_EXP(W_EXP)) u_rx (.a(a), .rm(rm), .exact(1'b1), .y(rx_y), .flags(rx_f));
+  assert property (rx_y == r_y);
+  assert property (rx_f == ((rx_y != a) ? (5'd1 << fp_pkg::FLAG_INEXACT) : 5'd0));
 
   // Idempotent.
   assert property (r_y == r_y2);

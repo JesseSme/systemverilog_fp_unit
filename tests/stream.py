@@ -86,13 +86,15 @@ def build(wexp: int, wmant: int, params: list[str], tag: str) -> str:
     return binary
 
 
-def expected_file(wexp: int, wmant: int, n: int, seed: int) -> str:
-    """Soak-format vector file (regenerated when n/seed/oracle change)."""
+def expected_file(wexp: int, wmant: int, n: int, seed: int, ops_en: int) -> str:
+    """Soak-format vector file (regenerated when n/seed/ops_en/oracle change).
+    Ops disabled in ops_en expect the reserved-op result (y = 0, invalid)."""
     fmt = BinFormat(wexp, wmant)
-    d = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}_vectors")
+    d = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}_vectors"
+                     + ("" if ops_en == 0xFFFF else f"_en{ops_en:04x}"))
     os.makedirs(d, exist_ok=True)
     path = os.path.join(d, "expected.bin")
-    h = hashlib.sha256(f"{n} {seed}".encode())
+    h = hashlib.sha256(f"{n} {seed} {ops_en}".encode())
     for f in soak.REF + [soak.__file__]:
         with open(f, "rb") as fh:
             h.update(fh.read())
@@ -100,16 +102,16 @@ def expected_file(wexp: int, wmant: int, n: int, seed: int) -> str:
     stamp = os.path.join(d, "expected.stamp")
     if _read(stamp) != want or not os.path.exists(path):
         print(f"  generating {n:,} vectors for ({wexp},{wmant}) ...", flush=True)
-        soak.generate_expected(fmt, path, n, seed)
+        soak.generate_expected(fmt, path, n, seed, ops_en)
         with open(stamp, "w") as f:
             f.write(want + "\n")
     return path
 
 
 def run(job: tuple) -> bool:
-    wexp, wmant, n, seed, modes, params, tag, nostall = job
+    wexp, wmant, n, seed, modes, params, tag, nostall, ops_en = job
     fmt = BinFormat(wexp, wmant)
-    vec = expected_file(wexp, wmant, n, seed)
+    vec = expected_file(wexp, wmant, n, seed, ops_en)
     binary = build(wexp, wmant, params, tag)
     ok = True
     for mode in modes:
@@ -149,17 +151,24 @@ def main() -> int:
     ap.add_argument("--allow-stall", nargs="*", default=[], metavar="OP",
                     help="ops allowed to stall in same-op mode (e.g. div sqrt for "
                          "the iterative engine, DIVSQRT_IMPL=2)")
+    ap.add_argument("--ops-en", type=lambda s: int(s, 0), default=0xFFFF,
+                    help="fp_unit OPS_EN mask; disabled ops must return the "
+                         "reserved-op result")
     ap.add_argument("--jobs", type=int, default=0)
     args = ap.parse_args()
 
     widths = [tuple(w) for w in args.width] if args.width else DEFAULT_WIDTHS
     modes = ("same", "mixed") if args.mode == "both" else (args.mode,)
     params = [f"-G{p}" for p in args.param]
+    if args.ops_en != 0xFFFF:
+        params.append(f"-GOPS_EN=16'h{args.ops_en:04x}")
     nostall = (1 << NUM_OPS) - 1
     for name in args.allow_stall:
         nostall &= ~(1 << OP_NAMES.index(name))
     tag = "".join("_" + p.replace("=", "") for p in args.param)
-    work = [(we, wm, args.vectors, args.seed, modes, params, tag, nostall)
+    if args.ops_en != 0xFFFF:
+        tag += f"_en{args.ops_en:04x}"
+    work = [(we, wm, args.vectors, args.seed, modes, params, tag, nostall, args.ops_en)
             for we, wm in widths]
     jobs = args.jobs if args.jobs > 0 else min(len(work), os.cpu_count() or 1)
     if jobs > 1 and len(work) > 1:

@@ -10,7 +10,8 @@
 //    rounding-direction attribute, with the sign of x preserved for a zero
 //    result (5.9): 0.5 is the only tie (RNE -> 0, RNA/RP (positive) -> 1,
 //    RM (positive) -> 0, and for a negative operand RP -> -0, RM -> -1).
-//    roundToIntegral does not signal inexact.
+//    roundToIntegral does not signal inexact; with `exact` (roundToIntegral-
+//    Exact) every such operand signals inexact.
 //  - No overflow: the rounded result is 0 or 2^0, and the only representable
 //    integer 1 is within range (emax >= 0).
 //
@@ -28,6 +29,7 @@ module fp_roundint_e8m0 #(
 ) (
   input  logic [W_EXP:0]    a,
   input  fp_pkg::rounding_t rm,
+  input  logic              exact,  // roundToIntegralExact: signal inexact
   output logic [W_EXP:0]    y,
   output logic [4:0]        flags
 );
@@ -66,6 +68,8 @@ module fp_roundint_e8m0 #(
     end
   end
 
-  assign flags = 5'd0;
+  // roundToIntegralExact: a finite 2^e with e < 0 is never integral.
+  assign flags = (exact && !(a_inf || a_zero || $signed(e) >= 0))
+               ? (5'd1 << fp_pkg::FLAG_INEXACT) : 5'd0;
 
 endmodule

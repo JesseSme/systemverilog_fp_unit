@@ -67,7 +67,9 @@ module fp_exp_seq (
   logic              mul_tag;
   /* verilator lint_on UNUSEDSIGNAL */
 
-  fp_unit #(.W_EXP(8), .W_MANT(23)) u_mul (
+  // Only the multiply datapath is built (OPS_EN), not the whole unit.
+  fp_unit #(.W_EXP(8), .W_MANT(23),
+            .OPS_EN(16'd1 << fp_pkg::OP_MUL)) u_mul (
     .clk(clk), .rst_n(rst_n),
     .in_valid(mul_in_valid), .in_ready(mul_ready), .out_valid(mul_valid),
     .mode(mul_mode), .rm(mul_rm),
@@ -85,7 +87,9 @@ module fp_exp_seq (
   logic              add_tag;
   /* verilator lint_on UNUSEDSIGNAL */
 
-  fp_unit #(.W_EXP(8), .W_MANT(23)) u_add (
+  // Only the add/sub datapath is built (OPS_EN).
+  fp_unit #(.W_EXP(8), .W_MANT(23),
+            .OPS_EN((16'd1 << fp_pkg::OP_ADD) | (16'd1 << fp_pkg::OP_SUB))) u_add (
     .clk(clk), .rst_n(rst_n),
     .in_valid(add_in_valid), .in_ready(add_ready), .out_valid(add_valid),
     .mode(add_mode), .rm(add_rm),

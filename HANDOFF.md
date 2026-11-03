@@ -904,3 +904,24 @@ vs. M5 FMA + min/max)
 | `.gitignore` | Ignore `soak_build/` and the sby `bmc_*_bmc/` work dirs |
 | `README.md` | Document the soak and formal targets |
 | `HANDOFF.md` | This document |
+
+## Change summary (IMPROVEMENT_PLAN.md, branch improve/plan, 2026-11-03)
+
+| Task | Change |
+|------|--------|
+| T0.1 | `rtl/filelist.f` / `filelist_wrappers.f` are the only RTL lists (`tests/rtl_files.py`, Makefile `$(RTL)`, `syn/`); `tests/reference/formats.py` owns the op table (`OP_*`, `OP_NAMES`, `NUM_OPS`); `ops.dispatch()` is the single op -> oracle map; C++ harnesses take `-DNUM_OPS` |
+| T0.2 | README/HANDOFF stale statements fixed (pipelined, formal status, 9.6 citations, SRT sqrt latencies, lost /tmp paths) |
+| T0.3 | `syn/fp_unit_timing.sv` + `syn/vivado-impl.tcl` (`make vivado`) replace the old script whose wrapper lived in /tmp |
+| T0.4 | AI-session transcripts no longer versioned |
+| T1.1 | **fp_unit `in_ready` + `in_tag`/`out_tag` + result-port reservation**: two in-flight ops finishing in the same cycle used to lose one result silently. Latencies come from `fp_pkg::lat_*`; simulation asserts `out_valid == resv[0]` and one-hot pipeline valids |
+| T1.2 | `tests/stream.py` (`make stream`): request every cycle, results matched by tag; same-op (every pipeline streams, 0 stalls) and mixed-op modes |
+| T1.3 | `fp32_to_bf16_round` no longer turns NaNs whose payload is in the low 16 bits into Inf, and quiets sNaN; exhaustive 2^32 test (`make bf16`) |
+| T1.4 | `fp_exp_seq` tested (`make regress-exp`); real accuracy documented (~45 ulp for abs(x) <= 8, ~1.3k ulp near 16, not the claimed 1e-6) |
+| T1.5 | rm 5-7 behave as RNE everywhere; reserved/disabled opcodes return y = 0 + invalid |
+| T2.1 | `ITER_DIVSQRT` replaced by `DIVSQRT_IMPL` (1 SRT default, 2 iterative engine = the 250 MHz build, 0 combinational); iterative latency is floor((W_MANT+3)/2)+3 (the engine header said ceil); `--divsqrt`/`--iter` harness flags, `*-iter` make targets test the iterative engine |
+| T2.2 | `OPS_EN` op-enable mask; `fp_exp_seq` builds only MUL and ADD/SUB |
+| Phase 3 | New ops filling codes 11-15: OP_SGNJ (5.5.1), OP_CLASS (5.7.2), OP_NEXT (5.3.1), OP_MINMAXNUM (9.6), OP_RNDINTX (roundToIntegralExact). `rtl/fp_misc_pipe.sv` (1 cycle, format-generic incl. E8M0); `fp_roundint_pipe`/`fp_roundint_e8m0` gain an `exact` input. Oracles checked against brute-force enumeration on every 8-bit format; hand-written directed vectors; exhaustive sweep now 16 ops |
+| fp_pkg | Package functions assign their name instead of `return` (yosys 0.68, used by `make formal`, cannot parse `return`) |
+
+Not done: Vivado re-measurement (no Vivado on the development host; the
+README numbers predate these changes), Phase 4 (advanced performance work).

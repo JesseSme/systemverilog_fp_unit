@@ -38,6 +38,7 @@ bf16:
 # backpressure), binary16/BF16/E4M3/binary32.
 stream:
 	uv run python tests/stream.py
+	uv run python tests/stream.py --width 8 23 --width 8 0 --ops-en 0x8a24 --vectors 50000
 
 # Iterative div/sqrt engine (fp_unit DIVSQRT_IMPL=2, the 250 MHz build):
 # exhaustive 8-bit sweep, medium-width soak, streaming test and the AXI-Lite
@@ -110,6 +111,9 @@ vivado:
 	@command -v vivado >/dev/null || { echo "vivado not on PATH; run: vivado -mode batch -source syn/vivado-impl.tcl -tclargs $(VIVADO_ARGS)"; exit 1; }
 	vivado -mode batch -nojournal -nolog -source syn/vivado-impl.tcl -tclargs $(VIVADO_ARGS)
 
+# (fp_exp_seq line: Verilator 5.020 reports a false VARHIDDEN, its port `x`
+# "hidden" by function arguments named x inside the pruned fp_unit
+# pipelines, which are different modules.)
 lint:
 	$(VLINT) --top-module fp_unit $(RTL)
 	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=0 $(RTL)
@@ -118,7 +122,7 @@ lint:
 	$(VLINT) --top-module fp_unit -GW_EXP=11 -GW_MANT=52 $(RTL)
 	$(VLINT) --top-module fp_unit -GW_EXP=8 -GW_MANT=0 $(RTL)
 	$(VLINT) --top-module fp_unit_axilite $(RTL) rtl/fp_unit_axilite.sv
-	$(VLINT) --top-module fp_exp_seq $(RTL) rtl/fp_exp_seq.sv
+	$(VLINT) -Wno-VARHIDDEN --top-module fp_exp_seq $(RTL) rtl/fp_exp_seq.sv
 	$(VLINT) --top-module fp_unit_timing $(RTL) syn/fp_unit_timing.sv
 	$(VLINT) rtl/fp32_to_bf16_round.sv
 	$(VLINT) rtl/fp_pkg.sv rtl/fp_add_e8m0.sv

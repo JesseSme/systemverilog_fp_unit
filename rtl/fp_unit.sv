@@ -16,16 +16,26 @@
 //     in_tag/out_tag to match them.
 //   * in_ready is low only when the requested op would finish in the same
 //     cycle as an op already in flight (result-port reservation, `resv`
-//     below). A caller that issues one op at a time and waits for out_valid
-//     always sees in_ready = 1.
+//     below), or, with DIVSQRT_IMPL = 2, for div/sqrt while the iterative
+//     engine is busy. A caller that issues one op at a time and waits for
+//     out_valid always sees in_ready = 1.
 //
-// Operation select (`mode`, fp_pkg::op_t): OP_ADD/OP_SUB fp_add_pipe,
-// OP_MUL fp_mul_pipe, OP_FMA fp_fma_pipe (`c` is the addend), OP_DIV
-// fp_div_srt, OP_SQRT fp_sqrt_srt, OP_RNDINT fp_roundint_pipe, OP_MIN/OP_MAX
-// fp_minmax_pipe, OP_CMP fp_cmp_pipe, OP_TOTALORDER fp_totalorder_pipe.
+// Operations (`mode`, fp_pkg::op_t):
+//   OP_ADD/OP_SUB fp_add_pipe; OP_MUL fp_mul_pipe; OP_FMA fp_fma_pipe (`c`
+//   is the addend); OP_DIV/OP_SQRT fp_div_srt/fp_sqrt_srt (or
+//   fp_divsqrt_iter / fp_div+fp_sqrt, see DIVSQRT_IMPL); OP_RNDINT/OP_RNDINTX
+//   fp_roundint_pipe (RNDINTX = roundToIntegralExact, signals inexact);
+//   OP_MIN/OP_MAX fp_minmax_pipe; OP_CMP fp_cmp_pipe; OP_TOTALORDER
+//   fp_totalorder_pipe; OP_SGNJ/OP_CLASS/OP_NEXT/OP_MINMAXNUM fp_misc_pipe.
+//   The non-rounding ops OP_SGNJ, OP_NEXT and OP_MINMAXNUM take their
+//   variant from the `rm` field (see fp_misc_pipe.sv / README).
 // `cmp` carries the 2-bit comparison condition code for OP_CMP
 // (fp_pkg::CMP_*) and, for OP_TOTALORDER, cmp[0] = totalOrder(a, b); every
 // other op drives cmp = 0.
+//
+// Reserved encodings: rounding modes 5-7 behave as RM_RNE (also as a
+// sub-op selector); an opcode disabled by OPS_EN returns y = 0 with the
+// invalid flag after 1 cycle.
 //
 // W_MANT = 0 selects the dedicated E8M0 datapaths (1 + W_EXP + 0 bits,
 // microscaling shared-exponent format; combinational, registered once here,
@@ -42,14 +52,19 @@ module fp_unit #(
   //     VU9P-2L, 178.6 MHz).
   //   2: the shared iterative radix-4 engine fp_divsqrt_iter, latency
   //     K+3 (K = floor((W_MANT+3)/2)), ONE div/sqrt in flight at a time
-  //     (in_ready is low for div/sqrt while it is busy); closes 4.0 ns
-  //     (250 MHz) with about half the LUTs.
+  //     (in_ready is low for div/sqrt while it is busy); the 250 MHz
+  //     configuration with about half the LUTs.
   //   0: the combinational reference datapaths (fp_div / fp_sqrt)
   //     registered once (latency 1, very long critical path; reference and
   //     formal only).
   parameter int DIVSQRT_IMPL = 1,
   // Width of the request tag carried from in_tag to out_tag.
-  parameter int TAG_W = 1
+  parameter int TAG_W = 1,
+  // Operation enable mask, bit i = fp_pkg::op_t value i. A disabled op's
+  // datapath is not built and the op behaves as reserved (y = 0, invalid).
+  // Shared pipelines are built if any of their ops is enabled (ADD/SUB,
+  // MIN/MAX, RNDINT/RNDINTX, SGNJ/CLASS/NEXT/MINMAXNUM).
+  parameter logic [15:0] OPS_EN = 16'hFFFF
 ) (
   input  logic                    clk,
   input  logic                    rst_n,
@@ -70,52 +85,75 @@ module fp_unit #(
 
   localparam int W = 1 + W_EXP + W_MANT;
 
-  // Reserved encodings (README "Semantics"): rounding modes 5-7 behave as
-  // RM_RNE in every datapath; an undefined opcode returns y = 0 with the
-  // invalid flag after 1 cycle (through the output register).
+  // With a reduced OPS_EN some inputs feed no datapath (e.g. `c` without
+  // OP_FMA); keep lint quiet about that.
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic unused_inputs;
+  assign unused_inputs = ^{a, b, c};
+  /* verilator lint_on UNUSEDSIGNAL */
+
+  // ------------------------------------------------------------ config
+  localparam bit GENERIC  = (W_MANT > 0);
+  localparam bit EN_ADD   = OPS_EN[fp_pkg::OP_ADD] || OPS_EN[fp_pkg::OP_SUB];
+  localparam bit EN_MUL   = OPS_EN[fp_pkg::OP_MUL];
+  localparam bit EN_FMA   = OPS_EN[fp_pkg::OP_FMA];
+  localparam bit EN_DIV   = OPS_EN[fp_pkg::OP_DIV];
+  localparam bit EN_SQRT  = OPS_EN[fp_pkg::OP_SQRT];
+  localparam bit EN_RND   = OPS_EN[fp_pkg::OP_RNDINT] || OPS_EN[fp_pkg::OP_RNDINTX];
+  localparam bit EN_MM    = OPS_EN[fp_pkg::OP_MIN] || OPS_EN[fp_pkg::OP_MAX];
+  localparam bit EN_CMP   = OPS_EN[fp_pkg::OP_CMP];
+  localparam bit EN_TOT   = OPS_EN[fp_pkg::OP_TOTALORDER];
+  localparam bit EN_MISC  = OPS_EN[fp_pkg::OP_SGNJ] || OPS_EN[fp_pkg::OP_CLASS]
+                         || OPS_EN[fp_pkg::OP_NEXT] || OPS_EN[fp_pkg::OP_MINMAXNUM];
+
+  localparam bit P_ADD    = GENERIC && EN_ADD;
+  localparam bit P_MUL    = GENERIC && EN_MUL;
+  localparam bit P_FMA    = GENERIC && EN_FMA;
+  localparam bit P_RND    = GENERIC && EN_RND;
+  localparam bit P_DIV    = GENERIC && (DIVSQRT_IMPL == 1) && EN_DIV;
+  localparam bit P_SQRT   = GENERIC && (DIVSQRT_IMPL == 1) && EN_SQRT;
+  localparam bit P_ITER   = GENERIC && (DIVSQRT_IMPL == 2) && (EN_DIV || EN_SQRT);
+  localparam bit P_COMBDS = GENERIC && (DIVSQRT_IMPL == 0) && (EN_DIV || EN_SQRT);
+  localparam int DIV_DPS  = 2;  // radix-4 digits per fp_div_srt stage
+  localparam int SQRT_DPS = 1;  // radix-4 digits per fp_sqrt_srt stage
+
+  // ---------------------------------------------- reserved encodings
   fp_pkg::rounding_t rm_eff;
   assign rm_eff = (rm > fp_pkg::RM_RM) ? fp_pkg::RM_RNE : rm;
   logic op_reserved;
-  assign op_reserved = !fp_pkg::op_defined(mode);
-
-  localparam bit GENERIC  = (W_MANT > 0);
-  localparam bit SRT_DS   = GENERIC && (DIVSQRT_IMPL == 1);
-  localparam bit ITER_DS  = GENERIC && (DIVSQRT_IMPL == 2);
-  localparam int DIV_DPS  = 2;  // radix-4 digits per fp_div_srt stage
-  localparam int SQRT_DPS = 1;  // radix-4 digits per fp_sqrt_srt stage
+  assign op_reserved = !fp_pkg::op_defined(mode) || !OPS_EN[mode];
 
   // ------------------------------------------------------------ latencies
   // Cycles from an accepted request to its out_valid. Ops that are not on a
   // dedicated pipeline (E8M0, DIVSQRT_IMPL = 0 div/sqrt, reserved opcodes)
   // go through the 1-cycle output register below.
-  localparam int LAT_ADD  = GENERIC ? fp_pkg::LAT_ADD : 1;
-  localparam int LAT_MUL  = GENERIC ? fp_pkg::lat_mul(W_MANT) : 1;
-  localparam int LAT_FMA  = GENERIC ? fp_pkg::lat_fma(W_MANT) : 1;
-  localparam int LAT_DIV  = SRT_DS  ? fp_pkg::lat_div_srt(W_MANT, DIV_DPS)
-                          : ITER_DS ? fp_pkg::lat_divsqrt_iter(W_MANT) : 1;
-  localparam int LAT_SQRT = SRT_DS  ? fp_pkg::lat_sqrt_srt(W_MANT, SQRT_DPS)
-                          : ITER_DS ? fp_pkg::lat_divsqrt_iter(W_MANT) : 1;
-  localparam int LAT_RND  = GENERIC ? fp_pkg::LAT_RNDINT : 1;
-  localparam int LAT_ORD  = 1;  // min/max/cmp/totalOrder
-  localparam int LAT_REG  = 1;  // output-register path
+  localparam int LAT_ADD  = P_ADD ? fp_pkg::LAT_ADD : 1;
+  localparam int LAT_MUL  = P_MUL ? fp_pkg::lat_mul(W_MANT) : 1;
+  localparam int LAT_FMA  = P_FMA ? fp_pkg::lat_fma(W_MANT) : 1;
+  localparam int LAT_DIV  = P_DIV  ? fp_pkg::lat_div_srt(W_MANT, DIV_DPS)
+                          : P_ITER ? fp_pkg::lat_divsqrt_iter(W_MANT) : 1;
+  localparam int LAT_SQRT = P_SQRT ? fp_pkg::lat_sqrt_srt(W_MANT, SQRT_DPS)
+                          : P_ITER ? fp_pkg::lat_divsqrt_iter(W_MANT) : 1;
+  localparam int LAT_RND  = P_RND ? fp_pkg::LAT_RNDINT : 1;
+  localparam int LAT_ONE  = 1;  // min/max/cmp/totalOrder/misc, output register
   localparam int MAXLAT   = fp_pkg::max_int(fp_pkg::max_int(fp_pkg::max_int(LAT_ADD, LAT_MUL),
                                                             fp_pkg::max_int(LAT_FMA, LAT_DIV)),
                                              fp_pkg::max_int(LAT_SQRT, LAT_RND));
 
   int lat_sel;
   always_comb begin
-    case (mode)
-      fp_pkg::OP_ADD, fp_pkg::OP_SUB: lat_sel = LAT_ADD;
-      fp_pkg::OP_MUL:                 lat_sel = LAT_MUL;
-      fp_pkg::OP_FMA:                 lat_sel = LAT_FMA;
-      fp_pkg::OP_DIV:                 lat_sel = LAT_DIV;
-      fp_pkg::OP_SQRT:                lat_sel = LAT_SQRT;
-      fp_pkg::OP_RNDINT:              lat_sel = LAT_RND;
-      fp_pkg::OP_MIN, fp_pkg::OP_MAX,
-      fp_pkg::OP_CMP,
-      fp_pkg::OP_TOTALORDER:          lat_sel = LAT_ORD;
-      default:                        lat_sel = LAT_REG;
-    endcase
+    if (op_reserved) lat_sel = LAT_ONE;
+    else begin
+      case (mode)
+        fp_pkg::OP_ADD, fp_pkg::OP_SUB:       lat_sel = LAT_ADD;
+        fp_pkg::OP_MUL:                       lat_sel = LAT_MUL;
+        fp_pkg::OP_FMA:                       lat_sel = LAT_FMA;
+        fp_pkg::OP_DIV:                       lat_sel = LAT_DIV;
+        fp_pkg::OP_SQRT:                      lat_sel = LAT_SQRT;
+        fp_pkg::OP_RNDINT, fp_pkg::OP_RNDINTX: lat_sel = LAT_RND;
+        default:                              lat_sel = LAT_ONE;
+      endcase
+    end
   end
 
   // ------------------------------------------- result-port reservation
@@ -129,7 +167,7 @@ module fp_unit #(
   logic            busy_iter;   // DIVSQRT_IMPL = 2: engine occupied
   logic            is_divsqrt;
   assign is_divsqrt = (mode == fp_pkg::OP_DIV) || (mode == fp_pkg::OP_SQRT);
-  assign in_ready = !resv[lat_sel] && !(ITER_DS && is_divsqrt && busy_iter);
+  assign in_ready = !resv[lat_sel] && !(P_ITER && is_divsqrt && !op_reserved && busy_iter);
   assign fire     = in_valid && in_ready;
 
   always_ff @(posedge clk) begin
@@ -152,77 +190,93 @@ module fp_unit #(
   assign out_tag = tag_q[0];
 
   // ------------------------------------------------------- start strobes
-  logic start_add, start_mul, start_fma, start_div, start_sqrt, start_rnd;
-  logic start_mm, start_cmp, start_tot, start_reg;
-  assign start_add  = fire && GENERIC && (mode == fp_pkg::OP_ADD || mode == fp_pkg::OP_SUB);
-  assign start_mul  = fire && GENERIC && (mode == fp_pkg::OP_MUL);
-  assign start_fma  = fire && GENERIC && (mode == fp_pkg::OP_FMA);
-  assign start_div  = fire && SRT_DS  && (mode == fp_pkg::OP_DIV);
-  assign start_sqrt = fire && SRT_DS  && (mode == fp_pkg::OP_SQRT);
-  logic start_iter;
-  assign start_iter = fire && ITER_DS && is_divsqrt;
-  assign start_rnd  = fire && GENERIC && (mode == fp_pkg::OP_RNDINT);
-  assign start_mm   = fire && (mode == fp_pkg::OP_MIN || mode == fp_pkg::OP_MAX);
-  assign start_cmp  = fire && (mode == fp_pkg::OP_CMP);
-  assign start_tot  = fire && (mode == fp_pkg::OP_TOTALORDER);
+  logic go;  // accepted, defined and enabled
+  assign go = fire && !op_reserved;
+  logic start_add, start_mul, start_fma, start_div, start_sqrt, start_iter, start_rnd;
+  logic start_mm, start_cmp, start_tot, start_misc, start_reg;
+  assign start_add  = go && P_ADD  && (mode == fp_pkg::OP_ADD || mode == fp_pkg::OP_SUB);
+  assign start_mul  = go && P_MUL  && (mode == fp_pkg::OP_MUL);
+  assign start_fma  = go && P_FMA  && (mode == fp_pkg::OP_FMA);
+  assign start_div  = go && P_DIV  && (mode == fp_pkg::OP_DIV);
+  assign start_sqrt = go && P_SQRT && (mode == fp_pkg::OP_SQRT);
+  assign start_iter = go && P_ITER && is_divsqrt;
+  assign start_rnd  = go && P_RND  && (mode == fp_pkg::OP_RNDINT || mode == fp_pkg::OP_RNDINTX);
+  assign start_mm   = go && EN_MM  && (mode == fp_pkg::OP_MIN || mode == fp_pkg::OP_MAX);
+  assign start_cmp  = go && EN_CMP && (mode == fp_pkg::OP_CMP);
+  assign start_tot  = go && EN_TOT && (mode == fp_pkg::OP_TOTALORDER);
+  assign start_misc = go && EN_MISC && (mode == fp_pkg::OP_SGNJ || mode == fp_pkg::OP_CLASS
+                                     || mode == fp_pkg::OP_NEXT || mode == fp_pkg::OP_MINMAXNUM);
   assign start_reg  = fire && !start_add && !start_mul && !start_fma && !start_div
                     && !start_sqrt && !start_iter && !start_rnd && !start_mm && !start_cmp
-                    && !start_tot;
+                    && !start_tot && !start_misc;
 
   // ---------------------------------------------------------- pipelines
-  logic [W-1:0] y_add_p, y_mul_p, y_fma_p, y_div_p, y_sqrt_p, y_rnd_p;
-  logic [4:0]   f_add_p, f_mul_p, f_fma_p, f_div_p, f_sqrt_p, f_rnd_p;
-  logic         v_add, v_mul, v_fma, v_div, v_sqrt, v_rnd;
-  logic [W-1:0] y_iter_p;
-  logic [4:0]   f_iter_p;
-  logic         v_iter;
+  logic [W-1:0] y_add_p, y_mul_p, y_fma_p, y_div_p, y_sqrt_p, y_iter_p, y_rnd_p;
+  logic [4:0]   f_add_p, f_mul_p, f_fma_p, f_div_p, f_sqrt_p, f_iter_p, f_rnd_p;
+  logic         v_add, v_mul, v_fma, v_div, v_sqrt, v_iter, v_rnd;
 
   generate
-    if (GENERIC) begin : g_generic_pipes
+    if (P_ADD) begin : g_add
       fp_add_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_add_pipe (
         .a(a), .b(b), .rm(rm_eff), .op(mode),
         .clk(clk), .rst_n(rst_n), .start(start_add),
         .y(y_add_p), .flags(f_add_p), .out_valid(v_add)
       );
+    end else begin : g_no_add
+      assign {y_add_p, f_add_p, v_add} = '0;
+    end
+
+    if (P_MUL) begin : g_mul
       fp_mul_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_mul_pipe (
         .a(a), .b(b), .rm(rm_eff),
         .clk(clk), .rst_n(rst_n), .start(start_mul),
         .y(y_mul_p), .flags(f_mul_p), .out_valid(v_mul)
       );
+    end else begin : g_no_mul
+      assign {y_mul_p, f_mul_p, v_mul} = '0;
+    end
+
+    if (P_FMA) begin : g_fma
       fp_fma_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_fma_pipe (
         .a(a), .b(b), .c(c), .rm(rm_eff),
         .clk(clk), .rst_n(rst_n), .start(start_fma),
         .y(y_fma_p), .flags(f_fma_p), .out_valid(v_fma)
       );
+    end else begin : g_no_fma
+      assign {y_fma_p, f_fma_p, v_fma} = '0;
+    end
+
+    if (P_RND) begin : g_rnd
       fp_roundint_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_roundint_pipe (
-        .a(a), .rm(rm_eff),
+        .a(a), .rm(rm_eff), .exact(mode == fp_pkg::OP_RNDINTX),
         .clk(clk), .rst_n(rst_n), .start(start_rnd),
         .y(y_rnd_p), .flags(f_rnd_p), .out_valid(v_rnd)
       );
-    end else begin : g_no_generic_pipes
-      assign {y_add_p, f_add_p, v_add} = '0;
-      assign {y_mul_p, f_mul_p, v_mul} = '0;
-      assign {y_fma_p, f_fma_p, v_fma} = '0;
+    end else begin : g_no_rnd
       assign {y_rnd_p, f_rnd_p, v_rnd} = '0;
     end
 
-    if (SRT_DS) begin : g_srt
+    if (P_DIV) begin : g_div_srt
       fp_div_srt #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DPS(DIV_DPS)) u_fp_div_srt (
         .a(a), .b(b), .rm(rm_eff), .start(start_div),
         .y(y_div_p), .flags(f_div_p),
         .clk(clk), .rst_n(rst_n), .out_valid(v_div)
       );
+    end else begin : g_no_div_srt
+      assign {y_div_p, f_div_p, v_div} = '0;
+    end
+
+    if (P_SQRT) begin : g_sqrt_srt
       fp_sqrt_srt #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DPS(SQRT_DPS)) u_fp_sqrt_srt (
         .a(a), .rm(rm_eff), .start(start_sqrt),
         .y(y_sqrt_p), .flags(f_sqrt_p),
         .clk(clk), .rst_n(rst_n), .out_valid(v_sqrt)
       );
-    end else begin : g_no_srt
-      assign {y_div_p, f_div_p, v_div}    = '0;
+    end else begin : g_no_sqrt_srt
       assign {y_sqrt_p, f_sqrt_p, v_sqrt} = '0;
     end
 
-    if (ITER_DS) begin : g_iter
+    if (P_ITER) begin : g_iter
       // One div/sqrt at a time; it accepts a new start in its done cycle
       // (busy is already low then), so back-to-back div/sqrt lose no cycle.
       fp_divsqrt_iter #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_divsqrt_iter (
@@ -235,33 +289,58 @@ module fp_unit #(
     end
   endgenerate
 
-  // Format-generic min/max, comparison and totalOrder (every width).
-  logic [W-1:0] y_mm_p, y_cmp_p;
-  logic [4:0]   f_mm_p, f_cmp_p;
+  // Format-generic pipelines (every width, including E8M0).
+  logic [W-1:0] y_mm_p, y_cmp_p, y_misc_p;
+  logic [4:0]   f_mm_p, f_cmp_p, f_misc_p;
   logic [1:0]   c_cmp_p, c_tot_p;
-  logic         v_mm, v_cmp, v_tot;
-  /* verilator lint_off UNUSEDSIGNAL */
-  logic [W-1:0] y_tot_p;   // always 0 (totalOrder result is on cmp)
-  logic [4:0]   f_tot_p;   // always 0 (totalOrder never signals)
-  /* verilator lint_on UNUSEDSIGNAL */
-  fp_minmax_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_minmax_pipe (
-    .a(a), .b(b), .is_max(mode == fp_pkg::OP_MAX),
-    .clk(clk), .rst_n(rst_n), .start(start_mm),
-    .y(y_mm_p), .flags(f_mm_p), .out_valid(v_mm)
-  );
-  fp_cmp_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_cmp_pipe (
-    .a(a), .b(b), .clk(clk), .rst_n(rst_n), .start(start_cmp),
-    .y(y_cmp_p), .cmp(c_cmp_p), .flags(f_cmp_p), .out_valid(v_cmp)
-  );
-  fp_totalorder_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_totalorder_pipe (
-    .a(a), .b(b), .clk(clk), .rst_n(rst_n), .start(start_tot),
-    .y(y_tot_p), .cmp(c_tot_p), .flags(f_tot_p), .out_valid(v_tot)
-  );
+  logic         v_mm, v_cmp, v_tot, v_misc;
+  generate
+    if (EN_MM) begin : g_mm
+      fp_minmax_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_minmax_pipe (
+        .a(a), .b(b), .is_max(mode == fp_pkg::OP_MAX),
+        .clk(clk), .rst_n(rst_n), .start(start_mm),
+        .y(y_mm_p), .flags(f_mm_p), .out_valid(v_mm)
+      );
+    end else begin : g_no_mm
+      assign {y_mm_p, f_mm_p, v_mm} = '0;
+    end
+
+    if (EN_CMP) begin : g_cmp
+      fp_cmp_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_cmp_pipe (
+        .a(a), .b(b), .clk(clk), .rst_n(rst_n), .start(start_cmp),
+        .y(y_cmp_p), .cmp(c_cmp_p), .flags(f_cmp_p), .out_valid(v_cmp)
+      );
+    end else begin : g_no_cmp
+      assign {y_cmp_p, c_cmp_p, f_cmp_p, v_cmp} = '0;
+    end
+
+    if (EN_TOT) begin : g_tot
+      /* verilator lint_off UNUSEDSIGNAL */
+      logic [W-1:0] y_tot_p;   // always 0 (totalOrder result is on cmp)
+      logic [4:0]   f_tot_p;   // always 0 (totalOrder never signals)
+      /* verilator lint_on UNUSEDSIGNAL */
+      fp_totalorder_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_totalorder_pipe (
+        .a(a), .b(b), .clk(clk), .rst_n(rst_n), .start(start_tot),
+        .y(y_tot_p), .cmp(c_tot_p), .flags(f_tot_p), .out_valid(v_tot)
+      );
+    end else begin : g_no_tot
+      assign {c_tot_p, v_tot} = '0;
+    end
+
+    if (EN_MISC) begin : g_misc
+      fp_misc_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_misc_pipe (
+        .a(a), .b(b), .op(mode), .sub(rm_eff),
+        .clk(clk), .rst_n(rst_n), .start(start_misc),
+        .y(y_misc_p), .flags(f_misc_p), .out_valid(v_misc)
+      );
+    end else begin : g_no_misc
+      assign {y_misc_p, f_misc_p, v_misc} = '0;
+    end
+  endgenerate
 
   // ---------------------------------- 1-cycle output-register datapaths
-  // E8M0 (all non-ordering ops), DIVSQRT_IMPL = 0 div/sqrt, reserved
-  // opcodes (y = 0, invalid): combinational datapaths sampled into
-  // y_r/flags_r.
+  // E8M0 (all rounding ops), DIVSQRT_IMPL = 0 div/sqrt, reserved opcodes
+  // (y = 0, invalid): combinational datapaths sampled into y_r/flags_r.
   logic [W-1:0] y_c;
   logic [4:0]   flags_c;
 
@@ -269,7 +348,7 @@ module fp_unit #(
     if (GENERIC) begin : g_generic_comb
       logic [W-1:0] y_div_c, y_sqrt_c;
       logic [4:0]   f_div_c, f_sqrt_c;
-      if (!SRT_DS && !ITER_DS) begin : g_comb_divsqrt
+      if (P_COMBDS) begin : g_comb_divsqrt
         fp_div #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_div (
           .a(a), .b(b), .rm(rm_eff), .y(y_div_c), .flags(f_div_c)
         );
@@ -307,19 +386,21 @@ module fp_unit #(
         .a(a), .b(b), .c(c), .rm(rm_eff), .y(y_fma_e), .flags(f_fma_e)
       );
       fp_roundint_e8m0 #(.W_EXP(W_EXP)) u_fp_roundint (
-        .a(a), .rm(rm_eff), .y(y_rnd_e), .flags(f_rnd_e)
+        .a(a), .rm(rm_eff), .exact(mode == fp_pkg::OP_RNDINTX),
+        .y(y_rnd_e), .flags(f_rnd_e)
       );
       always_comb begin
         y_c     = '0;
         flags_c = 5'd0;
         case (mode)
           fp_pkg::OP_ADD,
-          fp_pkg::OP_SUB:    begin y_c = y_add_e;  flags_c = f_add_e;  end
-          fp_pkg::OP_MUL:    begin y_c = y_mul_e;  flags_c = f_mul_e;  end
-          fp_pkg::OP_DIV:    begin y_c = y_div_e;  flags_c = f_div_e;  end
-          fp_pkg::OP_SQRT:   begin y_c = y_sqrt_e; flags_c = f_sqrt_e; end
-          fp_pkg::OP_FMA:    begin y_c = y_fma_e;  flags_c = f_fma_e;  end
-          fp_pkg::OP_RNDINT: begin y_c = y_rnd_e;  flags_c = f_rnd_e;  end
+          fp_pkg::OP_SUB:     begin y_c = y_add_e;  flags_c = f_add_e;  end
+          fp_pkg::OP_MUL:     begin y_c = y_mul_e;  flags_c = f_mul_e;  end
+          fp_pkg::OP_DIV:     begin y_c = y_div_e;  flags_c = f_div_e;  end
+          fp_pkg::OP_SQRT:    begin y_c = y_sqrt_e; flags_c = f_sqrt_e; end
+          fp_pkg::OP_FMA:     begin y_c = y_fma_e;  flags_c = f_fma_e;  end
+          fp_pkg::OP_RNDINT,
+          fp_pkg::OP_RNDINTX: begin y_c = y_rnd_e;  flags_c = f_rnd_e;  end
           default: ;
         endcase
       end
@@ -356,11 +437,12 @@ module fp_unit #(
     if (v_sqrt) begin y = y_sqrt_p; flags = f_sqrt_p; end
     if (v_iter) begin y = y_iter_p; flags = f_iter_p; end
     if (v_mm)   begin y = y_mm_p;   flags = f_mm_p;   end
+    if (v_misc) begin y = y_misc_p; flags = f_misc_p; end
     if (v_cmp)  begin y = y_cmp_p;  flags = f_cmp_p;  cmp = c_cmp_p; end
     if (v_tot)  begin y = '0;       flags = 5'd0;     cmp = c_tot_p; end
   end
   assign out_valid = v_mul | v_fma | v_add | v_rnd | v_div | v_sqrt | v_iter
-                   | v_mm | v_cmp | v_tot | v_reg;
+                   | v_mm | v_misc | v_cmp | v_tot | v_reg;
 
 `ifndef SYNTHESIS
   // The reservation vector must predict every result exactly (a wrong
@@ -372,7 +454,7 @@ module fp_unit #(
         else $error("fp_unit: out_valid=%0b but resv[0]=%0b (latency table mismatch)",
                     out_valid, resv[0]);
       assert ($onehot0({v_mul, v_fma, v_add, v_rnd, v_div, v_sqrt, v_iter,
-                        v_mm, v_cmp, v_tot, v_reg}))
+                        v_mm, v_misc, v_cmp, v_tot, v_reg}))
         else $error("fp_unit: result-port collision");
     end
   end

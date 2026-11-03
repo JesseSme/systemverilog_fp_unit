@@ -6,6 +6,9 @@
 //       increment (merged into one stage)
 //   S2  re-encode the rounded integer (normal/subnormal/overflow) + result mux
 //
+// `exact` = 1 selects roundToIntegralExact (5.3.1): identical result, but a
+// finite non-integral operand also signals inexact.
+//
 // Fixed latency: 2 cycles from `start` to `out_valid`.
 
 /* verilator lint_off WIDTHEXPAND */
@@ -19,6 +22,7 @@ module fp_roundint_pipe #(
 ) (
   input  logic [1+W_EXP+W_MANT-1:0] a,
   input  fp_pkg::rounding_t         rm,
+  input  logic                      exact,
   input  logic                      clk,
   input  logic                      rst_n,
   input  logic                      start,
@@ -90,6 +94,7 @@ module fp_roundint_pipe #(
   // rounding increment and the context latch (one registered stage): the
   // pipeline is S1 prepare+round, S2 re-encode.
   logic [S_W-1:0] int_part_s1;
+  logic           inexact_s1;
   always_comb begin
     int             k;
     logic [S_W-1:0] int_part;
@@ -98,6 +103,7 @@ module fp_roundint_pipe #(
     k = 0;
     g = 1'b0; r = 1'b0; s_bit = 1'b0; inexact = 1'b0; up = 1'b0;
     int_part_s1 = '0;
+    inexact_s1 = 1'b0;
     if ($signed(e0) < 0) begin
       k = int'(-e0);
       if (k > S_W) begin
@@ -109,6 +115,7 @@ module fp_roundint_pipe #(
         s_bit = |(M & (((S_W)'(1) << (k >= 3 ? k - 2 : 0)) - 1));
       end
       inexact = g | r | s_bit;
+      inexact_s1 = inexact;
       case (rm)
         fp_pkg::RM_RNE: up = g & (r | s_bit) | (g & ~r & ~s_bit & int_part[0]);
         fp_pkg::RM_RNA: up = g;
@@ -130,6 +137,7 @@ module fp_roundint_pipe #(
   logic [W-1:0]            y_special_s1;
   logic [4:0]              flags_special_s1;
   logic                    special_s1;
+  logic                    inx_s1;     // exact && the operand was not integral
   logic                    v1;
 
   always_ff @(posedge clk) begin
@@ -142,6 +150,7 @@ module fp_roundint_pipe #(
       y_special_s1     <= '0;
       flags_special_s1 <= 5'd0;
       special_s1       <= 1'b0;
+      inx_s1           <= 1'b0;
       v1               <= 1'b0;
     end else begin
       int_part_s1r     <= int_part_s1;
@@ -152,6 +161,7 @@ module fp_roundint_pipe #(
       y_special_s1     <= y_special;
       flags_special_s1 <= flags_special;
       special_s1       <= special_case;
+      inx_s1           <= exact && inexact_s1;
       v1               <= start;
     end
   end
@@ -205,7 +215,7 @@ module fp_roundint_pipe #(
         flags <= 5'd0;
       end else begin
         y     <= y_fin_s2;
-        flags <= flags_fin_s2;
+        flags <= flags_fin_s2 | (inx_s1 ? (5'd1 << fp_pkg::FLAG_INEXACT) : 5'd0);
       end
       out_valid <= v1;
     end

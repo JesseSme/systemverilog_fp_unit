@@ -85,7 +85,8 @@ def _pack_fmt(opbytes: int) -> str:
     return {1: "B", 2: "H", 4: "I", 8: "Q"}[opbytes]
 
 
-def generate_expected(fmt: BinFormat, path: str, n: int, seed: int) -> None:
+def generate_expected(fmt: BinFormat, path: str, n: int, seed: int,
+                      ops_en: int = 0xFFFF) -> None:
     """Write n (a, b, y, flags, cmp, op, rm) records for a seeded stream."""
     rng = random.Random(seed)
     c = fma_c(fmt)
@@ -100,7 +101,7 @@ def generate_expected(fmt: BinFormat, path: str, n: int, seed: int) -> None:
             a, b = gen.pair_stream(rng, fmt, 1)[0]
             rm = rng.randrange(5)
             op = rng.randrange(N_OPS)
-            y, flags, cmp = ops.dispatch(op, a, b, c, rm, fmt)
+            y, flags, cmp = ops.dispatch(op, a, b, c, rm, fmt, ops_en)
             f.write(rec.pack(a, b, y, flags, cmp, op, rm))
 
 
