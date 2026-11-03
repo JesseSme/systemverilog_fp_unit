@@ -33,6 +33,12 @@ package fp_pkg;
     OP_TOTALORDER = 4'd10  // totalOrder predicate (5.10): cmp[0] = a precedes-or-equals b
   } op_t;
 
+  // Opcodes with a defined operation (everything else is reserved: fp_unit
+  // returns y = 0 with the invalid flag).
+  function automatic bit op_defined(input op_t op);
+    return op <= OP_TOTALORDER;
+  endfunction
+
   // Comparison condition codes (clause 5.11), encoding of the 2-bit cmp output.
   // Mirrored in tests/reference/formats.py. OP_TOTALORDER uses cmp[0] only
   // (a precedes-or-equals b); all other ops drive cmp = 0.

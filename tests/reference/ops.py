@@ -482,8 +482,17 @@ def dispatch(op: int, a: int, b: int, c: int, rm: int,
 
     Single op -> oracle mapping shared by every harness (exhaustive, soak,
     stream, cocotb). Ops without a cmp result report cmp = 0.
+
+    Reserved encodings: a rounding mode > 4 behaves as roundTiesToEven; an
+    opcode >= NUM_OPS (or disabled in the build) returns y = 0 with the
+    invalid flag.
     """
     from . import formats as F
+
+    if rm > F.MODE_RM:
+        rm = F.MODE_RNE
+    if op >= F.NUM_OPS:
+        return 0, 1 << FLAG_INVALID, 0
 
     if op in (F.OP_ADD, F.OP_SUB):
         y, flags = fp_add(a, b, rm, fmt, sub=(op == F.OP_SUB))
@@ -507,7 +516,7 @@ def dispatch(op: int, a: int, b: int, c: int, rm: int,
     elif op == F.OP_TOTALORDER:
         y, cmp, flags = fp_totalorder(a, b, fmt)
         return y, flags, cmp
-    else:
+    else:  # pragma: no cover - every op < NUM_OPS is handled above
         raise ValueError(f"no reference for opcode {op}")
     return y, flags, 0
 

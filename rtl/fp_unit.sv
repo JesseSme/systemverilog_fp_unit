@@ -66,6 +66,15 @@ module fp_unit #(
 );
 
   localparam int W = 1 + W_EXP + W_MANT;
+
+  // Reserved encodings (README "Semantics"): rounding modes 5-7 behave as
+  // RM_RNE in every datapath; an undefined opcode returns y = 0 with the
+  // invalid flag after 1 cycle (through the output register).
+  fp_pkg::rounding_t rm_eff;
+  assign rm_eff = (rm > fp_pkg::RM_RM) ? fp_pkg::RM_RNE : rm;
+  logic op_reserved;
+  assign op_reserved = !fp_pkg::op_defined(mode);
+
   localparam bit GENERIC  = (W_MANT > 0);
   localparam bit SRT_DS   = GENERIC && (ITER_DIVSQRT != 0);
   localparam int DIV_DPS  = 2;  // radix-4 digits per fp_div_srt stage
@@ -156,22 +165,22 @@ module fp_unit #(
   generate
     if (GENERIC) begin : g_generic_pipes
       fp_add_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_add_pipe (
-        .a(a), .b(b), .rm(rm), .op(mode),
+        .a(a), .b(b), .rm(rm_eff), .op(mode),
         .clk(clk), .rst_n(rst_n), .start(start_add),
         .y(y_add_p), .flags(f_add_p), .out_valid(v_add)
       );
       fp_mul_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_mul_pipe (
-        .a(a), .b(b), .rm(rm),
+        .a(a), .b(b), .rm(rm_eff),
         .clk(clk), .rst_n(rst_n), .start(start_mul),
         .y(y_mul_p), .flags(f_mul_p), .out_valid(v_mul)
       );
       fp_fma_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_fma_pipe (
-        .a(a), .b(b), .c(c), .rm(rm),
+        .a(a), .b(b), .c(c), .rm(rm_eff),
         .clk(clk), .rst_n(rst_n), .start(start_fma),
         .y(y_fma_p), .flags(f_fma_p), .out_valid(v_fma)
       );
       fp_roundint_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_roundint_pipe (
-        .a(a), .rm(rm),
+        .a(a), .rm(rm_eff),
         .clk(clk), .rst_n(rst_n), .start(start_rnd),
         .y(y_rnd_p), .flags(f_rnd_p), .out_valid(v_rnd)
       );
@@ -184,12 +193,12 @@ module fp_unit #(
 
     if (SRT_DS) begin : g_srt
       fp_div_srt #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DPS(DIV_DPS)) u_fp_div_srt (
-        .a(a), .b(b), .rm(rm), .start(start_div),
+        .a(a), .b(b), .rm(rm_eff), .start(start_div),
         .y(y_div_p), .flags(f_div_p),
         .clk(clk), .rst_n(rst_n), .out_valid(v_div)
       );
       fp_sqrt_srt #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DPS(SQRT_DPS)) u_fp_sqrt_srt (
-        .a(a), .rm(rm), .start(start_sqrt),
+        .a(a), .rm(rm_eff), .start(start_sqrt),
         .y(y_sqrt_p), .flags(f_sqrt_p),
         .clk(clk), .rst_n(rst_n), .out_valid(v_sqrt)
       );
@@ -224,7 +233,8 @@ module fp_unit #(
 
   // ---------------------------------- 1-cycle output-register datapaths
   // E8M0 (all non-ordering ops), ITER_DIVSQRT = 0 div/sqrt, reserved
-  // opcodes: combinational datapaths sampled into y_r/flags_r.
+  // opcodes (y = 0, invalid): combinational datapaths sampled into
+  // y_r/flags_r.
   logic [W-1:0] y_c;
   logic [4:0]   flags_c;
 
@@ -234,10 +244,10 @@ module fp_unit #(
       logic [4:0]   f_div_c, f_sqrt_c;
       if (!SRT_DS) begin : g_comb_divsqrt
         fp_div #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_div (
-          .a(a), .b(b), .rm(rm), .y(y_div_c), .flags(f_div_c)
+          .a(a), .b(b), .rm(rm_eff), .y(y_div_c), .flags(f_div_c)
         );
         fp_sqrt #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_sqrt (
-          .a(a), .rm(rm), .y(y_sqrt_c), .flags(f_sqrt_c)
+          .a(a), .rm(rm_eff), .y(y_sqrt_c), .flags(f_sqrt_c)
         );
       end else begin : g_no_comb_divsqrt
         assign {y_div_c, f_div_c, y_sqrt_c, f_sqrt_c} = '0;
@@ -255,22 +265,22 @@ module fp_unit #(
       logic [W-1:0] y_add_e, y_mul_e, y_div_e, y_sqrt_e, y_fma_e, y_rnd_e;
       logic [4:0]   f_add_e, f_mul_e, f_div_e, f_sqrt_e, f_fma_e, f_rnd_e;
       fp_add_e8m0 #(.W_EXP(W_EXP)) u_fp_add (
-        .a(a), .b(b), .rm(rm), .op(mode), .y(y_add_e), .flags(f_add_e)
+        .a(a), .b(b), .rm(rm_eff), .op(mode), .y(y_add_e), .flags(f_add_e)
       );
       fp_mul_e8m0 #(.W_EXP(W_EXP)) u_fp_mul (
-        .a(a), .b(b), .rm(rm), .y(y_mul_e), .flags(f_mul_e)
+        .a(a), .b(b), .rm(rm_eff), .y(y_mul_e), .flags(f_mul_e)
       );
       fp_div_e8m0 #(.W_EXP(W_EXP)) u_fp_div (
-        .a(a), .b(b), .rm(rm), .y(y_div_e), .flags(f_div_e)
+        .a(a), .b(b), .rm(rm_eff), .y(y_div_e), .flags(f_div_e)
       );
       fp_sqrt_e8m0 #(.W_EXP(W_EXP)) u_fp_sqrt (
-        .a(a), .rm(rm), .y(y_sqrt_e), .flags(f_sqrt_e)
+        .a(a), .rm(rm_eff), .y(y_sqrt_e), .flags(f_sqrt_e)
       );
       fp_fma_e8m0 #(.W_EXP(W_EXP)) u_fp_fma (
-        .a(a), .b(b), .c(c), .rm(rm), .y(y_fma_e), .flags(f_fma_e)
+        .a(a), .b(b), .c(c), .rm(rm_eff), .y(y_fma_e), .flags(f_fma_e)
       );
       fp_roundint_e8m0 #(.W_EXP(W_EXP)) u_fp_roundint (
-        .a(a), .rm(rm), .y(y_rnd_e), .flags(f_rnd_e)
+        .a(a), .rm(rm_eff), .y(y_rnd_e), .flags(f_rnd_e)
       );
       always_comb begin
         y_c     = '0;
@@ -298,8 +308,8 @@ module fp_unit #(
       flags_r <= 5'd0;
       v_reg   <= 1'b0;
     end else begin
-      y_r     <= y_c;
-      flags_r <= flags_c;
+      y_r     <= op_reserved ? '0 : y_c;
+      flags_r <= op_reserved ? (5'd1 << fp_pkg::FLAG_INVALID) : flags_c;
       v_reg   <= start_reg;
     end
   end

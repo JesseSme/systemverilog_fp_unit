@@ -1382,3 +1382,24 @@ async def test_boundary_stress(dut):
         rm = rng.randrange(5)
         exp_y, exp_f = ops.fp_add(a, b, rm, FMT, sub=(mode == OP_SUB))
         await check(dut, mode, rm, a, b, exp_y, exp_f, f"boundary[{i}]")
+
+
+@cocotb.test()
+async def test_reserved_encodings(dut):
+    """Reserved rounding modes 5-7 behave as RNE for every op; opcodes
+    NUM_OPS..15 return y = 0 with the invalid flag (README "Semantics")."""
+    rng = random.Random(SEED ^ 0x5E5)
+    for i in range(max(ITERS // 4, 20)):
+        a, b = gen.pair_stream(rng, FMT, 1)[0]
+        c = gen.operand(rng, FMT)
+        mode = rng.randrange(NUM_OPS)
+        rm = rng.randrange(5, 8)
+        exp_y, exp_f, exp_c = ops.dispatch(mode, a, b, c, rm, FMT)
+        await check(dut, mode, rm, a, b, exp_y, exp_f, f"reserved rm={rm} [{i}]",
+                    c=c, exp_cmp=exp_c)
+    for mode in range(NUM_OPS, 16):
+        for rm in (0, 4, 7):
+            a, b = gen.pair_stream(rng, FMT, 1)[0]
+            exp_y, exp_f, exp_c = ops.dispatch(mode, a, b, 0, rm, FMT)
+            await check(dut, mode, rm, a, b, exp_y, exp_f, f"reserved op={mode} rm={rm}",
+                        exp_cmp=exp_c)
