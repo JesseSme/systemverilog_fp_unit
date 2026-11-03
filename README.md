@@ -1,10 +1,10 @@
 # IEEE 754-2019 floating-point unit (SystemVerilog) with cocotb verification
 
-Parametrized combinational FPU: `W_EXP` exponent bits and `W_MANT` fraction
+Parametrized, pipelined FPU (fixed latency per operation, valid-in/valid-out): `W_EXP` exponent bits and `W_MANT` fraction
 bits (IEEE 754-2019 3.7 "extendable precision"; binary16/32/64 and odd sizes
 are covered by the test matrix). Implements addition/subtraction,
-multiplication, division, square root, fused multiply-add, minimum/maximum
-(5.4.1, 5.6.1), quiet comparison (5.11), roundToIntegral (5.9) and totalOrder
+multiplication, division, square root, fused multiply-add (5.4.1),
+minimum/maximum (9.6), quiet comparison (5.11), roundToIntegral (5.9) and totalOrder
 (5.10) with all five rounding-direction attributes (4.3), full subnormal
 support (3.3) and the five exception flags (7.2-7.6, including divide-by-zero
 7.3). The operation is selected by the 4-bit `mode` input (`fp_pkg::op_t`).
@@ -69,12 +69,12 @@ support (3.3) and the five exception flags (7.2-7.6, including divide-by-zero
   oss-cad-suite. BMC at depth 1 with free a/b/c/rm inputs proves the M6
   properties (comparison consistency, totalOrder ordering laws, roundToIntegral
   idempotence/sign/specials) for EVERY operand pair of binary16 (2^32 pairs),
-  E4M3 and E7M0. The full RTL (all datapaths) is yosys-parseable; the
-  arithmetic-op laws (`formal/fp_arith_props.sv`, `formal/fp_div_props.sv`)
-  are written but currently blocked by a yosys 0.68 `write_smt2` bug that
-  corrupts the model when several instances of the parameterized datapath
-  modules coexist (see the HANDOFF notes). The RTL is verified bit-exact by
-  the regression and the exhaustive sweep regardless.
+  E4M3 and E7M0. The arithmetic-op laws (`formal/fp_arith_props.sv`:
+  add/mul/fma/sqrt identities) are proven at E4M3/E5M2 and the division laws
+  (`formal/fp_div_props.sv`) at E4M3/E5M2/binary16. The proofs target the
+  combinational reference datapaths (`fp_add`, `fp_mul`, ...); the pipelined
+  modules that `fp_unit` instantiates are tied to them bit-exactly by the
+  exhaustive 8-bit sweep, the soak and the streaming test.
 
 ## Pipelined latency-optimized core (178.6 MHz on VU9P-2L)
 
@@ -104,7 +104,7 @@ while the same pipeline is busy) and `out_valid` pulses once with `y`/`flags`
   rounding increment, exponent and overflow candidates are computed in
   parallel with the GRS decision (carry-select).
 * `fp_mul_core` + `fp_mul_pipe`: a LUT-only pipelined multiplier (no DSP
-  inference), 2 stages for W <= 32 and 3 stages above (the final
+  inference), 2 stages for significand width W_MANT+1 <= 32 and 3 stages above (the final
   carry-propagate level is folded into the last tree stage), followed by the
   placement and round/encode stages; shared by the multiply and FMA
   pipelines. The synthesized design uses **0 DSPs**.
@@ -123,7 +123,7 @@ while the same pipeline is busy) and `out_valid` pulses once with `y`/`flags`
   (latency K+3) kept in-tree as a reference; `ITER_DIVSQRT = 0` still selects
   the legacy combinational `fp_div`/`fp_sqrt`. The `--iter` harness flags and
   `FP_ITER_DIVSQRT=1` now select the same SRT default.
-* `fp_fma_pipe`: 7 cycles for W <= 32 (8 above). The subnormal-candidate
+* `fp_fma_pipe`: 7 cycles for W_MANT+1 <= 32 (8 above). The subnormal-candidate
   shift is computed from the pre-normalization accumulator in the normalize
   stage (the fp_add_pipe placement-ahead trick), so round/encode is a single
   stage; it inherits the shorter shared multiplier core. That shift does not
@@ -198,7 +198,7 @@ every op has a constant latency across normal, subnormal and special vectors.
   a wide accumulator (3p+6 bits) that holds the exact sum; inf x 0 (7.2e)
   and inf + -inf (7.2d) signal invalid. The `c` operand is a third input
   port.
-- minimum/maximum (5.6.1): the smaller/larger operand is returned exactly
+- minimum/maximum (9.6): the smaller/larger operand is returned exactly
   (NaN propagates; minimum(-0,+0) = -0, maximum(-0,+0) = +0); no rounding.
 - Quiet comparison (5.11): a 2-bit condition code is output on `cmp`
   (`fp_pkg::CMP_LT/CMP_EQ/CMP_GT/CMP_UN`); -0 equals +0, NaN is unordered,

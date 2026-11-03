@@ -95,7 +95,7 @@ trees are gitignored.
 ### roundToIntegral, totalOrder)
 
 - **Operation**: addition, subtraction, multiplication, division, square root,
-  fused multiply-add, minimum/maximum (5.4.1, 5.6.1), quiet comparison (5.11),
+  fused multiply-add, minimum/maximum (754-2019 9.6), quiet comparison (5.11),
   roundToIntegral (5.9) and the totalOrder predicate (5.10). `OP_SUB` is
   `OP_ADD` with the second operand's effective sign flipped. `op_t` is now a
   4-bit enum: `OP_ADD`/`OP_SUB`/`OP_MUL`/`OP_DIV`/`OP_SQRT`/`OP_FMA`/`OP_MIN`/
@@ -120,7 +120,7 @@ trees are gitignored.
   mul/fma; 7.2f inf/inf and 0/0 → invalid for div; 7.2g sqrt of a negative
   number → invalid), ±0 with clause 6.3 sign rules (products/quotients use
   the XOR sign; sqrt(±0) = ±0; minimum(-0,+0) = -0 and maximum(-0,+0) = +0
-  per 5.6.1).
+  per 754-2019 9.6).
 - **FMA** (5.4.1): (a × b) + c computed in a wide accumulator (3p+6 bits)
   that holds the exact sum with a single GRS rounding — no double rounding.
 - **Division by zero** (7.3): finite-nonzero / 0 → ±inf with `FLAG_DIV0`.
@@ -153,10 +153,9 @@ trees are gitignored.
 
 ### Missing (future milestones)
 
-- **Microarchitecture**: the datapath is combinational (single `always_comb`
-  block, no clock/pipeline). Pipelining, a clocked register interface, and a
-  wider opcode space (`op_t` is now 4 bits with 5 values free) would be needed
-  for more operations and higher throughput.
+- **Microarchitecture**: (superseded) the unit is now fully pipelined with
+  fixed per-op latencies; see the optimization-pass notes below and
+  IMPROVEMENT_PLAN.md for the remaining interface work.
 
 ## What works (regression-verified)
 
@@ -670,7 +669,7 @@ optimization captures `metrics/area-after*.json` and diffs with
   fp_minmax_pipe, fp_cmp_pipe, fp_totalorder_pipe; fp_divsqrt_iter now runs
   two cycles per radix-4 digit step with a two-phase preload; fp_unit is a
   per-op start/out_valid dispatcher. Measured with the single non-project
-  Vivado run (/tmp/opencode/vivado/impl.tcl, `synth_design -mode
+  Vivado run (now `syn/vivado-impl.tcl`, `synth_design -mode
   out_of_context` + place/route on a 4.000 ns clock): WNS +0.022 ns, 0
   failing endpoints, 6994 LUTs, 2625 FFs, 0 DSPs. The harnesses assert
   constant per-op latency on every vector; fp_exp_seq was re-sequenced to
@@ -698,7 +697,7 @@ optimization captures `metrics/area-after*.json` and diffs with
     rounding increment, exponent and overflow candidates are computed in
     parallel with the GRS decision (carry-select). All three stages land at
     <= 3.85 ns, so the add pipe is no longer the critical path.
-  * mul 5 -> 4 (W <= 32): fp_mul_core uses 2 stages for W <= 32 (the final
+  * mul 5 -> 4 (significand width S_W = W_MANT+1 <= 32): fp_mul_core uses 2 stages for S_W <= 32 (the final
     carry-propagate level is folded into the last tree stage) and keeps 3 for
     binary64; FMA inherits the shorter core (8 cycles for W <= 32, 9 for
     binary64).
@@ -755,11 +754,12 @@ optimization captures `metrics/area-after*.json` and diffs with
     - FMA F1+F2 merge with product-MSB anticipation (pbitlen =
       bl_a+bl_b-1+P[bl_a+bl_b-1] => prod_top = e_a+e_b+msb): -0.866 ns, 308
       failing endpoints (patch archived at
-      /tmp/opencode/a3-f1f2-merge-attempt.patch).
+      /tmp/opencode/a3-f1f2-merge-attempt.patch; no longer available).
     - div/sqrt publish folded into the last step, and the preload merged into
       the start cycle (K+1): functionally correct (exhaustive/soak PASS) but
       -0.674 ns.
-  * New scratch harnesses (/tmp/opencode/fma_diff): differential vs the
+  * New scratch harnesses (/tmp/opencode/fma_diff, lost; superseded by
+    the fp_unit-level streaming test `tests/stream.py`): differential vs the
     combinational fp_fma (one-at-a-time: 2M x 6 formats plus 30M at binary32
     and 10M at binary64 across seeds) and streaming (one start per cycle with
     FIFO-tracked operands); both 0 mismatches. Worth promoting into tests/.
@@ -771,10 +771,10 @@ optimization captures `metrics/area-after*.json` and diffs with
   4 (E4M3, E5M2); sqrt 15 / 29 / 8 / 7 / 5 / 4. This required relaxing the
   operating clock from 4.000 ns to 5.600 ns (178.6 MHz); the previously
   instantiated `fp_divsqrt_iter` (K+3) and the legacy combinational
-  `fp_div`/`fp_sqrt` remain in-tree for reference and `ITER_DIVSQRT = 0`. Latencies: div 17 -> 9 (binary32), 31 -> 17 (binary64),
-  10 -> 6 (binary16), 9 -> 5 (BF16), 7 -> 4 (E4M3), 6 -> 4 (E5M2); sqrt
-  17 -> 9 (binary32), 31 -> 16 (binary64), 10 -> 5 (binary16), 9 -> 5 (BF16),
-  7 -> 4, 6 -> 3. `fp_unit` now runs both on SRT pipelines for generic
+  `fp_div`/`fp_sqrt` remain in-tree for reference and `ITER_DIVSQRT = 0`.
+  (The measured latencies above are authoritative; an earlier draft of this
+  note listed sqrt 9/16/5/5/4/3 from a 2-digit/stage experiment that was not
+  landed.) `fp_unit` now runs both on SRT pipelines for generic
   formats (`ITER_DIVSQRT != 0`); `fp_divsqrt_iter` is no longer instantiated
   (kept in-tree for reference/fallback), the legacy combinational
   `fp_div`/`fp_sqrt` remain for `ITER_DIVSQRT = 0` and formal.
@@ -798,7 +798,7 @@ optimization captures `metrics/area-after*.json` and diffs with
     300k vectors each (0 mismatches, plus 1M at binary32); exhaustive-iter
     and soak-iter; the QST/sqrt tables were derived by exhaustive interval
     analysis and the recurrences validated bit-exactly in Python
-    (/tmp/opencode/srt: div_cs_model.py, sqrt_rtl_model.py).
+    (now `verification/srt/div_model.py`, `sqrt_model.py`).
   * Gotchas found: (a) the setup block must not reset the stage registers
     (multi-driven in synthesis - the divider was silently pruned);
     (b) signed casts are needed around all digit arithmetic (unsigned size
@@ -856,15 +856,15 @@ optimization captures `metrics/area-after*.json` and diffs with
 | `rtl/fp_pkg.sv` | `OP_FMA = 3'd5`, `OP_MIN = 3'd6`, `OP_MAX = 3'd7` added to `op_t` (fills the 3-bit space) |
 | `rtl/fp_fma.sv` | **New**: generic fused multiply-add (3p+6-bit exact-sum accumulator anchored at the larger leading exponent, operand tails below bit 0 captured as sticky, single GRS rounding; bugs 20) |
 | `rtl/fp_fma_e8m0.sv` | **New**: E8M0 FMA (2^(e_a+e_b) + 2^e_c with the fp_add_e8m0 p=1 rules plus c=0 and tiny 0/2^emin handling) |
-| `rtl/fp_minmax.sv` | **New**: generic minimum/maximum (NaN propagation, -0/+0 rule per 5.6.1, no rounding; format-generic, no E8M0 split) |
+| `rtl/fp_minmax.sv` | **New**: generic minimum/maximum (NaN propagation, -0/+0 rule per 9.6, no rounding; format-generic, no E8M0 split) |
 | `rtl/fp_unit.sv` | Add `c` input port; instantiate `fp_fma`/`fp_fma_e8m0` and `fp_minmax`; mux on OP_FMA/OP_MIN/OP_MAX |
-| `tests/reference/ops.py` | `fp_fma` (3-operand specials incl. 7.2e/7.2d, exact `a*b+c`), `fp_min`/`fp_max` (5.6.1, tuple ordering keys) |
+| `tests/reference/ops.py` | `fp_fma` (3-operand specials incl. 7.2e/7.2d, exact `a*b+c`), `fp_min`/`fp_max` (9.6, tuple ordering keys) |
 | `tests/test_fp_unit.py` | `OP_FMA/MIN/MAX`; `check()` drives `c`; `_directed_fma_vectors`/`_directed_minmax_vectors` + `test_directed_fma`/`test_directed_minmax`; `test_fma_random`/`test_minmax_random`; `test_random_mixed` dispatches all 8 ops |
 | `tests/run_regression.py` | RTL list adds `fp_fma.sv`, `fp_fma_e8m0.sv`, `fp_minmax.sv` |
 | `tests/exhaustive.py` | RTL list adds the fma/minmax files; expected generation loops over op ∈ {0..7}; FMA uses a fixed per-format `c` |
 | `tests/exhaustive_main.cpp` | op loop 0..7; vector count 8·5·A·A; drives `top->c` from a CLI argument |
 | `Makefile` | lint targets include `fp_fma.sv`/`fp_fma_e8m0.sv`/`fp_minmax.sv` |
-| `README.md` | Document FMA (single rounding, c port) and min/max (5.6.1) semantics |
+| `README.md` | Document FMA (single rounding, c port) and min/max (9.6) semantics |
 | `HANDOFF.md` | This document |
 
 ## File-level change summary (M6: comparisons, roundToIntegral, totalOrder,
