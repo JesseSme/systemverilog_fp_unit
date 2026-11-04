@@ -2,7 +2,8 @@
 //
 // Fully unrolled, DPS radix-4 quotient digits per pipeline stage, one start per
 // cycle (out_valid streams with the results). Latency is fixed:
-//   1 (setup) + ceil(NDIG/DPS) + 1 (correct/round/encode) = NSTG + 2 cycles.
+//   1 (setup) + ceil(NDIG/DPS) + FOLD_STG + 1 (correct/round/encode)
+//   = NSTG + 2 + FOLD_STG cycles.
 //
 // Digit recurrence (integer domain, Den = normalized divisor significand):
 //   u = R * 2^(S_W+2),  u0 = a_al = Num   (R0 = A/4)
@@ -17,8 +18,15 @@
 // derived by exhaustive interval analysis and validated bit-exactly against
 // floor-division for all formats (see /tmp/opencode/srt).
 //
-// The remainder is kept in carry-save (S,C); its representation drift is
-// bounded by S_W+17 bits, so CSW = S_W+22 is safe for every width.
+// The remainder is kept in fixed-width carry-save (S,C), both modulo 2^CSW,
+// with no carry-propagate fold between digits: the recurrence is linear, so
+// S+C stays congruent to the true residual u mod 2^CSW. Since |u| < 2^(S_W+3)
+// (|R| < 4/3), u is recovered exactly as the CSW-bit signed value of S+C
+// whenever CSW >= S_W+4, and the 8-bit estimate window [S_W+3 : S_W-4] lies
+// inside CSW, so its wrapped 8-bit sum is the same as on the exact integers.
+// CSW = S_W+4 is the minimum (verification/srt/div_model.py checks the
+// fixed-width model exhaustively for S_W <= 11 and fails at S_W+3). The only
+// carry-propagate adds left are the 8-bit estimates and the final fold.
 
 /* verilator lint_off WIDTHEXPAND */
 /* verilator lint_off WIDTHTRUNC */
@@ -28,7 +36,12 @@
 module fp_div_srt #(
   parameter int W_EXP  = 8,
   parameter int W_MANT = 23,
-  parameter int DPS    = 2     // radix-4 digits per pipeline stage
+  parameter int DPS    = 2,    // radix-4 digits per pipeline stage
+  parameter int FOLD_STG = 0,  // 1: register after the final fold (+1 cycle)
+  // 1: fold S+C (carry-propagate, mod 2^CSW) at every stage boundary, so the
+  // first estimate of the next stage needs no add (best for DPS >= 2);
+  // 0: carry-save crosses the boundaries (no CPA in the stages; DPS = 1)
+  parameter int STAGE_FOLD = (DPS >= 2) ? 1 : 0
 ) (
   input  logic [1+W_EXP+W_MANT-1:0] a,
   input  logic [1+W_EXP+W_MANT-1:0] b,
@@ -60,7 +73,7 @@ module fp_div_srt #(
   localparam int NDIG   = (TARGET % 2 == 0) ? (TARGET / 2 + 1)
                                             : ((TARGET + 1) / 2 + 1);
   localparam int NSTG   = (NDIG + DPS - 1) / DPS;
-  localparam int CSW    = S_W + 14;           // carry-save width (stage-folded)
+  localparam int CSW    = S_W + 4;            // fixed carry-save width (mod 2^CSW)
   localparam int QW     = S_W + 6;            // on-the-fly quotient width
   localparam int EST_SH = S_W - 4;            // k = floor(u / 2^EST_SH)
 
@@ -341,8 +354,8 @@ module fp_div_srt #(
           end
         end
       end
-      s_nxt  = CSW'($signed(sv) + $signed(cv));   // stage-boundary fold (CPA)
-      c_nxt  = '0;
+      s_nxt  = (STAGE_FOLD != 0) ? CSW'(sv + cv) : sv;   // see STAGE_FOLD
+      c_nxt  = (STAGE_FOLD != 0) ? '0 : cv;
       q_nxt  = qv;
       qm_nxt = qmv;
     end
@@ -393,7 +406,9 @@ module fp_div_srt #(
   logic [QW-1:0]         q_corr;
   logic                  sticky;
   always_comb begin
-    u_fin  = (CSW+2)'($signed(s_st[NSTG])) + (CSW+2)'($signed(c_st[NSTG]));
+    logic [CSW-1:0] u_mod;
+    u_mod  = s_st[NSTG] + c_st[NSTG];               // wraps: exact mod 2^CSW
+    u_fin  = (CSW+2)'($signed(u_mod));
     q_corr = (TARGET % 2 == 0) ? q_st[NSTG] : QW'($signed(q_st[NSTG]) >>> 1);
     sticky = (u_fin != 0) || ((TARGET % 2 == 1) && q_st[NSTG][0]);
     if (u_fin < 0) begin
@@ -406,11 +421,83 @@ module fp_div_srt #(
     q_fin = q_corr;
   end
 
+  // Exponent-only decisions of the round stage (the exponent is known since
+  // the setup cycle): exponent fields for no carry / rounding carry, the
+  // overflow, normal/subnormal and subnormal shift. Computed here, ahead of
+  // the optional fold register, so the round stage has no exponent adders.
+  logic [W_EXP-1:0]        ef0_c, ef1_c;
+  logic                    ovf0_c, atmax_c, norm_c;
+  logic signed [W_EXP+4:0] subsh_c;
+  always_comb begin
+    ef0_c   = er_st[NSTG][W_EXP-1:0] + BIAS[W_EXP-1:0];
+    ef1_c   = ef0_c + 1'b1;
+    ovf0_c  = $signed(er_st[NSTG]) > EMAX_S;
+    atmax_c = $signed(er_st[NSTG]) == EMAX_S;
+    norm_c  = $signed(er_st[NSTG]) >= EMIN_S;
+    subsh_c = EMIN_S - (W_EXP+5)'($signed(er_st[NSTG]));
+  end
+
+  // Optional pipeline register after the final carry-save fold
+  // (FOLD_STG = 1, one more cycle of latency): splits the fold CPA + Q/QM
+  // selection from the rounding, which is needed below ~4.5 ns.
+  logic [W_EXP-1:0]          ef0_f, ef1_f;
+  logic                      ovf0_f, atmax_f, norm_f;
+  logic signed [W_EXP+4:0]   subsh_f;
+  logic [QW-1:0]             q_f;
+  logic                      sticky_f;
+  logic [2:0]                rm_f;
+  logic                      sp_f;
+  logic [W-1:0]              ysp_f;
+  logic [4:0]                fsp_f;
+  logic                      valid_f;
+  logic                      ge_f;
+  logic                      rs_f;
+  if (FOLD_STG != 0) begin : g_fold_reg
+    always_ff @(posedge clk) begin
+      if (!rst_n) begin
+        q_f      <= '0;
+        sticky_f <= 1'b0;
+        {ef0_f, ef1_f, ovf0_f, atmax_f, norm_f, subsh_f} <= '0;
+        rm_f <= '0;
+        sp_f <= '0;
+        ysp_f <= '0;
+        fsp_f <= '0;
+        valid_f <= '0;
+        ge_f <= '0;
+        rs_f <= '0;
+      end else begin
+        q_f      <= q_fin;
+        sticky_f <= sticky;
+        {ef0_f, ef1_f, ovf0_f, atmax_f, norm_f, subsh_f}
+          <= {ef0_c, ef1_c, ovf0_c, atmax_c, norm_c, subsh_c};
+        rm_f <= rm_st[NSTG];
+        sp_f <= sp_st[NSTG];
+        ysp_f <= ysp_st[NSTG];
+        fsp_f <= fsp_st[NSTG];
+        valid_f <= valid_st[NSTG];
+        ge_f <= ge_st[NSTG];
+        rs_f <= rs_st[NSTG];
+      end
+    end
+  end else begin : g_fold_comb
+    assign q_f      = q_fin;
+    assign sticky_f = sticky;
+    assign {ef0_f, ef1_f, ovf0_f, atmax_f, norm_f, subsh_f}
+      = {ef0_c, ef1_c, ovf0_c, atmax_c, norm_c, subsh_c};
+    assign rm_f = rm_st[NSTG];
+    assign sp_f = sp_st[NSTG];
+    assign ysp_f = ysp_st[NSTG];
+    assign fsp_f = fsp_st[NSTG];
+    assign valid_f = valid_st[NSTG];
+    assign ge_f = ge_st[NSTG];
+    assign rs_f = rs_st[NSTG];
+  end
+
   logic [FW-1:0] placed;
   logic          norm_sticky;
   always_comb begin
-    placed      = ge_st[NSTG] ? FW'(q_fin) : FW'(q_fin << 1);
-    norm_sticky = sticky;
+    placed      = ge_f ? FW'(q_f) : FW'(q_f << 1);
+    norm_sticky = sticky_f;
   end
 
   logic [S_W-1:0] sig;
@@ -418,7 +505,6 @@ module fp_div_srt #(
   /* verilator lint_off UNUSEDSIGNAL */
   logic [S_W-1:0] sig_rnd;
   /* verilator lint_on UNUSEDSIGNAL */
-  logic signed [W_EXP+3:0] e_rnd;
   logic [W-1:0]   y_normal;
   logic [4:0]     flags_normal;
   always_comb begin
@@ -429,37 +515,32 @@ module fp_div_srt #(
     s_bit   = placed[0] | norm_sticky;
     lsb     = sig[0];
     inexact = g | r | s_bit;
-    case (rm_st[NSTG])
+    case (rm_f)
       fp_pkg::RM_RNE: round_up = g & (r | s_bit) | (g & ~r & ~s_bit & lsb);
       fp_pkg::RM_RNA: round_up = g;
       fp_pkg::RM_RZ:  round_up = 1'b0;
-      fp_pkg::RM_RP:  round_up = ~rs_st[NSTG] & inexact;
-      fp_pkg::RM_RM:  round_up = rs_st[NSTG] & inexact;
+      fp_pkg::RM_RP:  round_up = ~rs_f & inexact;
+      fp_pkg::RM_RM:  round_up = rs_f & inexact;
       default:        round_up = 1'b0;
     endcase
     carry = round_up && (sig == {S_W{1'b1}});
-    if (carry) begin
-      sig_rnd = {1'b1, {W_MANT{1'b0}}};
-      e_rnd   = er_st[NSTG] + 1;
-    end else begin
-      sig_rnd = sig + { {S_W-1{1'b0}}, round_up };
-      e_rnd   = er_st[NSTG];
-    end
-    exp_fld = e_rnd[W_EXP-1:0] + BIAS[W_EXP-1:0];
-    if ($signed(e_rnd) > EMAX_S) begin
-      case (rm_st[NSTG])
+    if (carry) sig_rnd = {1'b1, {W_MANT{1'b0}}};
+    else       sig_rnd = sig + { {S_W-1{1'b0}}, round_up };
+    exp_fld = carry ? ef1_f : ef0_f;                  // (er + carry) + BIAS
+    if (ovf0_f || (carry && atmax_f)) begin           // er + carry > EMAX
+      case (rm_f)
         fp_pkg::RM_RNE,
-        fp_pkg::RM_RNA: y_normal = {rs_st[NSTG], EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
-        fp_pkg::RM_RZ:  y_normal = {rs_st[NSTG], EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
-        fp_pkg::RM_RP:  y_normal = rs_st[NSTG] ? {1'b1, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}}
+        fp_pkg::RM_RNA: y_normal = {rs_f, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
+        fp_pkg::RM_RZ:  y_normal = {rs_f, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
+        fp_pkg::RM_RP:  y_normal = rs_f ? {1'b1, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}}
                                                : {1'b0, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
-        fp_pkg::RM_RM:  y_normal = rs_st[NSTG] ? {1'b1, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}}
+        fp_pkg::RM_RM:  y_normal = rs_f ? {1'b1, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}}
                                                : {1'b0, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
-        default:        y_normal = {rs_st[NSTG], EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
+        default:        y_normal = {rs_f, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
       endcase
       flags_normal = (1 << fp_pkg::FLAG_OVERFLOW) | (1 << fp_pkg::FLAG_INEXACT);
     end else begin
-      y_normal = {rs_st[NSTG], exp_fld, sig_rnd[MANT_W-1:0]};
+      y_normal = {rs_f, exp_fld, sig_rnd[MANT_W-1:0]};
       flags_normal = inexact ? (1 << fp_pkg::FLAG_INEXACT) : 5'd0;
     end
   end
@@ -472,7 +553,7 @@ module fp_div_srt #(
     logic [S_W-1:0]     sig_s;
     logic               gs, rs, ss, inexact_s, up_s;
     logic [S_W-1:0]     sig_s2;
-    shift = int'(EMIN - int'(er_st[NSTG]));
+    shift = int'(subsh_f);                            // EMIN - er
     if (shift > 0) shifted = placed >> shift;
     else           shifted = '0;
     sig_s  = shifted[TARGET -: S_W];
@@ -481,39 +562,39 @@ module fp_div_srt #(
     ss     = shifted[0] | norm_sticky
            | |(placed & (((FW)'(1) << (shift > 0 ? shift : 0)) - 1));
     inexact_s = gs | rs | ss;
-    case (rm_st[NSTG])
+    case (rm_f)
       fp_pkg::RM_RNE: up_s = gs & (rs | ss) | (gs & ~rs & ~ss & sig_s[0]);
       fp_pkg::RM_RNA: up_s = gs;
       fp_pkg::RM_RZ:  up_s = 1'b0;
-      fp_pkg::RM_RP:  up_s = ~rs_st[NSTG] & inexact_s;
-      fp_pkg::RM_RM:  up_s = rs_st[NSTG] & inexact_s;
+      fp_pkg::RM_RP:  up_s = ~rs_f & inexact_s;
+      fp_pkg::RM_RM:  up_s = rs_f & inexact_s;
       default:        up_s = 1'b0;
     endcase
     sig_s2 = sig_s + { {S_W-1{1'b0}}, up_s };
     if (sig_s2 == {1'b1, {W_MANT{1'b0}}}) begin
       if (EMIN > EMAX &&
-          ((gs && rs) || (rm_st[NSTG] == fp_pkg::RM_RP && ~rs_st[NSTG] && gs)
-                      || (rm_st[NSTG] == fp_pkg::RM_RM && rs_st[NSTG] && gs))) begin
-        case (rm_st[NSTG])
+          ((gs && rs) || (rm_f == fp_pkg::RM_RP && ~rs_f && gs)
+                      || (rm_f == fp_pkg::RM_RM && rs_f && gs))) begin
+        case (rm_f)
           fp_pkg::RM_RNE,
-          fp_pkg::RM_RNA: y_sub = {rs_st[NSTG], EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
-          fp_pkg::RM_RZ:  y_sub = {rs_st[NSTG], EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
-          fp_pkg::RM_RP:  y_sub = rs_st[NSTG] ? {1'b1, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}}
+          fp_pkg::RM_RNA: y_sub = {rs_f, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
+          fp_pkg::RM_RZ:  y_sub = {rs_f, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
+          fp_pkg::RM_RP:  y_sub = rs_f ? {1'b1, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}}
                                               : {1'b0, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
-          fp_pkg::RM_RM:  y_sub = rs_st[NSTG] ? {1'b1, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}}
+          fp_pkg::RM_RM:  y_sub = rs_f ? {1'b1, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}}
                                               : {1'b0, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
-          default:        y_sub = {rs_st[NSTG], EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
+          default:        y_sub = {rs_f, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
         endcase
         flags_sub = (1 << fp_pkg::FLAG_OVERFLOW) | (1 << fp_pkg::FLAG_INEXACT);
       end else begin
-        y_sub = {rs_st[NSTG], {W_EXP-1{1'b0}}, 1'b1, {W_MANT{1'b0}}};
+        y_sub = {rs_f, {W_EXP-1{1'b0}}, 1'b1, {W_MANT{1'b0}}};
         flags_sub = inexact_s ? (1 << fp_pkg::FLAG_INEXACT) : 5'd0;
       end
     end else if (sig_s2 == '0) begin
-      y_sub = {rs_st[NSTG], {W_EXP{1'b0}}, {W_MANT{1'b0}}};
+      y_sub = {rs_f, {W_EXP{1'b0}}, {W_MANT{1'b0}}};
       flags_sub = inexact_s ? (1 << fp_pkg::FLAG_INEXACT) : 5'd0;
     end else begin
-      y_sub = {rs_st[NSTG], {W_EXP{1'b0}}, sig_s2[MANT_W-1:0]};
+      y_sub = {rs_f, {W_EXP{1'b0}}, sig_s2[MANT_W-1:0]};
       flags_sub = 5'd0;
       if (inexact_s) begin
         flags_sub[fp_pkg::FLAG_UNDERFLOW] = 1'b1;
@@ -525,7 +606,7 @@ module fp_div_srt #(
   logic [W-1:0] y_result;
   logic [4:0]   flags_result;
   always_comb begin
-    if ($signed(er_st[NSTG]) >= EMIN_S) begin
+    if (norm_f) begin
       y_result     = y_normal;
       flags_result = flags_normal;
     end else begin
@@ -540,9 +621,9 @@ module fp_div_srt #(
       flags     <= 5'd0;
       out_valid <= 1'b0;
     end else begin
-      y     <= sp_st[NSTG] ? ysp_st[NSTG] : y_result;
-      flags <= sp_st[NSTG] ? fsp_st[NSTG] : flags_result;
-      out_valid <= valid_st[NSTG];
+      y     <= sp_f ? ysp_f : y_result;
+      flags <= sp_f ? fsp_f : flags_result;
+      out_valid <= valid_f;
     end
   end
 

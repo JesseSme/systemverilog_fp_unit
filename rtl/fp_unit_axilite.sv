@@ -33,18 +33,18 @@
 // CTRL.GO = 1. The wrapper latches the operands/opcode into working
 // registers, asserts STATUS.BUSY, and publishes the result in
 // RESULT/RES_CMP and STATUS.flags with STATUS.VALID = 1 and STATUS.BUSY = 0
-// when the FPU's out_valid pulses (the cycle after GO for single-cycle
-// operations; after the iterative div/sqrt engine finishes when
-// ITER_DIVSQRT = 1). Reads/writes outside the register map are answered with
+// when the FPU's out_valid pulses (after the operation's fixed pipeline
+// latency; see the README latency table). Reads/writes outside the register map are answered with
 // DECERR; writes to read-only registers are ignored (OKAY).
 
 module fp_unit_axilite #(
   parameter int W_EXP       = 8,
   parameter int W_MANT      = 23,
   parameter int ADDR_WIDTH  = 6,
-  // Passed through to fp_unit: 1 (default) selects the iterative div/sqrt
-  // engine, 0 the legacy combinational datapaths.
-  parameter int ITER_DIVSQRT = 1
+  // Passed through to fp_unit (see fp_unit.sv): 1 (default) pipelined SRT
+  // div/sqrt, 3 SRT in the 4.0 ns form, 2 iterative engine, 0 combinational
+  // reference.
+  parameter int DIVSQRT_IMPL = 1
 ) (
   input  logic                  s_axi_aclk,
   input  logic                  s_axi_aresetn,
@@ -183,7 +183,7 @@ module fp_unit_axilite #(
   logic [31:0] status_vec;
   assign status_vec = { {W_MANT[7:0], W_EXP[7:0]}, 6'b0, valid, busy, 3'b0, reg_flags };
 
-  // ---- Compute control (GO strobe -> BUSY -> 3 cycles -> VALID) ----------------
+  // ---- Compute control (GO strobe -> BUSY -> op latency -> VALID) -------------
   logic [W-1:0]      a_w;
   logic [W-1:0]      b_w;
   logic [W-1:0]      c_w;
@@ -200,13 +200,17 @@ module fp_unit_axilite #(
   logic [1:0]   fpu_cmp;
   logic [4:0]   fpu_flags;
   logic         fpu_in_valid;
+  logic         fpu_in_ready;
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic         fpu_out_tag;  // one request at a time: no tag needed
+  /* verilator lint_on UNUSEDSIGNAL */
   logic         fpu_out_valid;
   logic         start_req;
 
-  // One-cycle start pulse for the FPU, issued in the first S_WAIT cycle so the
-  // operands latched on the S_IDLE -> S_WAIT edge are already stable. Single-
-  // cycle ops pulse out_valid the next cycle; div/sqrt under
-  // ITER_DIVSQRT = 1 when the iterative engine finishes.
+  // Start request for the FPU, issued from the first S_WAIT cycle (the
+  // operands latched on the S_IDLE -> S_WAIT edge are already stable) and
+  // held until fp_unit's in_ready accepts it. The result arrives on
+  // out_valid after the op's fixed latency (README latency table).
   assign fpu_in_valid = (cstate == S_WAIT) && start_req;
 
   always_ff @(posedge s_axi_aclk) begin
@@ -241,7 +245,8 @@ module fp_unit_axilite #(
           end
         end
         S_WAIT: begin
-          start_req <= 1'b0;
+          // The request is held until fp_unit accepts it (in_ready).
+          if (fpu_in_ready) start_req <= 1'b0;
           if (fpu_out_valid) begin
             reg_result <= {{(REG_W-W){1'b0}}, fpu_y};
             reg_flags  <= fpu_flags;
@@ -288,17 +293,18 @@ module fp_unit_axilite #(
       reg_c      <= '0;
     end else begin
       case (wstate)
+        // BVALID rises with the W_RESP state and is held until BREADY
+        // (a master may hold BREADY high before BVALID, AXI A3.3.1).
         W_IDLE: begin
-          bvalid <= 1'b0;
           if (s_axi_awvalid && s_axi_wvalid) begin
             dec_t d = decode(s_axi_awaddr);
-            werr  <= ~d.valid;
+            werr   <= ~d.valid;
+            bvalid <= 1'b1;
             wstate <= W_RESP;
             write_regs(d.sel, d.word, s_axi_wdata, s_axi_wstrb);
           end
         end
         W_RESP: begin
-          bvalid <= 1'b1;
           if (s_axi_bready) begin
             bvalid <= 1'b0;
             wstate <= W_IDLE;
@@ -315,24 +321,43 @@ module fp_unit_axilite #(
   assign s_axi_bvalid  = bvalid;
 
   // ---- AXI-Lite read path -------------------------------------------------------
-  logic [ADDR_WIDTH-1:0] araddr;
+  // The read data and response are registered at the AR handshake, so they
+  // stay stable while RVALID waits for RREADY; RVALID rises with R_DATA and
+  // is held until RREADY (which a master may assert before RVALID).
   logic                  rvalid;
   logic [1:0]            rstate;
+  logic [31:0]           rdata_q;
+  logic                  rerr_q;
   localparam logic [1:0] R_IDLE = 2'b00, R_DATA = 2'b01;
 
   dec_t rdec;
-  assign rdec = decode(araddr);
+  assign rdec = decode(s_axi_araddr);
+  // The word selects are continuous assignments, not calls inside the
+  // always_comb below: Vivado xsim (2026.1.1) leaves a signal that a called
+  // function uses only as a part-select index out of the always_comb /
+  // always @* sensitivity, so after a read of a wide register's low word, a
+  // read of its high word (only the word index changes) returned the low
+  // word again in simulation. Synthesis and Verilator were not affected.
+  dec_sel_e    rsel;
+  logic [7:0]  rword;
+  logic [31:0] rd_a, rd_b, rd_c, rd_res;
+  assign rsel   = rdec.sel;
+  assign rword  = rdec.word;
+  assign rd_a   = rd_wide(reg_a, rword);
+  assign rd_b   = rd_wide(reg_b, rword);
+  assign rd_c   = rd_wide(reg_c, rword);
+  assign rd_res = rd_wide(reg_result, rword);
 
   logic [31:0] rdata;
   always_comb begin
-    case (rdec.sel)
+    case (rsel)
       DEC_CTRL:   rdata = reg_ctrl;
       DEC_OPCODE: rdata = reg_opcode;
-      DEC_A:      rdata = rd_wide(reg_a, rdec.word);
-      DEC_B:      rdata = rd_wide(reg_b, rdec.word);
-      DEC_C:      rdata = rd_wide(reg_c, rdec.word);
+      DEC_A:      rdata = rd_a;
+      DEC_B:      rdata = rd_b;
+      DEC_C:      rdata = rd_c;
       DEC_STATUS: rdata = status_vec;
-      DEC_RESULT: rdata = rd_wide(reg_result, rdec.word);
+      DEC_RESULT: rdata = rd_res;
       DEC_CMP:    rdata = reg_cmp;
       default:    rdata = 32'd0;
     endcase
@@ -340,20 +365,21 @@ module fp_unit_axilite #(
 
   always_ff @(posedge s_axi_aclk) begin
     if (!s_axi_aresetn) begin
-      rstate <= R_IDLE;
-      araddr <= '0;
-      rvalid <= 1'b0;
+      rstate  <= R_IDLE;
+      rvalid  <= 1'b0;
+      rdata_q <= 32'd0;
+      rerr_q  <= 1'b0;
     end else begin
       case (rstate)
         R_IDLE: begin
-          rvalid <= 1'b0;
           if (s_axi_arvalid) begin
-            araddr <= s_axi_araddr;
-            rstate <= R_DATA;
+            rdata_q <= rdata;
+            rerr_q  <= ~rdec.valid;
+            rvalid  <= 1'b1;
+            rstate  <= R_DATA;
           end
         end
         R_DATA: begin
-          rvalid <= 1'b1;
           if (s_axi_rready) begin
             rvalid <= 1'b0;
             rstate <= R_IDLE;
@@ -366,23 +392,26 @@ module fp_unit_axilite #(
 
   assign s_axi_arready = (rstate == R_IDLE);
   assign s_axi_rvalid  = rvalid;
-  assign s_axi_rdata   = rdata;
-  assign s_axi_rresp   = rdec.valid ? AXI_OKAY : AXI_DECERR;
+  assign s_axi_rdata   = rdata_q;
+  assign s_axi_rresp   = rerr_q ? AXI_DECERR : AXI_OKAY;
 
   // ---- FPU core ---------------------------------------------------------------
-  fp_unit #(.W_EXP(W_EXP), .W_MANT(W_MANT), .ITER_DIVSQRT(ITER_DIVSQRT)) u_fp_unit (
+  fp_unit #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DIVSQRT_IMPL(DIVSQRT_IMPL)) u_fp_unit (
     .clk       (s_axi_aclk),
     .rst_n     (s_axi_aresetn),
     .in_valid  (fpu_in_valid),
+    .in_ready  (fpu_in_ready),
     .mode      (mode_w),
     .rm        (rm_w),
     .a         (a_w),
     .b         (b_w),
     .c         (c_w),
+    .in_tag    (1'b0),
     .y         (fpu_y),
     .cmp       (fpu_cmp),
     .flags     (fpu_flags),
-    .out_valid (fpu_out_valid)
+    .out_valid (fpu_out_valid),
+    .out_tag   (fpu_out_tag)
   );
 
 endmodule

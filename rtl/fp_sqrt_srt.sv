@@ -1,7 +1,7 @@
 // Pipelined radix-4 SRT square root (carry-save remainder, on-the-fly root).
 //
 // Fully unrolled, DPS radix-4 root digits per stage, one start per cycle.
-// Latency = 1 (setup) + ceil(NDIG/DPS) + 1 (correct/round/encode).
+// Latency = 1 (setup) + ceil(NDIG/DPS) + FOLD_STG + 1 (correct/round/encode).
 //
 // Integer recurrence (Xp = radicand zero-padded so every step consumes 4 bits):
 //   preload: v = top 4 bits, d0 = 2 if v<9 else 3, q = d0, R = v - d0^2
@@ -14,8 +14,16 @@
 // on-the-fly Q/QM registers (QM = Q-1), and the final sign correction picks
 // Q or QM and recomputes the sticky.
 //
-// The carry-save remainder is folded with a small CPA at each stage boundary
-// (same as fp_div_srt) to bound the representation drift.
+// The remainder is kept in fixed-width carry-save (S,C), both modulo 2^CSW,
+// with no carry-propagate fold between digits (the recurrence is linear, so
+// S+C stays congruent to the true residual). At digit t the estimate reads
+// the EW-bit window starting at bit 2t-6 of S and C and adds them modulo
+// 2^EW; the true estimate is below 2^9 in magnitude, so the wrapped sum is
+// exact once the window lies inside CSW (2(NDIG-1)-6+EW <= CSW). The final
+// residual |R| <= 2q+4 < 2^(2*NDIG+3) is recovered as the CSW-bit signed
+// value of S+C. With EW = 12, CSW = 2*NDIG+4 is the minimum (checked on the
+// fixed-width model, exhaustively for S_W <= 12); CSW = 2*NDIG+5 keeps one
+// bit of margin.
 
 /* verilator lint_off WIDTHEXPAND */
 /* verilator lint_off WIDTHTRUNC */
@@ -23,7 +31,12 @@
 module fp_sqrt_srt #(
   parameter int W_EXP  = 8,
   parameter int W_MANT = 23,
-  parameter int DPS    = 2
+  parameter int DPS    = 2,
+  parameter int FOLD_STG = 0,  // 1: register after the final fold (+1 cycle)
+  // 1: fold S+C (carry-propagate, mod 2^CSW) at every stage boundary, so the
+  // first estimate of the next stage needs no add (best for DPS >= 2);
+  // 0: carry-save crosses the boundaries (no CPA in the stages; DPS = 1)
+  parameter int STAGE_FOLD = (DPS >= 2) ? 1 : 0
 ) (
   input  logic [1+W_EXP+W_MANT-1:0] a,
   input  fp_pkg::rounding_t         rm,
@@ -54,7 +67,8 @@ module fp_sqrt_srt #(
   localparam int RE     = R_W + PAD;               // padded radicand width
   localparam int NDIG   = (RE - 4) / 4;            // 4-bit steps
   localparam int NSTG   = (NDIG + DPS - 1) / DPS;
-  localparam int CSW    = S_W + 18;                // carry-save width (folded)
+  localparam int CSW    = 2 * NDIG + 5;            // fixed carry-save width (mod 2^CSW)
+  localparam int EW     = 12;                      // estimate window width
   localparam int QW     = S_W + 8;                 // root register width
   localparam int PAD_SH = PAD;                     // extra root bits from padding
 
@@ -134,22 +148,15 @@ module fp_sqrt_srt #(
   logic [3:0]     v4;
   logic [1:0]     d0;
   logic [QW-1:0]  q0;
-  logic [QW-1:0]  r0;
+  logic [CSW-1:0] r0;
   assign v4 = x_p[RE-1 -: 4];
   assign d0 = (v4 >= 4'd9) ? 2'd3 : 2'd2;
   assign q0 = QW'(d0);
-  assign r0 = QW'(v4) - QW'(d0) * QW'(d0);
+  assign r0 = CSW'(v4) - CSW'(d0) * CSW'(d0);
 
   // sqrt exponent: floor(e_a / 2)
   logic signed [W_EXP+3:0] e_res;
   assign e_res = e_a >>> 1;
-
-  // generalized arithmetic shift helper (constant shift amounts per call)
-  function automatic logic signed [15:0] sh_ar(input logic signed [CSW+5:0] v,
-                                               input int sh);
-    if (sh >= 0) sh_ar = 16'($signed(v) >>> sh);
-    else          sh_ar = 16'($signed(v) <<< (-sh));
-  endfunction
 
   // exact first digit (q < 4 only, i.e. the very first digit): small
   // table over {q[1:0], R[2:0], bits[3:0]} generated from the model
@@ -387,28 +394,52 @@ module fp_sqrt_srt #(
     endcase
   endfunction
 
-  // threshold selection (q >= 4): d = count(p >= q*(8k+4), k=-4..3) - 4
+  // carry-save estimate of p >> (2t-2): EW-bit windows of S and C at bit
+  // 2t-6 plus the incoming radicand bits, summed modulo 2^EW
+  function automatic logic signed [12:0] est_pe(input logic [CSW-1:0] sv,
+                                                input logic [CSW-1:0] cv,
+                                                input logic [3:0]     bits,
+                                                input int             t);
+    logic [CSW+15:0] sz, cz, bz;
+    logic [EW-1:0]   ws, wc, wb, sum;
+    sz = (CSW+16)'(sv);
+    cz = (CSW+16)'(cv);
+    bz = (CSW+16)'(bits);
+    if (2*t - 6 >= 0) begin ws = EW'(sz >> (2*t - 6)); wc = EW'(cz >> (2*t - 6)); end
+    else              begin ws = EW'(sz << (6 - 2*t)); wc = EW'(cz << (6 - 2*t)); end
+    if (2*t - 2 >= 0) wb = EW'(bz >> (2*t - 2));
+    else              wb = EW'(bz << (2 - 2*t));
+    sum    = ws + wc + wb;
+    est_pe = 13'($signed(sum));
+  endfunction
+
+  // threshold selection (q >= 4): d = count(p >= q*(8k+4), k=-4..3) - 4.
+  // At digit t >= 1 the root q has t+1 digits, so qs = q >> (2t-2) lies in
+  // [8, 16] (q ~ [2, 4] * 4^t) and |pe| < 2^9: a 6-bit qs and 13-bit
+  // compares are exact (the RTL-shaped model in verification/srt checks the
+  // ranges), which keeps the threshold multiples off the long carry chains.
   function automatic logic signed [3:0] thr_digit(input logic [QW-1:0] qv,
-                                                  input logic signed [15:0] pe,
+                                                  input logic signed [12:0] pe,
                                                   input int sh);
-    logic signed [15:0] q4, q12, q20, q28;
-    logic signed [15:0] qs;
-    logic [2:0] cnt;
-    qs  = sh_ar((CSW+6)'({1'b0, qv}), sh);
-    q4  = qs <<< 2;
-    q12 = q4 * 3;
-    q20 = q4 * 5;
-    q28 = q4 * 7;
-    cnt = 3'd0;
-    if (pe >= -q28) cnt = cnt + 1'b1;
-    if (pe >= -q20) cnt = cnt + 1'b1;
-    if (pe >= -q12) cnt = cnt + 1'b1;
-    if (pe >= -q4)  cnt = cnt + 1'b1;
-    if (pe >=  q4)  cnt = cnt + 1'b1;
-    if (pe >=  q12) cnt = cnt + 1'b1;
-    if (pe >=  q20) cnt = cnt + 1'b1;
-    if (pe >=  q28) cnt = cnt + 1'b1;
-    thr_digit = 4'($signed({1'b0, cnt}) - 4);
+    logic [5:0]         qs;
+    logic signed [12:0] p, q4, q12, q20, q28;
+    logic [3:0]         cnt;              // 0..8 (8 compares)
+    qs  = (sh >= 0) ? 6'(qv >> sh) : 6'(qv << (-sh));
+    p   = pe;
+    q4  = 13'({qs, 2'b00});
+    q12 = 13'(q4 * 3);
+    q20 = 13'(q4 * 5);
+    q28 = 13'(q4 * 7);
+    cnt = 4'd0;
+    if (p >= -q28) cnt = cnt + 4'd1;
+    if (p >= -q20) cnt = cnt + 4'd1;
+    if (p >= -q12) cnt = cnt + 4'd1;
+    if (p >= -q4)  cnt = cnt + 4'd1;
+    if (p >=  q4)  cnt = cnt + 4'd1;
+    if (p >=  q12) cnt = cnt + 4'd1;
+    if (p >=  q20) cnt = cnt + 4'd1;
+    if (p >=  q28) cnt = cnt + 4'd1;
+    thr_digit = 4'(cnt - 4'd4);
   endfunction
 
   // ===================================================== pipeline registers
@@ -464,10 +495,10 @@ module fp_sqrt_srt #(
       logic [2:0]        rsum;
       logic [QW-1:0]     qv, qmv;
       logic [RE-1:0]     xv;
+      logic [CSW-1:0]    a16, b16, t1, t2, s1, c1;
+      logic              inj1, inj2;
       /* verilator lint_off UNUSEDSIGNAL */
-      logic [CSW+5:0]    a16, b16, d2, ss, maj;
-      logic signed [CSW+5:0] term;
-      logic signed [15:0]    pe;
+      logic signed [12:0]    pe;
       /* verilator lint_on UNUSEDSIGNAL */
       sv  = s_st[st];
       cv  = c_st[st];
@@ -478,10 +509,12 @@ module fp_sqrt_srt #(
       d   = '0;
       a16 = '0;
       b16 = '0;
-      term = '0;
-      d2  = '0;
-      ss  = '0;
-      maj = '0;
+      t1  = '0;
+      t2  = '0;
+      s1  = '0;
+      c1  = '0;
+      inj1 = 1'b0;
+      inj2 = 1'b0;
       pe  = '0;
       for (int j = 0; j < DPS; j++) begin
         if (st * DPS + j < NDIG) begin
@@ -491,20 +524,32 @@ module fp_sqrt_srt #(
           if ((st * DPS + j) == 0) begin
             d = first_digit(qv[1:0], rsum[2:0], xv[RE-5 -: 4]);
           end else begin
-            pe = sh_ar($signed(sv), 2*t - 6)
-               + sh_ar($signed(cv), 2*t - 6)
-               + sh_ar((CSW+6)'({12'b0, xv[RE-5-4*t -: 4]}), 2*t - 2);
+            pe = est_pe(sv, cv, xv[RE-5-4*t -: 4], t);
             d = thr_digit(qv, pe, 2*t - 2);
           end
-          // R' = 16R + bits - d(8q+d)  (3:2 CSA)
-          a16 = (CSW+6)'(sv) << 4;
-          b16 = (CSW+6)'(cv) << 4;
-          term = $signed(d) * $signed({1'b0, qv, 3'b000}) + d * d;
-          d2  = (CSW+6)'({12'b0, xv[RE-5-4*t -: 4]}) - (CSW+6)'(term);
-          ss  = a16 ^ b16 ^ d2;
-          maj = (a16 & b16) | (a16 & d2) | (b16 & d2);
-          sv  = CSW'(ss);
-          cv  = CSW'(maj << 1);
+          // R' = 16R + bits - d(8q+d) with no carry-propagate add (two
+          // 3:2 levels). The radicand bits fill the zero LSBs of 16C;
+          // 8q+d = {q, d} for d > 0 and 8q+d = 8qm + 8-|d| = {qm, 8-|d|}
+          // for d < 0, so -d(8q+d) is one or two shifted copies of a
+          // concatenation, bit-inverted for d > 0 (the +1s of the
+          // two's-complement negation go into the zero carry LSBs).
+          a16 = CSW'(sv << 4);
+          b16 = CSW'(cv << 4) | CSW'(xv[RE-5-4*t -: 4]);
+          case (d)
+            4'sd1:  begin t1 = ~CSW'({qv, 3'd1});        t2 = '0;                       inj1 = 1'b1; inj2 = 1'b0; end
+            4'sd2:  begin t1 = ~CSW'({qv, 3'd2, 1'b0});  t2 = '0;                       inj1 = 1'b1; inj2 = 1'b0; end
+            4'sd3:  begin t1 = ~CSW'({qv, 3'd3});        t2 = ~CSW'({qv, 3'd3, 1'b0});  inj1 = 1'b1; inj2 = 1'b1; end
+            4'sd4:  begin t1 = ~CSW'({qv, 3'd4, 2'b0});  t2 = '0;                       inj1 = 1'b1; inj2 = 1'b0; end
+            -4'sd1: begin t1 = CSW'({qmv, 3'd7});        t2 = '0;                       inj1 = 1'b0; inj2 = 1'b0; end
+            -4'sd2: begin t1 = CSW'({qmv, 3'd6, 1'b0});  t2 = '0;                       inj1 = 1'b0; inj2 = 1'b0; end
+            -4'sd3: begin t1 = CSW'({qmv, 3'd5});        t2 = CSW'({qmv, 3'd5, 1'b0});  inj1 = 1'b0; inj2 = 1'b0; end
+            -4'sd4: begin t1 = CSW'({qmv, 3'd4, 2'b0});  t2 = '0;                       inj1 = 1'b0; inj2 = 1'b0; end
+            default: begin t1 = '0;                      t2 = '0;                       inj1 = 1'b0; inj2 = 1'b0; end
+          endcase
+          s1  = a16 ^ b16 ^ t1;
+          c1  = CSW'(((a16 & b16) | (a16 & t1) | (b16 & t1)) << 1) | CSW'(inj1);
+          sv  = s1 ^ c1 ^ t2;
+          cv  = CSW'(((s1 & c1) | (s1 & t2) | (c1 & t2)) << 1) | CSW'(inj2);
           if (d >= 0) begin
             qv  = QW'($signed(qv) * 4 + d);
             qmv = QW'($signed(qmv) * 4 + d + 3);
@@ -514,8 +559,8 @@ module fp_sqrt_srt #(
           end
         end
       end
-      s_nxt  = CSW'($signed(sv) + $signed(cv));   // stage-boundary fold
-      c_nxt  = '0;
+      s_nxt  = (STAGE_FOLD != 0) ? CSW'(sv + cv) : sv;   // see STAGE_FOLD
+      c_nxt  = (STAGE_FOLD != 0) ? '0 : cv;
       q_nxt  = qv;
       qm_nxt = qmv;
     end
@@ -550,11 +595,13 @@ module fp_sqrt_srt #(
   end
 
   // ===================================================== correct / round
+  logic [CSW-1:0]        r_mod;
   logic signed [CSW+1:0] r_fin, r_corr;
   logic [QW-1:0]         q_fin;
   logic                  sticky;
   always_comb begin
-    r_fin  = (CSW+2)'($signed(s_st[NSTG])) + (CSW+2)'($signed(c_st[NSTG]));
+    r_mod  = s_st[NSTG] + c_st[NSTG];               // wraps: exact mod 2^CSW
+    r_fin  = (CSW+2)'($signed(r_mod));
     q_fin  = q_st[NSTG];
     r_corr = r_fin;
     sticky = (r_fin != 0) || ((PAD_SH != 0) && (q_st[NSTG][0] != 1'b0));
@@ -566,11 +613,55 @@ module fp_sqrt_srt #(
     end
   end
 
+  // Optional pipeline register after the final carry-save fold
+  // (FOLD_STG = 1, one more cycle of latency): splits the fold CPA + Q/QM
+  // selection from the rounding, which is needed below ~4.5 ns.
+  logic [QW-1:0]             q_f;
+  logic                      sticky_f;
+  logic [2:0]                rm_f;
+  logic signed [W_EXP+3:0]   er_f;
+  logic                      sp_f;
+  logic [W-1:0]              ysp_f;
+  logic [4:0]                fsp_f;
+  logic                      valid_f;
+  if (FOLD_STG != 0) begin : g_fold_reg
+    always_ff @(posedge clk) begin
+      if (!rst_n) begin
+        q_f      <= '0;
+        sticky_f <= 1'b0;
+        rm_f <= '0;
+        er_f <= '0;
+        sp_f <= '0;
+        ysp_f <= '0;
+        fsp_f <= '0;
+        valid_f <= '0;
+      end else begin
+        q_f      <= q_fin;
+        sticky_f <= sticky;
+        rm_f <= rm_st[NSTG];
+        er_f <= er_st[NSTG];
+        sp_f <= sp_st[NSTG];
+        ysp_f <= ysp_st[NSTG];
+        fsp_f <= fsp_st[NSTG];
+        valid_f <= valid_st[NSTG];
+      end
+    end
+  end else begin : g_fold_comb
+    assign q_f      = q_fin;
+    assign sticky_f = sticky;
+    assign rm_f = rm_st[NSTG];
+    assign er_f = er_st[NSTG];
+    assign sp_f = sp_st[NSTG];
+    assign ysp_f = ysp_st[NSTG];
+    assign fsp_f = fsp_st[NSTG];
+    assign valid_f = valid_st[NSTG];
+  end
+
   logic [FW-1:0] placed;
   logic          norm_sticky;
   always_comb begin
-    placed      = (PAD_SH != 0) ? FW'($signed(q_fin) >>> 1) : FW'(q_fin);
-    norm_sticky = sticky;
+    placed      = (PAD_SH != 0) ? FW'($signed(q_f) >>> 1) : FW'(q_f);
+    norm_sticky = sticky_f;
   end
 
   logic [S_W-1:0] sig;
@@ -589,7 +680,7 @@ module fp_sqrt_srt #(
     s_bit   = placed[0] | norm_sticky;
     lsb     = sig[0];
     inexact = g | r | s_bit;
-    case (rm_st[NSTG])
+    case (rm_f)
       fp_pkg::RM_RNE: round_up = g & (r | s_bit) | (g & ~r & ~s_bit & lsb);
       fp_pkg::RM_RNA: round_up = g;
       fp_pkg::RM_RZ:  round_up = 1'b0;
@@ -600,14 +691,14 @@ module fp_sqrt_srt #(
     carry = round_up && (sig == {S_W{1'b1}});
     if (carry) begin
       sig_rnd = {1'b1, {W_MANT{1'b0}}};
-      e_rnd   = er_st[NSTG] + 1;
+      e_rnd   = er_f + 1;
     end else begin
       sig_rnd = sig + { {S_W-1{1'b0}}, round_up };
-      e_rnd   = er_st[NSTG];
+      e_rnd   = er_f;
     end
     exp_fld = e_rnd[W_EXP-1:0] + BIAS[W_EXP-1:0];
     if ($signed(e_rnd) > EMAX_S) begin
-      case (rm_st[NSTG])
+      case (rm_f)
         fp_pkg::RM_RNE,
         fp_pkg::RM_RNA: y_normal = {1'b0, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
         fp_pkg::RM_RZ:  y_normal = {1'b0, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
@@ -630,7 +721,7 @@ module fp_sqrt_srt #(
     logic [S_W-1:0]     sig_s;
     logic               gs, rs, ss, inexact_s, up_s;
     logic [S_W-1:0]     sig_s2;
-    shift = int'(EMIN - int'(er_st[NSTG]));
+    shift = int'(EMIN - int'(er_f));
     if (shift > 0) shifted = placed >> shift;
     else           shifted = '0;
     sig_s  = shifted[TARGET -: S_W];
@@ -639,7 +730,7 @@ module fp_sqrt_srt #(
     ss     = shifted[0] | norm_sticky
            | |(placed & (((FW)'(1) << (shift > 0 ? shift : 0)) - 1));
     inexact_s = gs | rs | ss;
-    case (rm_st[NSTG])
+    case (rm_f)
       fp_pkg::RM_RNE: up_s = gs & (rs | ss) | (gs & ~rs & ~ss & sig_s[0]);
       fp_pkg::RM_RNA: up_s = gs;
       fp_pkg::RM_RZ:  up_s = 1'b0;
@@ -650,7 +741,7 @@ module fp_sqrt_srt #(
     sig_s2 = sig_s + { {S_W-1{1'b0}}, up_s };
     if (sig_s2 == {1'b1, {W_MANT{1'b0}}}) begin
       if (EMIN > EMAX) begin
-        case (rm_st[NSTG])
+        case (rm_f)
           fp_pkg::RM_RNE,
           fp_pkg::RM_RNA: y_sub = {1'b0, EXP_ALL[W_EXP-1:0], {W_MANT{1'b0}}};
           fp_pkg::RM_RZ:  y_sub = {1'b0, EXP_MAXF[W_EXP-1:0], {W_MANT{1'b1}}};
@@ -679,7 +770,7 @@ module fp_sqrt_srt #(
   logic [W-1:0] y_result;
   logic [4:0]   flags_result;
   always_comb begin
-    if ($signed(er_st[NSTG]) >= EMIN_S) begin
+    if ($signed(er_f) >= EMIN_S) begin
       y_result     = y_normal;
       flags_result = flags_normal;
     end else begin
@@ -694,9 +785,9 @@ module fp_sqrt_srt #(
       flags     <= 5'd0;
       out_valid <= 1'b0;
     end else begin
-      y     <= sp_st[NSTG] ? ysp_st[NSTG] : y_result;
-      flags <= sp_st[NSTG] ? fsp_st[NSTG] : flags_result;
-      out_valid <= valid_st[NSTG];
+      y     <= sp_f ? ysp_f : y_result;
+      flags <= sp_f ? fsp_f : flags_result;
+      out_valid <= valid_f;
     end
   end
 

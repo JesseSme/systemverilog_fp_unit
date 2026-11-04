@@ -37,17 +37,12 @@ from concurrent.futures import ProcessPoolExecutor
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from reference import gen, ops  # noqa: E402
-from reference.formats import BinFormat, encode_finite  # noqa: E402
+from reference.formats import NUM_OPS, BinFormat, encode_finite  # noqa: E402
+from rtl_files import rtl_paths  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-RTL = [os.path.join(ROOT, "rtl", f) for f in
-       ("fp_pkg.sv", "fp_add.sv", "fp_add_pipe.sv", "fp_add_e8m0.sv",
-        "fp_mul.sv", "fp_mul_core.sv", "fp_mul_pipe.sv", "fp_mul_e8m0.sv", "fp_div.sv", "fp_div_srt.sv", "fp_sqrt_srt.sv", "fp_div_e8m0.sv",
-        "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_divsqrt_iter.sv",
-        "fp_fma.sv", "fp_fma_pipe.sv", "fp_fma_e8m0.sv",
-        "fp_minmax.sv", "fp_minmax_pipe.sv", "fp_cmp.sv", "fp_cmp_pipe.sv", "fp_totalorder.sv", "fp_totalorder_pipe.sv", "fp_roundint.sv", "fp_roundint_pipe.sv",
-        "fp_roundint_e8m0.sv", "fp_unit.sv")]
+RTL = rtl_paths()
 REF = [os.path.join(HERE, "reference", f) for f in
        ("formats.py", "rounding.py", "ops.py", "gen.py")]
 HARNESS = os.path.join(HERE, "soak_main.cpp")
@@ -57,7 +52,12 @@ BUILD_DIR = os.path.join(ROOT, "soak_build")
 DEFAULT_WIDTHS = [(5, 10), (8, 7), (4, 3)]  # binary16, BF16, E4M3
 DEFAULT_VECTORS = 5_000_000
 
-N_OPS = 11  # add, sub, mul, div, sqrt, fma, min, max, cmp, rndint, totalorder
+N_OPS = NUM_OPS  # tests/reference/formats.py OP_NAMES
+
+
+def _suffix(impl: int) -> str:
+    """Build-dir/stamp suffix of a DIVSQRT_IMPL value (1 = default)."""
+    return "" if impl == 1 else ("_iter" if impl == 2 else f"_ds{impl}")
 
 
 def _stamp() -> str:
@@ -85,7 +85,8 @@ def _pack_fmt(opbytes: int) -> str:
     return {1: "B", 2: "H", 4: "I", 8: "Q"}[opbytes]
 
 
-def generate_expected(fmt: BinFormat, path: str, n: int, seed: int) -> None:
+def generate_expected(fmt: BinFormat, path: str, n: int, seed: int,
+                      ops_en: int = 0xFFFF) -> None:
     """Write n (a, b, y, flags, cmp, op, rm) records for a seeded stream."""
     rng = random.Random(seed)
     c = fma_c(fmt)
@@ -100,27 +101,7 @@ def generate_expected(fmt: BinFormat, path: str, n: int, seed: int) -> None:
             a, b = gen.pair_stream(rng, fmt, 1)[0]
             rm = rng.randrange(5)
             op = rng.randrange(N_OPS)
-            cmp = 0
-            if op == 2:
-                y, flags = ops.fp_mul(a, b, rm, fmt)
-            elif op == 3:
-                y, flags = ops.fp_div(a, b, rm, fmt)
-            elif op == 4:
-                y, flags = ops.fp_sqrt(a, rm, fmt)
-            elif op == 5:
-                y, flags = ops.fp_fma(a, b, c, rm, fmt)
-            elif op == 6:
-                y, flags = ops.fp_min(a, b, fmt)
-            elif op == 7:
-                y, flags = ops.fp_max(a, b, fmt)
-            elif op == 8:
-                y, cmp, flags = ops.fp_cmp(a, b, fmt)
-            elif op == 9:
-                y, flags = ops.fp_roundint(a, rm, fmt)
-            elif op == 10:
-                y, cmp, flags = ops.fp_totalorder(a, b, fmt)
-            else:
-                y, flags = ops.fp_add(a, b, rm, fmt, sub=(op == 1))
+            y, flags, cmp = ops.dispatch(op, a, b, c, rm, fmt, ops_en)
             f.write(rec.pack(a, b, y, flags, cmp, op, rm))
 
 
@@ -143,23 +124,24 @@ def _write_stamp(build_dir: str, name: str, val: str) -> None:
         f.write(val + "\n")
 
 
-def build(wexp: int, wmant: int, iter_mode: bool) -> str:
-    # Iterative mode gets its own build dir: the Verilator model differs
-    # (ITER_DIVSQRT=1), and sharing an Mdir would rebuild on every mode switch.
-    suffix = "_iter" if iter_mode else ""
+def build(wexp: int, wmant: int, iter_mode: int) -> str:
+    # Each div/sqrt implementation gets its own build dir (the Verilator
+    # model differs; sharing an Mdir would rebuild on every switch).
+    suffix = _suffix(iter_mode)
     build_dir = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}{suffix}")
     os.makedirs(build_dir, exist_ok=True)
     binary = os.path.join(build_dir, "fp_soak")
-    want = _stamp() + ("_iter" if iter_mode else "")
+    want = _stamp() + _suffix(iter_mode)
     if (os.path.exists(binary) and os.environ.get("FORCE_REBUILD", "0") != "1"
             and _read_stamp(build_dir, "binary.stamp") == want):
         return binary
     subprocess.check_call([
-        "verilator", "--cc", "--exe", "--build", "--timing",
+        "verilator", "--cc", "--exe", "--build", "--timing", "--assert",
         "--coverage", "--coverage-line", "--coverage-toggle",
         "--top-module", "fp_unit",
+        "-CFLAGS", f"-DNUM_OPS={N_OPS}",
         f"-GW_EXP={wexp}", f"-GW_MANT={wmant}",
-        *(["-GITER_DIVSQRT=1"] if iter_mode else []),
+        *([f"-GDIVSQRT_IMPL={iter_mode}"] if iter_mode != 1 else []),
         "--Mdir", build_dir, "--prefix", "Vfp_unit",
         "-o", "fp_soak",
         *RTL, HARNESS,
@@ -168,9 +150,9 @@ def build(wexp: int, wmant: int, iter_mode: bool) -> str:
     return binary
 
 
-def run(wexp: int, wmant: int, n: int, seed: int, keep: bool, iter_mode: bool) -> bool:
+def run(wexp: int, wmant: int, n: int, seed: int, keep: bool, iter_mode: int) -> bool:
     fmt = BinFormat(wexp, wmant)
-    suffix = "_iter" if iter_mode else ""
+    suffix = _suffix(iter_mode)
     build_dir = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}{suffix}")
     os.makedirs(build_dir, exist_ok=True)
     expected = os.path.join(build_dir, "expected.bin")
@@ -186,7 +168,7 @@ def run(wexp: int, wmant: int, n: int, seed: int, keep: bool, iter_mode: bool) -
     # The content stamp (RTL/reference/harness hash) also invalidates the
     # expected stream; n/seed above only cover the PRNG parameters. The
     # expected results do not depend on the build mode.
-    want = _stamp() + ("_iter" if iter_mode else "")
+    want = _stamp() + _suffix(iter_mode)
     if _read_stamp(build_dir, "expected.stamp") != want:
         stale = True
     if keep or stale:
@@ -197,13 +179,10 @@ def run(wexp: int, wmant: int, n: int, seed: int, keep: bool, iter_mode: bool) -
         _write_stamp(build_dir, "expected.stamp", want)
     binary = build(wexp, wmant, iter_mode)
     print(f"  running {binary} ...")
-    # Constant div/sqrt latency for the latency assertions (K+4 with
-    # K = ceil((W_MANT+3)/2) one-cycle digit steps; E8M0 never uses the
-    # iterative engine).
-    latency = 1 if wmant == 0 else (wmant + 3) // 2 + 4
+    # The harness asserts a constant latency per op on its own (first value
+    # seen); fp_unit's out_valid == resv[0] assertion ties it to fp_pkg.
     proc = subprocess.run([binary, expected, str(fmt.width), str(fma_c(fmt)),
-                           "1" if iter_mode else "0",
-                           str(latency) if iter_mode else "0"],
+                           str(iter_mode), "0"],
                           capture_output=True, text=True)
     sys.stderr.write(proc.stderr)
     return proc.returncode == 0
@@ -219,20 +198,25 @@ def main() -> int:
                     help="PRNG seed for the operand stream (default 0x50ac)")
     ap.add_argument("--keep", action="store_true",
                     help="keep previously generated expected files")
+    ap.add_argument("--divsqrt", type=int, choices=(0, 1, 2, 3), default=1,
+                    help="fp_unit DIVSQRT_IMPL: 1 SRT pipelines (default), "
+                         "2 iterative engine, 3 SRT 250 MHz form, 0 combinational reference")
     ap.add_argument("--iter", action="store_true",
-                    help="build with ITER_DIVSQRT=1 (iterative div/sqrt handshake)")
+                    help="shorthand for --divsqrt 2 (iterative div/sqrt engine)")
     ap.add_argument("--jobs", type=int, default=0,
                     help="widths to run concurrently (0 = auto: one per core)")
     args = ap.parse_args()
 
     widths = [tuple(args.width)] if args.width else DEFAULT_WIDTHS
-    mode = " (iterative div/sqrt)" if args.iter else ""
+    impl = 2 if args.iter else args.divsqrt
+    mode = {0: " (combinational div/sqrt)", 1: "", 2: " (iterative div/sqrt)",
+            3: " (SRT div/sqrt, 250 MHz form)"}[impl]
     for wexp, wmant in widths:
         print(f"=== soak W_EXP={wexp} W_MANT={wmant} ({args.vectors:,} vectors){mode} ===",
               flush=True)
 
     jobs = args.jobs if args.jobs > 0 else min(len(widths), os.cpu_count() or 1)
-    work = [(wexp, wmant, args.vectors, args.seed, args.keep, args.iter)
+    work = [(wexp, wmant, args.vectors, args.seed, args.keep, impl)
             for wexp, wmant in widths]
     if jobs > 1 and len(widths) > 1:
         with ProcessPoolExecutor(max_workers=jobs) as ex:

@@ -37,17 +37,26 @@ from reference.formats import (
     max_finite_bits,
 )
 
-OP_ADD = 0
-OP_SUB = 1
-OP_MUL = 2
-OP_DIV = 3
-OP_SQRT = 4
-OP_FMA = 5
-OP_MIN = 6
-OP_MAX = 7
-OP_CMP = 8
-OP_RNDINT = 9
-OP_TOTALORDER = 10
+from reference.formats import (  # noqa: E402  (op table: single source of truth)
+    NUM_OPS,
+    OP_ADD,
+    OP_CMP,
+    OP_DIV,
+    OP_FMA,
+    OP_MAX,
+    OP_MIN,
+    OP_MUL,
+    OP_NAMES,
+    OP_RNDINT,
+    OP_SQRT,
+    OP_SUB,
+    OP_TOTALORDER,
+    OP_SGNJ,
+    OP_CLASS,
+    OP_NEXT,
+    OP_MINMAXNUM,
+    OP_RNDINTX,
+)
 
 W_EXP = int(os.environ.get("FP_W_EXP", "8"))
 W_MANT = int(os.environ.get("FP_W_MANT", "23"))
@@ -93,9 +102,7 @@ async def check(dut, mode, rm, a, b, exp_y, exp_f, what, c=0, exp_cmp=0):
     cc = int(dut.cmp.value)
     if y != exp_y or f != exp_f or cc != exp_cmp:
         w = (W_EXP + W_MANT + 1) // 4 + 1
-        opname = {OP_ADD: "add", OP_SUB: "sub", OP_MUL: "mul", OP_DIV: "div",
-                  OP_SQRT: "sqrt", OP_FMA: "fma", OP_MIN: "min", OP_MAX: "max",
-                  OP_CMP: "cmp", OP_RNDINT: "rndint", OP_TOTALORDER: "totalorder"}[mode]
+        opname = OP_NAMES[mode] if mode < NUM_OPS else f"op{mode}"
         dut._log.error(
             "%s: mode=%s rm=%s a=%0*x b=%0*x: got y=%0*x flags=%s cmp=%d, "
             "want y=%0*x flags=%s cmp=%d",
@@ -751,6 +758,23 @@ def _directed_sqrt_vectors(fmt):
             (OP_SQRT, MODE_RP,  m2, 0, 0x3DA9, ine, "sqrt(2) (RP)"),
         ]
 
+    # --- fp_sqrt_srt digit +4 (all eight selection compares true): the 3-bit
+    # compare counter used to wrap to 0 and select digit -4 instead. Found by
+    # the SRT streaming differential (1 in 5M random binary64 / (10,40)
+    # radicands); expected values from the oracle and combinational fp_sqrt.
+    if fmt.W_EXP == 11 and fmt.W_MANT == 52:
+        v += [
+            (OP_SQRT, MODE_RNA, 0x00050DBA2071B53C, 0, 0x1FF1FBF51ACCCE3B, ine,
+             "sqrt digit +4 (subnormal radicand)"),
+            (OP_SQRT, MODE_RM, 0x3FF437FBCDB25049, 0, 0x3FF1FC6F8F4E463D, ine,
+             "sqrt digit +4 (fixed-width carry-save case)"),
+        ]
+    if fmt.W_EXP == 10 and fmt.W_MANT == 40:
+        v += [
+            (OP_SQRT, MODE_RZ, 0x1FD439966A0C6, 0, 0x1FE1FD262E3A0, ine,
+             "sqrt digit +4"),
+        ]
+
     # --- boundary: sqrt of min normal is exact (emin is even for W_EXP >= 2).
     v += [
         (OP_SQRT, MODE_RNE, minn, 0, encode_finite(0, fmt.emin // 2 + fmt.bias, 0, fmt), 0,
@@ -1268,32 +1292,12 @@ async def test_random_mixed(dut):
     rng = random.Random(SEED)
     for i in range(ITERS):
         a, b = gen.pair_stream(rng, FMT, 1)[0]
-        mode = rng.randrange(11)
+        mode = rng.randrange(NUM_OPS)
         rm = rng.randrange(5)
-        exp_c = 0
-        if mode == OP_MUL:
-            exp_y, exp_f = ops.fp_mul(a, b, rm, FMT)
-        elif mode == OP_DIV:
-            exp_y, exp_f = ops.fp_div(a, b, rm, FMT)
-        elif mode == OP_SQRT:
-            exp_y, exp_f = ops.fp_sqrt(a, rm, FMT)
-        elif mode == OP_FMA:
-            c = gen.operand(rng, FMT)
-            exp_y, exp_f = ops.fp_fma(a, b, c, rm, FMT)
-        elif mode == OP_MIN:
-            exp_y, exp_f = ops.fp_min(a, b, FMT)
-        elif mode == OP_MAX:
-            exp_y, exp_f = ops.fp_max(a, b, FMT)
-        elif mode == OP_CMP:
-            exp_y, exp_c, exp_f = ops.fp_cmp(a, b, FMT)
-        elif mode == OP_RNDINT:
-            exp_y, exp_f = ops.fp_roundint(a, rm, FMT)
-        elif mode == OP_TOTALORDER:
-            exp_y, exp_c, exp_f = ops.fp_totalorder(a, b, FMT)
-        else:
-            exp_y, exp_f = ops.fp_add(a, b, rm, FMT, sub=(mode == OP_SUB))
+        c = gen.operand(rng, FMT) if mode == OP_FMA else 0
+        exp_y, exp_f, exp_c = ops.dispatch(mode, a, b, c, rm, FMT)
         await check(dut, mode, rm, a, b, exp_y, exp_f, f"random[{i}]",
-                    c=c if mode == OP_FMA else 0, exp_cmp=exp_c)
+                    c=c, exp_cmp=exp_c)
 
 
 @cocotb.test()
@@ -1400,3 +1404,169 @@ async def test_boundary_stress(dut):
         rm = rng.randrange(5)
         exp_y, exp_f = ops.fp_add(a, b, rm, FMT, sub=(mode == OP_SUB))
         await check(dut, mode, rm, a, b, exp_y, exp_f, f"boundary[{i}]")
+
+
+@cocotb.test()
+async def test_reserved_encodings(dut):
+    """Reserved rounding modes 5-7 behave as RNE for every op; opcodes
+    NUM_OPS..15 return y = 0 with the invalid flag (README "Semantics")."""
+    rng = random.Random(SEED ^ 0x5E5)
+    for i in range(max(ITERS // 4, 20)):
+        a, b = gen.pair_stream(rng, FMT, 1)[0]
+        c = gen.operand(rng, FMT)
+        mode = rng.randrange(NUM_OPS)
+        rm = rng.randrange(5, 8)
+        exp_y, exp_f, exp_c = ops.dispatch(mode, a, b, c, rm, FMT)
+        await check(dut, mode, rm, a, b, exp_y, exp_f, f"reserved rm={rm} [{i}]",
+                    c=c, exp_cmp=exp_c)
+    for mode in range(NUM_OPS, 16):
+        for rm in (0, 4, 7):
+            a, b = gen.pair_stream(rng, FMT, 1)[0]
+            exp_y, exp_f, exp_c = ops.dispatch(mode, a, b, 0, rm, FMT)
+            await check(dut, mode, rm, a, b, exp_y, exp_f, f"reserved op={mode} rm={rm}",
+                        exp_cmp=exp_c)
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 operations: sign ops, class, nextUp/nextDown, minimumNumber family,
+# roundToIntegralExact. Expected values are written out by hand (not taken
+# from the oracle); the oracle is checked against the same lists in
+# tests/reference (dispatch) by test_phase3_oracle_agrees.
+
+INV = 1 << formats.FLAG_INVALID
+INX = 1 << formats.FLAG_INEXACT
+
+
+def _phase3_vectors(fmt):
+    """(mode, rm/sub, a, b, exp_y, exp_flags, note) for the new ops."""
+    W = fmt.width
+    S = 1 << (W - 1)
+    one = encode_finite(0, fmt.bias, 0, fmt)
+    two = encode_finite(0, fmt.bias + 1, 0, fmt)
+    pinf = encode_inf(0, fmt)
+    ninf = encode_inf(1, fmt)
+    maxf = max_finite_bits(0, fmt)
+    v = []
+    # --- OP_SGNJ (sub = rm): copy, negate, abs, copySign
+    v += [
+        (OP_SGNJ, 0, one, 0, one, 0, "copy(1)"),
+        (OP_SGNJ, 1, one, 0, one | S, 0, "negate(1)"),
+        (OP_SGNJ, 1, 0, 0, S, 0, "negate(+0) = -0"),
+        (OP_SGNJ, 2, one | S, 0, one, 0, "abs(-1)"),
+        (OP_SGNJ, 2, ninf, 0, pinf, 0, "abs(-inf)"),
+        (OP_SGNJ, 3, one, S, one | S, 0, "copySign(1, -0)"),
+        (OP_SGNJ, 3, one | S, two, one, 0, "copySign(-1, 2)"),
+        (OP_SGNJ, 4, two | S, 0, two | S, 0, "sub 4 = copy"),
+    ]
+    # --- OP_CLASS
+    v += [
+        (OP_CLASS, 0, ninf, 0, 2, 0, "class(-inf)"),
+        (OP_CLASS, 0, one | S, 0, 3, 0, "class(-1)"),
+        (OP_CLASS, 0, S, 0, 5, 0, "class(-0)"),
+        (OP_CLASS, 0, 0, 0, 6, 0, "class(+0)"),
+        (OP_CLASS, 0, one, 0, 8, 0, "class(+1)"),
+        (OP_CLASS, 0, pinf, 0, 9, 0, "class(+inf)"),
+    ]
+    # --- OP_NEXT (sub 0 nextUp, 1 nextDown)
+    minpos = 1  # least positive encoding (min subnormal; 2^emin for E8M0)
+    v += [
+        (OP_NEXT, 0, 0, 0, minpos, 0, "nextUp(+0)"),
+        (OP_NEXT, 0, S, 0, minpos, 0, "nextUp(-0)"),
+        (OP_NEXT, 0, S | minpos, 0, S, 0, "nextUp(-minpos) = -0"),
+        (OP_NEXT, 0, maxf, 0, pinf, 0, "nextUp(max) = +inf (no flags)"),
+        (OP_NEXT, 0, pinf, 0, pinf, 0, "nextUp(+inf)"),
+        (OP_NEXT, 0, ninf, 0, maxf | S, 0, "nextUp(-inf) = -max"),
+        (OP_NEXT, 0, one, 0, one + 1, 0, "nextUp(1)"),
+        (OP_NEXT, 1, one, 0, one - 1, 0, "nextDown(1)"),
+        (OP_NEXT, 1, 0, 0, S | minpos, 0, "nextDown(+0) = -minpos"),
+        (OP_NEXT, 1, minpos, 0, 0, 0, "nextDown(minpos) = +0"),
+        (OP_NEXT, 1, pinf, 0, maxf, 0, "nextDown(+inf) = max"),
+        (OP_NEXT, 1, ninf, 0, ninf, 0, "nextDown(-inf)"),
+    ]
+    # --- OP_MINMAXNUM (sub 0 minNum, 1 maxNum, 2 minMagNum, 3 maxMagNum)
+    v += [
+        (OP_MINMAXNUM, 0, one, two, one, 0, "minimumNumber(1,2)"),
+        (OP_MINMAXNUM, 1, one, two, two, 0, "maximumNumber(1,2)"),
+        (OP_MINMAXNUM, 0, S, 0, S, 0, "minimumNumber(-0,+0) = -0"),
+        (OP_MINMAXNUM, 1, S, 0, 0, 0, "maximumNumber(-0,+0) = +0"),
+        (OP_MINMAXNUM, 2, two | S, one, one, 0, "minimumMagnitudeNumber(-2,1) = 1"),
+        (OP_MINMAXNUM, 3, two | S, one, two | S, 0, "maximumMagnitudeNumber(-2,1) = -2"),
+        (OP_MINMAXNUM, 2, one | S, one, one | S, 0, "minMagNum(-1,1) tie -> -1"),
+        (OP_MINMAXNUM, 3, one | S, one, one, 0, "maxMagNum(-1,1) tie -> 1"),
+        (OP_MINMAXNUM, 0, ninf, one, ninf, 0, "minimumNumber(-inf,1)"),
+    ]
+    # --- OP_RNDINTX (rm = rounding mode)
+    v += [
+        (OP_RNDINTX, MODE_RNE, two, 0, two, 0, "rndintx(2) exact"),
+        (OP_RNDINTX, MODE_RNE, pinf, 0, pinf, 0, "rndintx(+inf) no flags"),
+        (OP_RNDINTX, MODE_RNE, S, 0, S, 0, "rndintx(-0)"),
+    ]
+    if fmt.W_MANT > 0:
+        qnan = encode_nan(1, fmt) if fmt.W_MANT > 1 else encode_nan(0, fmt)
+        snan = (((1 << fmt.W_EXP) - 1) << fmt.W_MANT) | 1 if fmt.W_MANT > 1 else None
+        qnan_canon = encode_nan(0, fmt)
+        half = encode_finite(0, fmt.bias - 1, 0, fmt)
+        quarter = encode_finite(0, fmt.bias - 2, 0, fmt)
+        onehalf = encode_finite(0, fmt.bias, 1 << (fmt.W_MANT - 1), fmt)
+        v += [
+            (OP_SGNJ, 1, qnan, 0, qnan | S, 0, "negate(qNaN): sign only, quiet"),
+            (OP_SGNJ, 2, qnan | S, 0, qnan, 0, "abs(-qNaN)"),
+            (OP_CLASS, 0, qnan, 0, 1, 0, "class(qNaN)"),
+            (OP_CLASS, 0, qnan | S, 0, 1, 0, "class(-qNaN)"),
+            (OP_CLASS, 0, 1, 0, 7, 0, "class(+min subnormal)"),
+            (OP_CLASS, 0, S | 1, 0, 4, 0, "class(-min subnormal)"),
+            (OP_NEXT, 0, qnan | S, 0, qnan, 0, "nextUp(-qNaN) = +qNaN"),
+            (OP_MINMAXNUM, 0, qnan, one, one, 0, "minimumNumber(qNaN,1) = 1"),
+            (OP_MINMAXNUM, 1, two, qnan, two, 0, "maximumNumber(2,qNaN) = 2"),
+            (OP_MINMAXNUM, 0, qnan, qnan_canon | S, qnan, 0, "both NaN -> first, quiet, +"),
+            (OP_RNDINTX, MODE_RNE, onehalf, 0, two, INX, "rndintx(1.5) RNE = 2, inexact"),
+            (OP_RNDINTX, MODE_RZ, onehalf, 0, one, INX, "rndintx(1.5) RZ = 1, inexact"),
+            (OP_RNDINTX, MODE_RNE, quarter, 0, 0, INX, "rndintx(0.25) = +0, inexact"),
+            (OP_RNDINTX, MODE_RNE, half | S, 0, S, INX, "rndintx(-0.5) RNE = -0, inexact"),
+            (OP_RNDINTX, MODE_RNA, half | S, 0, one | S, INX, "rndintx(-0.5) RNA = -1"),
+            (OP_RNDINT, MODE_RNE, onehalf, 0, two, 0, "rndint(1.5) never inexact"),
+        ]
+        if snan is not None:
+            v += [
+                (OP_SGNJ, 1, snan, 0, snan | S, 0, "negate(sNaN): no signal, not quieted"),
+                (OP_CLASS, 0, snan, 0, 0, 0, "class(sNaN) quiet"),
+                (OP_NEXT, 0, snan, 0, snan | QBIT(fmt), INV, "nextUp(sNaN) quieted, invalid"),
+                (OP_MINMAXNUM, 0, snan, one, one, INV, "minimumNumber(sNaN,1) = 1, invalid"),
+                (OP_MINMAXNUM, 1, one, snan, one, INV, "maximumNumber(1,sNaN) = 1, invalid"),
+                (OP_RNDINTX, MODE_RNE, snan | S, 0, snan | S | QBIT(fmt), INV,
+                 "rndintx(-sNaN) quieted, sign kept, invalid"),
+            ]
+    return v
+
+
+def QBIT(fmt):
+    return 1 << (fmt.W_MANT - 1)
+
+
+@cocotb.test()
+async def test_directed_phase3(dut):
+    for mode, rm, a, b, exp_y, exp_f, note in _phase3_vectors(FMT):
+        await check(dut, mode, rm, a, b, exp_y, exp_f, f"directed {OP_NAMES[mode]}: {note}")
+
+
+@cocotb.test()
+async def test_phase3_oracle_agrees(dut):
+    """The oracle must agree with every hand-written vector (guards the
+    reference itself); no DUT involvement."""
+    for mode, rm, a, b, exp_y, exp_f, note in _phase3_vectors(FMT):
+        y, f, _c = ops.dispatch(mode, a, b, 0, rm, FMT)
+        assert (y, f) == (exp_y, exp_f), (
+            f"oracle {OP_NAMES[mode]} {note}: got ({y:#x},{f:#x}) want ({exp_y:#x},{exp_f:#x})")
+
+
+@cocotb.test()
+async def test_phase3_random(dut):
+    rng = random.Random(SEED ^ 0x3333)
+    new_ops = (OP_SGNJ, OP_CLASS, OP_NEXT, OP_MINMAXNUM, OP_RNDINTX)
+    for i in range(ITERS * 2):
+        a, b = gen.pair_stream(rng, FMT, 1)[0]
+        mode = rng.choice(new_ops)
+        rm = rng.randrange(8)
+        exp_y, exp_f, exp_c = ops.dispatch(mode, a, b, 0, rm, FMT)
+        await check(dut, mode, rm, a, b, exp_y, exp_f,
+                    f"random {OP_NAMES[mode]}[{i}] rm={rm}", exp_cmp=exp_c)

@@ -95,7 +95,7 @@ trees are gitignored.
 ### roundToIntegral, totalOrder)
 
 - **Operation**: addition, subtraction, multiplication, division, square root,
-  fused multiply-add, minimum/maximum (5.4.1, 5.6.1), quiet comparison (5.11),
+  fused multiply-add, minimum/maximum (754-2019 9.6), quiet comparison (5.11),
   roundToIntegral (5.9) and the totalOrder predicate (5.10). `OP_SUB` is
   `OP_ADD` with the second operand's effective sign flipped. `op_t` is now a
   4-bit enum: `OP_ADD`/`OP_SUB`/`OP_MUL`/`OP_DIV`/`OP_SQRT`/`OP_FMA`/`OP_MIN`/
@@ -120,7 +120,7 @@ trees are gitignored.
   mul/fma; 7.2f inf/inf and 0/0 → invalid for div; 7.2g sqrt of a negative
   number → invalid), ±0 with clause 6.3 sign rules (products/quotients use
   the XOR sign; sqrt(±0) = ±0; minimum(-0,+0) = -0 and maximum(-0,+0) = +0
-  per 5.6.1).
+  per 754-2019 9.6).
 - **FMA** (5.4.1): (a × b) + c computed in a wide accumulator (3p+6 bits)
   that holds the exact sum with a single GRS rounding — no double rounding.
 - **Division by zero** (7.3): finite-nonzero / 0 → ±inf with `FLAG_DIV0`.
@@ -153,10 +153,9 @@ trees are gitignored.
 
 ### Missing (future milestones)
 
-- **Microarchitecture**: the datapath is combinational (single `always_comb`
-  block, no clock/pipeline). Pipelining, a clocked register interface, and a
-  wider opcode space (`op_t` is now 4 bits with 5 values free) would be needed
-  for more operations and higher throughput.
+- **Microarchitecture**: (superseded) the unit is now fully pipelined with
+  fixed per-op latencies; see the optimization-pass notes below and
+  IMPROVEMENT_PLAN.md for the remaining interface work.
 
 ## What works (regression-verified)
 
@@ -240,6 +239,22 @@ exhaustive sweep's reach):
 `make formal` runs all eight (needs the oss-cad-suite `sby`/`yosys`). The
 harness was validated against a deliberately false property (it reports FAIL
 with a counterexample), so the passes are not vacuous.
+
+**Pipeline equivalence** (`make formal-equiv`, `formal/fp_pipe_equiv.sv`):
+`fp_add_pipe` / `fp_mul_pipe` against the combinational `fp_add` / `fp_mul`
+on the same free a/b/rm/op stream (start free every cycle), reference
+delayed by the latency, BMC depth latency + 2 (reset, issue, drain).
+
+| Config | Width | Result (bitwuzla) |
+|--------|-------|-------------------|
+| `bmc_equiv_add_e4m3.sby` / `bmc_equiv_mul_e4m3.sby` | (4,3) | PASS, < 1 s |
+| `bmc_equiv_add_bf16.sby` / `bmc_equiv_mul_bf16.sby` | (8,7) | PASS, 4 s / 14 s |
+| `bmc_equiv_add_b16.sby` | (5,10) | PASS, 10 s |
+| `bmc_equiv_mul_b16.sby` | (5,10) | PASS, 12-13 min |
+
+Validated with RTL mutants (a one-bit output flip for one result value in
+`fp_add_pipe`, at E4M3 and binary16): both FAIL at step 4 with a
+counterexample.
 
 > **Arithmetic-op proofs unblocked (item 3).** The arithmetic and division
 > laws now PROVE at the 8-bit widths (and division at binary16). The earlier
@@ -619,11 +634,32 @@ The regression is now fast (~1 s for the full 8-width matrix at
 - **Coverage and formal depth**: Verilator line/toggle coverage is collected
   by `make coverage`, which runs a 1M-vector soak at the medium widths plus an
   E8M0 soak and the full exhaustive all-8-bit-format sweep, then merges and
-  annotates every module. Combined line coverage is ~88%; the E8M0 datapaths
-  (`fp_*_e8m0`) are covered at 85-98%. The remaining gaps are defensive /
-  constant-generate paths unreachable even by the exhaustive sweep (e.g. the
-  `W_MANT > 0` guard inside the generic datapaths, which is always true when
-  they are instantiated). The formal suite runs 8 configs; the arithmetic laws
+  annotates every module. Refreshed 2026-11-04 (plan P4.4) after Phases 0-4,
+  from the default and `DIVSQRT_IMPL=3` soak (binary16, BF16, E4M3, E8M0,
+  binary64) and exhaustive builds plus the iterative-engine (`--iter`)
+  exhaustive and soak, merged from fresh runs only. Line coverage (lines
+  hit at least once, from `coverage.info`):
+
+  | module | lines | % | module | lines | % |
+  |--------|------:|--:|--------|------:|--:|
+  | fp_add_pipe | 332/349 | 95.1 | fp_mul_pipe | 289/314 | 92.0 |
+  | fp_mul_core | 78/85 | 91.8 | fp_fma_pipe | 474/553 | 85.7 |
+  | fp_div_srt | 363/403 | 90.1 | fp_sqrt_srt | 504/573 | 88.0 |
+  | fp_divsqrt_iter | 318/348 | 91.4 | fp_roundint_pipe | 127/144 | 88.2 |
+  | fp_misc_pipe | 98/100 | 98.0 | fp_minmax_pipe | 58/59 | 98.3 |
+  | fp_cmp_pipe | 62/66 | 93.9 | fp_totalorder_pipe | 18/23 | 78.3 |
+  | fp_unit | 94/101 | 93.1 | fp_*_e8m0 (6 modules) | 453/474 | 91.5-98.3 |
+  | **total** | **3268/3592** | **91.0** | | | |
+
+  (`verilator_coverage --annotate` reports 62 % because it counts a point as
+  covered only at >= 10 hits and includes toggle points.) The remaining
+  gaps are mostly defensive / constant-generate paths unreachable even by
+  the exhaustive sweep (e.g. the `W_MANT > 0` guard inside the generic
+  datapaths, which is always true when they are instantiated, and the
+  DPS/FOLD_STG/STAGE_FOLD branches a given build does not select).
+  `make coverage` now deletes old `coverage.dat` files first: merging data
+  from build directories it does not rerun (e.g. `*_iter`) mixed in stale
+  line numbers (an unfiltered merge today read 84.9 %). The formal suite runs 8 configs; the arithmetic laws
   at binary16 (2^32 pairs, fma wide accumulator) remain too heavy for the SMT
   solver to close in reasonable time.
 
@@ -649,7 +685,7 @@ optimization captures `metrics/area-after*.json` and diffs with
 - Landed: the engine is radix-4 (two quotient/root bits per cycle) with the
   top digit precomputed in the start cycle and a radix-2 half-step for odd
   W_MANT. The div/sqrt latency is CONSTANT for every input, including special
-  cases: K+1 cycles with K = ceil((W_MANT+3)/2) (binary32: 14, binary64: 28,
+  cases: K+1 cycles with K = floor((W_MANT+3)/2) (binary32: 14, binary64: 28,
   vs 52/29 and 110/58 before). The fp_unit output register is bypassed for
   engine results and the engine accepts a new start in the done cycle, so
   back-to-back div/sqrt have no dead cycle. The `--iter` harnesses now assert
@@ -670,7 +706,7 @@ optimization captures `metrics/area-after*.json` and diffs with
   fp_minmax_pipe, fp_cmp_pipe, fp_totalorder_pipe; fp_divsqrt_iter now runs
   two cycles per radix-4 digit step with a two-phase preload; fp_unit is a
   per-op start/out_valid dispatcher. Measured with the single non-project
-  Vivado run (/tmp/opencode/vivado/impl.tcl, `synth_design -mode
+  Vivado run (now `syn/vivado-impl.tcl`, `synth_design -mode
   out_of_context` + place/route on a 4.000 ns clock): WNS +0.022 ns, 0
   failing endpoints, 6994 LUTs, 2625 FFs, 0 DSPs. The harnesses assert
   constant per-op latency on every vector; fp_exp_seq was re-sequenced to
@@ -698,13 +734,13 @@ optimization captures `metrics/area-after*.json` and diffs with
     rounding increment, exponent and overflow candidates are computed in
     parallel with the GRS decision (carry-select). All three stages land at
     <= 3.85 ns, so the add pipe is no longer the critical path.
-  * mul 5 -> 4 (W <= 32): fp_mul_core uses 2 stages for W <= 32 (the final
+  * mul 5 -> 4 (significand width S_W = W_MANT+1 <= 32): fp_mul_core uses 2 stages for S_W <= 32 (the final
     carry-propagate level is folded into the last tree stage) and keeps 3 for
     binary64; FMA inherits the shorter core (8 cycles for W <= 32, 9 for
     binary64).
   * div/sqrt: one radix-4 digit per cycle (the digit-select compare, the
     multiple mux and the remainder subtraction are fused into one registered
-    step) plus a publish cycle: latency K+4 with K = ceil((W_MANT+3)/2)
+    step) plus a publish cycle: latency K+4 with K = floor((W_MANT+3)/2)
     (binary32 29 -> 17, binary64 57 -> 31). The restoring recurrence is
     unchanged, so bit-exactness is structural. The publish cycle rounds the
     *registered* quotient/root and remainder: reading the step's next-state
@@ -755,11 +791,12 @@ optimization captures `metrics/area-after*.json` and diffs with
     - FMA F1+F2 merge with product-MSB anticipation (pbitlen =
       bl_a+bl_b-1+P[bl_a+bl_b-1] => prod_top = e_a+e_b+msb): -0.866 ns, 308
       failing endpoints (patch archived at
-      /tmp/opencode/a3-f1f2-merge-attempt.patch).
+      /tmp/opencode/a3-f1f2-merge-attempt.patch; no longer available).
     - div/sqrt publish folded into the last step, and the preload merged into
       the start cycle (K+1): functionally correct (exhaustive/soak PASS) but
       -0.674 ns.
-  * New scratch harnesses (/tmp/opencode/fma_diff): differential vs the
+  * New scratch harnesses (/tmp/opencode/fma_diff, lost; superseded by
+    the fp_unit-level streaming test `tests/stream.py`): differential vs the
     combinational fp_fma (one-at-a-time: 2M x 6 formats plus 30M at binary32
     and 10M at binary64 across seeds) and streaming (one start per cycle with
     FIFO-tracked operands); both 0 mismatches. Worth promoting into tests/.
@@ -771,10 +808,10 @@ optimization captures `metrics/area-after*.json` and diffs with
   4 (E4M3, E5M2); sqrt 15 / 29 / 8 / 7 / 5 / 4. This required relaxing the
   operating clock from 4.000 ns to 5.600 ns (178.6 MHz); the previously
   instantiated `fp_divsqrt_iter` (K+3) and the legacy combinational
-  `fp_div`/`fp_sqrt` remain in-tree for reference and `ITER_DIVSQRT = 0`. Latencies: div 17 -> 9 (binary32), 31 -> 17 (binary64),
-  10 -> 6 (binary16), 9 -> 5 (BF16), 7 -> 4 (E4M3), 6 -> 4 (E5M2); sqrt
-  17 -> 9 (binary32), 31 -> 16 (binary64), 10 -> 5 (binary16), 9 -> 5 (BF16),
-  7 -> 4, 6 -> 3. `fp_unit` now runs both on SRT pipelines for generic
+  `fp_div`/`fp_sqrt` remain in-tree for reference and `ITER_DIVSQRT = 0`.
+  (The measured latencies above are authoritative; an earlier draft of this
+  note listed sqrt 9/16/5/5/4/3 from a 2-digit/stage experiment that was not
+  landed.) `fp_unit` now runs both on SRT pipelines for generic
   formats (`ITER_DIVSQRT != 0`); `fp_divsqrt_iter` is no longer instantiated
   (kept in-tree for reference/fallback), the legacy combinational
   `fp_div`/`fp_sqrt` remain for `ITER_DIVSQRT = 0` and formal.
@@ -798,7 +835,7 @@ optimization captures `metrics/area-after*.json` and diffs with
     300k vectors each (0 mismatches, plus 1M at binary32); exhaustive-iter
     and soak-iter; the QST/sqrt tables were derived by exhaustive interval
     analysis and the recurrences validated bit-exactly in Python
-    (/tmp/opencode/srt: div_cs_model.py, sqrt_rtl_model.py).
+    (now `verification/srt/div_model.py`, `sqrt_model.py`).
   * Gotchas found: (a) the setup block must not reset the stage registers
     (multi-driven in synthesis - the divider was silently pruned);
     (b) signed casts are needed around all digit arithmetic (unsigned size
@@ -856,15 +893,15 @@ optimization captures `metrics/area-after*.json` and diffs with
 | `rtl/fp_pkg.sv` | `OP_FMA = 3'd5`, `OP_MIN = 3'd6`, `OP_MAX = 3'd7` added to `op_t` (fills the 3-bit space) |
 | `rtl/fp_fma.sv` | **New**: generic fused multiply-add (3p+6-bit exact-sum accumulator anchored at the larger leading exponent, operand tails below bit 0 captured as sticky, single GRS rounding; bugs 20) |
 | `rtl/fp_fma_e8m0.sv` | **New**: E8M0 FMA (2^(e_a+e_b) + 2^e_c with the fp_add_e8m0 p=1 rules plus c=0 and tiny 0/2^emin handling) |
-| `rtl/fp_minmax.sv` | **New**: generic minimum/maximum (NaN propagation, -0/+0 rule per 5.6.1, no rounding; format-generic, no E8M0 split) |
+| `rtl/fp_minmax.sv` | **New**: generic minimum/maximum (NaN propagation, -0/+0 rule per 9.6, no rounding; format-generic, no E8M0 split) |
 | `rtl/fp_unit.sv` | Add `c` input port; instantiate `fp_fma`/`fp_fma_e8m0` and `fp_minmax`; mux on OP_FMA/OP_MIN/OP_MAX |
-| `tests/reference/ops.py` | `fp_fma` (3-operand specials incl. 7.2e/7.2d, exact `a*b+c`), `fp_min`/`fp_max` (5.6.1, tuple ordering keys) |
+| `tests/reference/ops.py` | `fp_fma` (3-operand specials incl. 7.2e/7.2d, exact `a*b+c`), `fp_min`/`fp_max` (9.6, tuple ordering keys) |
 | `tests/test_fp_unit.py` | `OP_FMA/MIN/MAX`; `check()` drives `c`; `_directed_fma_vectors`/`_directed_minmax_vectors` + `test_directed_fma`/`test_directed_minmax`; `test_fma_random`/`test_minmax_random`; `test_random_mixed` dispatches all 8 ops |
 | `tests/run_regression.py` | RTL list adds `fp_fma.sv`, `fp_fma_e8m0.sv`, `fp_minmax.sv` |
 | `tests/exhaustive.py` | RTL list adds the fma/minmax files; expected generation loops over op ∈ {0..7}; FMA uses a fixed per-format `c` |
 | `tests/exhaustive_main.cpp` | op loop 0..7; vector count 8·5·A·A; drives `top->c` from a CLI argument |
 | `Makefile` | lint targets include `fp_fma.sv`/`fp_fma_e8m0.sv`/`fp_minmax.sv` |
-| `README.md` | Document FMA (single rounding, c port) and min/max (5.6.1) semantics |
+| `README.md` | Document FMA (single rounding, c port) and min/max (9.6) semantics |
 | `HANDOFF.md` | This document |
 
 ## File-level change summary (M6: comparisons, roundToIntegral, totalOrder,
@@ -904,3 +941,44 @@ vs. M5 FMA + min/max)
 | `.gitignore` | Ignore `soak_build/` and the sby `bmc_*_bmc/` work dirs |
 | `README.md` | Document the soak and formal targets |
 | `HANDOFF.md` | This document |
+
+## Change summary (IMPROVEMENT_PLAN.md, branch improve/plan, 2026-11-03)
+
+| Task | Change |
+|------|--------|
+| T0.1 | `rtl/filelist.f` / `filelist_wrappers.f` are the only RTL lists (`tests/rtl_files.py`, Makefile `$(RTL)`, `syn/`); `tests/reference/formats.py` owns the op table (`OP_*`, `OP_NAMES`, `NUM_OPS`); `ops.dispatch()` is the single op -> oracle map; C++ harnesses take `-DNUM_OPS` |
+| T0.2 | README/HANDOFF stale statements fixed (pipelined, formal status, 9.6 citations, SRT sqrt latencies, lost /tmp paths) |
+| T0.3 | `syn/fp_unit_timing.sv` + `syn/vivado-impl.tcl` (`make vivado`) replace the old script whose wrapper lived in /tmp |
+| T0.4 | AI-session transcripts no longer versioned |
+| T1.1 | **fp_unit `in_ready` + `in_tag`/`out_tag` + result-port reservation**: two in-flight ops finishing in the same cycle used to lose one result silently. Latencies come from `fp_pkg::lat_*`; simulation asserts `out_valid == resv[0]` and one-hot pipeline valids |
+| T1.2 | `tests/stream.py` (`make stream`): request every cycle, results matched by tag; same-op (every pipeline streams, 0 stalls) and mixed-op modes |
+| T1.3 | `fp32_to_bf16_round` no longer turns NaNs whose payload is in the low 16 bits into Inf, and quiets sNaN; exhaustive 2^32 test (`make bf16`) |
+| T1.4 | `fp_exp_seq` tested (`make regress-exp`); real accuracy documented (~45 ulp for abs(x) <= 8, ~1.3k ulp near 16, not the claimed 1e-6) |
+| T1.5 | rm 5-7 behave as RNE everywhere; reserved/disabled opcodes return y = 0 + invalid |
+| T2.1 | `ITER_DIVSQRT` replaced by `DIVSQRT_IMPL` (1 SRT default, 2 iterative engine = the 250 MHz build, 0 combinational); iterative latency is floor((W_MANT+3)/2)+3 (the engine header said ceil); `--divsqrt`/`--iter` harness flags, `*-iter` make targets test the iterative engine |
+| T2.2 | `OPS_EN` op-enable mask; `fp_exp_seq` builds only MUL and ADD/SUB |
+| Phase 3 | New ops filling codes 11-15: OP_SGNJ (5.5.1), OP_CLASS (5.7.2), OP_NEXT (5.3.1), OP_MINMAXNUM (9.6), OP_RNDINTX (roundToIntegralExact). `rtl/fp_misc_pipe.sv` (1 cycle, format-generic incl. E8M0); `fp_roundint_pipe`/`fp_roundint_e8m0` gain an `exact` input. Oracles checked against brute-force enumeration on every 8-bit format; hand-written directed vectors; exhaustive sweep now 16 ops |
+| fp_pkg | Package functions assign their name instead of `return` (yosys 0.68, used by `make formal`, cannot parse `return`) |
+
+## Change summary (Phase 3.3 + Phase 4, branch improve/plan, 2026-11-04)
+
+| Task | Change |
+|------|--------|
+| Vivado | Re-measured with Vivado 2026.1.1 (`/media/lfs/2026.1.1`), xcvu9p-2L, binary32, before the Phase 4 changes: `DIVSQRT_IMPL=1` 5.6 ns WNS +0.056, 13,488 LUTs; `=2` 4.0 ns +0.066, 7,368 LUTs. The Phase 0-3 interface work cost no Fmax |
+| P4.1 | **Fixed-width carry-save SRT** (`fp_div_srt`, `fp_sqrt_srt`): S, C modulo 2^CSW (div S_W+4, sqrt 2*NDIG+5) instead of a carry-propagate fold at every stage (models first: `verification/srt/*_model.py`, exhaustive at small widths). Sqrt's `bits - d(8q+d)` (three chained CPAs) became two 3:2 levels using {q, d} / {qm, 8-abs(d)}; its threshold arithmetic is 6-bit / 13-bit (ranges checked in the model). New parameters `STAGE_FOLD`, `FOLD_STG`; the div round stage takes precomputed exponent decisions. New **`DIVSQRT_IMPL=3`** (DPS 1, FOLD_STG): fully pipelined div/sqrt at **4.0 ns** (+0.001, 13,368 LUTs), div 17 / sqrt 16 cycles at binary32. The default `=1` improves to +0.131 ns at 5.6 ns with 12,656 LUTs (-830) |
+| sqrt bug | `fp_sqrt_srt` `thr_digit`: the compare counter was 3 bits, so all 8 compares true (digit +4) wrapped to digit -4. Found by the SRT differential at DPS=2 (1 in 5M binary64 / (10,40) radicands on the old RTL); not reached through the old `fp_unit` (sqrt DPS 1 with a fold per digit gives an exact estimate), but reachable once the fold is removed. Fixed (4-bit counter); directed binary64 / (10,40) vectors in `test_directed_sqrt` (they fail with the old counter on the new RTL) |
+| P4.3 | Formal equivalence add/mul pipe vs combinational reference (table above), `make formal-equiv` |
+| P4.2 | Not attempted: every `fp_add_pipe` stage is near the clock (S1 alone +0.279 ns at 5.6 ns, +0.016 at 4.0), so a 2-cycle add needs a dual-path (near/far) adder with LZA, a full redesign rather than a stage merge. Ask the owner whether it is worth it (add 3 -> 2 cycles) |
+| 3.3 | Design notes in `docs/proposals/` (signaling compare, integer and format conversions, scaleB/logB, remainder) with the shared 5-bit opcode decision; nothing implemented |
+| tools | `syn/vivado-module.tcl` (one module OOC); `vivado-impl.tcl` writes the routed checkpoint and a hierarchical utilization; `run_diff.py --param`; `make check-ds3`; harnesses accept `--divsqrt 3` / `FP_DIVSQRT_IMPL=3` |
+
+## Change summary (Verilog/VHDL tops + core documentation, 2026-11-04)
+
+| Item | Change |
+|------|--------|
+| tops | `rtl/top/`: `fp_unit_top.v` and `fp_unit_axilite_top.v` (Verilog-2001, integer parameters, X_INTERFACE attributes for clock/reset/S_AXI), `fp_unit_vhd.vhd` and `fp_unit_axilite_vhd.vhd` (VHDL-93, integer generics, instantiate the Verilog tops), `fp_unit_flat.sv` (casts plain vectors to fp_unit's enum ports; `OPS_EN` as an integer). Lists: `filelist_wrappers.f`, new `filelist_vhdl.f` |
+| AXI bug 1 | `fp_unit_axilite`: in W_RESP/R_DATA the slave set BVALID/RVALID and cleared it again in the same cycle when BREADY/RREADY was already high, so a master that raises READY before VALID (legal, AXI A3.3.1) never saw a response and hung. BVALID/RVALID are now set on the handshake and held until READY; read data/response are registered at the AR handshake (stable while RVALID waits). New cocotb `test_ready_before_valid` (fails on the old RTL) |
+| AXI bug 2 (xsim only) | Vivado xsim 2026.1.1 leaves a signal that a called function uses only as a part-select index (`rd_wide(v, w)`: `padded[w*32 +: 32]`) out of the `always_comb` sensitivity, so reading a wide register's high word right after its low word returned the low word in xsim (binary64 AXI). The word selects are now continuous assignments. No other function in the RTL indexes by an argument. Synthesis and Verilator were never affected |
+| tests | cocotb suites through the Verilog tops (`make regress-tops`, 24/24 and 3/3 at all 8 widths); `tests/vivado/` xsim testbenches run the Verilog and VHDL tops side by side against the oracle (`make xsim-tops`: streaming with backpressure and out-of-order tags at binary32 x3 DIVSQRT_IMPL, binary16, binary64, W_MANT=0 and an OPS_EN subset; AXI at binary32, E4M3, binary64) |
+| Vivado | `syn/vivado-top.tcl` (implementation with a top as the design top: `fp_unit_vhd` binary32 5.6 ns +0.109, `DIVSQRT_IMPL=3` 4.0 ns +0.031; `fp_unit_axilite_vhd` 5.6 ns +0.060; `fp_unit_top` binary16 OPS_EN 0x27 +1.288) and `syn/vivado-bd-check.tcl` (module references in a block design: AXI tops show one AXI4-Lite S_AXI with its clock and active-low reset, parameters propagate; PASS). The AXI X_INTERFACE VLNV is `xilinx.com:interface:aximm:1.0` |
+| docs | `docs/fp_unit_core.md`: user guide (parameters, ports, handshake, latency, opcodes, flags, formats incl. the IEEE-style E4M3/E5M2 and the W_MANT=0 format vs OCP, AXI register map and C sequence, Vivado file sets / Tcl / block design, resources, verification, limitations) |

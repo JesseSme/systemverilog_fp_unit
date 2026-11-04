@@ -22,17 +22,20 @@ from cocotb.triggers import FallingEdge, RisingEdge
 from reference import gen, ops
 from reference.formats import BinFormat, MODE_NAMES, encode_finite
 
-OP_ADD = 0
-OP_SUB = 1
-OP_MUL = 2
-OP_DIV = 3
-OP_SQRT = 4
-OP_FMA = 5
-OP_MIN = 6
-OP_MAX = 7
-OP_CMP = 8
-OP_RNDINT = 9
-OP_TOTALORDER = 10
+from reference.formats import (  # noqa: E402  (op table: single source of truth)
+    NUM_OPS,
+    OP_ADD,
+    OP_CMP,
+    OP_DIV,
+    OP_FMA,
+    OP_MAX,
+    OP_MIN,
+    OP_MUL,
+    OP_RNDINT,
+    OP_SQRT,
+    OP_SUB,
+    OP_TOTALORDER,
+)
 
 W_EXP = int(os.environ.get("FP_W_EXP", "8"))
 W_MANT = int(os.environ.get("FP_W_MANT", "23"))
@@ -81,10 +84,27 @@ async def reset(dut):
     await FallingEdge(dut.s_axi_aclk)
 
 
+# When True, write_word/read_word raise BREADY/RREADY at the start of the
+# transaction, before the slave's BVALID/RVALID (allowed by AXI, and what
+# many masters do); test_ready_before_valid sets it.
+EARLY_READY = False
+HANDSHAKE_TIMEOUT = 100   # cycles
+
+
+async def _wait_high(dut, sig, what):
+    for _ in range(HANDSHAKE_TIMEOUT):
+        if int(sig.value):
+            return
+        await RisingEdge(dut.s_axi_aclk)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
 async def write_word(dut, addr, data, strb=0xF, idle=0):
     """A single AXI-Lite 32-bit write. Returns the write response code."""
     for _ in range(idle):
         await RisingEdge(dut.s_axi_aclk)
+    if EARLY_READY:
+        dut.s_axi_bready.value = 1
     dut.s_axi_awaddr.value = addr & ((1 << 32) - 1)
     dut.s_axi_awvalid.value = 1
     dut.s_axi_wdata.value = data & 0xFFFFFFFF
@@ -95,8 +115,7 @@ async def write_word(dut, addr, data, strb=0xF, idle=0):
     await RisingEdge(dut.s_axi_aclk)          # acceptance posedge
     dut.s_axi_awvalid.value = 0
     dut.s_axi_wvalid.value = 0
-    while not int(dut.s_axi_bvalid.value):
-        await RisingEdge(dut.s_axi_aclk)
+    await _wait_high(dut, dut.s_axi_bvalid, "BVALID")
     resp = int(dut.s_axi_bresp.value)
     dut.s_axi_bready.value = 1
     await RisingEdge(dut.s_axi_aclk)
@@ -108,14 +127,15 @@ async def read_word(dut, addr, idle=0):
     """A single AXI-Lite 32-bit read. Returns (data, response code)."""
     for _ in range(idle):
         await RisingEdge(dut.s_axi_aclk)
+    if EARLY_READY:
+        dut.s_axi_rready.value = 1
     dut.s_axi_araddr.value = addr & ((1 << 32) - 1)
     dut.s_axi_arvalid.value = 1
     while not int(dut.s_axi_arready.value):
         await RisingEdge(dut.s_axi_aclk)
     await RisingEdge(dut.s_axi_aclk)          # accept + move to R_DATA
     dut.s_axi_arvalid.value = 0
-    while not int(dut.s_axi_rvalid.value):
-        await RisingEdge(dut.s_axi_aclk)
+    await _wait_high(dut, dut.s_axi_rvalid, "RVALID")
     data = int(dut.s_axi_rdata.value)
     resp = int(dut.s_axi_rresp.value)
     dut.s_axi_rready.value = 1
@@ -253,6 +273,37 @@ async def test_protocol(dut):
 
 
 @cocotb.test()
+async def test_ready_before_valid(dut):
+    """BREADY/RREADY held high before BVALID/RVALID (legal AXI master
+    behaviour): every transaction must still complete, with the right data.
+    The slave used to deassert BVALID/RVALID in the cycle it would have
+    asserted them, so such a master waited forever."""
+    global EARLY_READY
+    cocotb.start_soon(Clock(dut.s_axi_aclk, 10, units="ns").start())
+    await reset(dut)
+    EARLY_READY = True
+    try:
+        pattern = 0x5A5AA5A5 & ((1 << REG_W) - 1)
+        await write_operand(dut, ADDR_B, pattern)
+        assert (await read_operand(dut, ADDR_B)) == pattern
+        data, resp = await read_word(dut, TOTAL_BYTES)
+        assert resp == AXI_DECERR and data == 0, (hex(data), resp)
+        rng = random.Random(SEED ^ 0xEA41)
+        for i in range(20):
+            a, b = gen.pair_stream(rng, FMT, 1)[0]
+            mode = rng.randrange(NUM_OPS)
+            rm = rng.randrange(5)
+            c = gen.operand(rng, FMT)
+            exp_y, exp_f, exp_c = ops.dispatch(mode, a, b, c, rm, FMT)
+            result, flags, cc, _st = await run_op(dut, mode, rm, a, b, c)
+            y = result & ((1 << W) - 1)
+            assert (y, flags, cc) == (exp_y, exp_f, exp_c), \
+                (i, mode, rm, hex(a), hex(b), hex(y), flags, cc, hex(exp_y), exp_f, exp_c)
+    finally:
+        EARLY_READY = False
+
+
+@cocotb.test()
 async def test_random_mixed(dut):
     """Randomized ops/operands through the AXI register interface, checked
     against the bit-exact oracle (same stream as test_fp_unit.py)."""
@@ -261,29 +312,9 @@ async def test_random_mixed(dut):
     rng = random.Random(SEED)
     for i in range(ITERS):
         a, b = gen.pair_stream(rng, FMT, 1)[0]
-        mode = rng.randrange(11)
+        mode = rng.randrange(NUM_OPS)
         rm = rng.randrange(5)
-        exp_c = 0
-        if mode == OP_MUL:
-            exp_y, exp_f = ops.fp_mul(a, b, rm, FMT)
-        elif mode == OP_DIV:
-            exp_y, exp_f = ops.fp_div(a, b, rm, FMT)
-        elif mode == OP_SQRT:
-            exp_y, exp_f = ops.fp_sqrt(a, rm, FMT)
-        elif mode == OP_FMA:
-            c = gen.operand(rng, FMT)
-            exp_y, exp_f = ops.fp_fma(a, b, c, rm, FMT)
-        elif mode == OP_MIN:
-            exp_y, exp_f = ops.fp_min(a, b, FMT)
-        elif mode == OP_MAX:
-            exp_y, exp_f = ops.fp_max(a, b, FMT)
-        elif mode == OP_CMP:
-            exp_y, exp_c, exp_f = ops.fp_cmp(a, b, FMT)
-        elif mode == OP_RNDINT:
-            exp_y, exp_f = ops.fp_roundint(a, rm, FMT)
-        elif mode == OP_TOTALORDER:
-            exp_y, exp_c, exp_f = ops.fp_totalorder(a, b, FMT)
-        else:
-            exp_y, exp_f = ops.fp_add(a, b, rm, FMT, sub=(mode == OP_SUB))
+        c = gen.operand(rng, FMT) if mode == OP_FMA else 0
+        exp_y, exp_f, exp_c = ops.dispatch(mode, a, b, c, rm, FMT)
         await check(dut, mode, rm, a, b, exp_y, exp_f, f"random[{i}]",
-                    c=c if mode == OP_FMA else 0, exp_cmp=exp_c)
+                    c=c, exp_cmp=exp_c)

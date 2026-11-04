@@ -33,13 +33,13 @@ except ImportError:
     from cocotb_tools.runner import get_runner  # cocotb 2.x
 
 ROOT = Path(__file__).resolve().parent.parent
-RTL = [ROOT / "rtl" / f for f in ("fp_pkg.sv", "fp_add.sv", "fp_add_pipe.sv", "fp_add_e8m0.sv",
-       "fp_mul.sv", "fp_mul_core.sv", "fp_mul_pipe.sv", "fp_mul_e8m0.sv", "fp_div.sv", "fp_div_srt.sv", "fp_sqrt_srt.sv", "fp_div_e8m0.sv",
-       "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_divsqrt_iter.sv",
-       "fp_fma.sv", "fp_fma_pipe.sv", "fp_fma_e8m0.sv",
-       "fp_minmax.sv", "fp_minmax_pipe.sv", "fp_cmp.sv", "fp_cmp_pipe.sv", "fp_totalorder.sv", "fp_totalorder_pipe.sv", "fp_roundint.sv", "fp_roundint_pipe.sv",
-       "fp_roundint_e8m0.sv", "fp_unit.sv", "fp_unit_axilite.sv",
-       "fp32_to_bf16_round.sv", "fp_exp_seq.sv")]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from rtl_files import rtl_files  # noqa: E402
+
+RTL = rtl_files(wrappers=True)
+
+# Toplevels that take no W_EXP/W_MANT parameters.
+FIXED_FORMAT_TOPS = {"fp_exp_seq"}
 
 # (W_EXP, W_MANT) matrix: standard interchange formats plus FP8/BF16/E8M0.
 # Default = the formats the user exercises routinely; --all adds odd sizes.
@@ -167,18 +167,21 @@ def main() -> int:
     tests_dir = Path(__file__).resolve().parent
     _patch_verilator_helper()
 
-    # FP_ITER_DIVSQRT=1 builds the DUT with the iterative div/sqrt engine; the
-    # test must then honor the in_valid/out_valid handshake (the AXI-Lite
-    # wrapper does; test_fp_unit samples the 1-cycle combinational path and is
-    # only valid with the default 0).
-    iter_mode = int(os.environ.get("FP_ITER_DIVSQRT", "0"))
+    # FP_DIVSQRT_IMPL selects fp_unit's DIVSQRT_IMPL (1 = SRT pipelines,
+    # the default; 2 = iterative engine; 0 = combinational reference). Every
+    # test honors in_ready/out_valid, so all three run the same tests.
+    impl = int(os.environ.get("FP_DIVSQRT_IMPL", "1"))
     failures = 0
     for wexp, wmant in widths:
-        params = {"W_EXP": wexp, "W_MANT": wmant}
-        if iter_mode:
-            params["ITER_DIVSQRT"] = 1
+        # Tops without format parameters (fp_exp_seq is fixed binary32).
+        params = {} if args.top in FIXED_FORMAT_TOPS else {"W_EXP": wexp, "W_MANT": wmant}
+        if impl != 1 and args.top not in FIXED_FORMAT_TOPS:
+            params["DIVSQRT_IMPL"] = impl
+        # One build dir per (top, width, mode): sharing an Mdir between tops
+        # forces a full rebuild on every switch.
         build_dir = ROOT / "sim_build" / (
-            f"exp{wexp}_mant{wmant}" + ("_iter" if iter_mode else ""))
+            f"exp{wexp}_mant{wmant}" + ("" if impl == 1 else f"_ds{impl}")
+            + ("" if args.top == "fp_unit" else f"_{args.top}"))
         env = _sim_env(tests_dir, wexp, wmant)
         print(f"=== width W_EXP={wexp} W_MANT={wmant} ===", flush=True)
         runner = get_runner("verilator")
@@ -186,7 +189,7 @@ def main() -> int:
             sources=RTL,
             hdl_toplevel=args.top,
             parameters=params,
-            build_args=["--timing"],
+            build_args=["--timing", "--assert"],
             timescale=("1ns", "1ps"),
             build_dir=build_dir,
         )

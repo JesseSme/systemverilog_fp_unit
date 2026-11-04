@@ -15,6 +15,9 @@
 #include "Vfp_unit.h"
 #include "verilated.h"
 #include "verilated_cov.h"
+#ifndef NUM_OPS
+#error "NUM_OPS must be defined by the driver (-CFLAGS -DNUM_OPS=<n>)"
+#endif
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -34,15 +37,15 @@ int main(int argc, char** argv) {
     const char* path = argv[1];
     const int w = atoi(argv[2]);
     const uint64_t C = strtoull(argv[3], nullptr, 10);  // 64-bit safe (binary64 FMA c)
-    // iter=1: fp_unit was built with ITER_DIVSQRT=1; div (op 3) and sqrt
-    // (op 4) use the in_valid/busy/out_valid handshake.
+    // iter: fp_unit DIVSQRT_IMPL (informational; every request is held
+    // until in_ready, so all implementations use the same drive loop).
     const int iter = (argc > 4) ? atoi(argv[4]) : 0;
     // Expected constant div/sqrt latency (0 = do not check): K+4 with
     // K = ceil((W_MANT+3)/2), supplied by the Python driver.
     const int divsqrt_cycles = (argc > 5) ? atoi(argv[5]) : 0;
     (void)divsqrt_cycles;
-    int seen_cycles[11];
-    for (int i = 0; i < 11; i++) seen_cycles[i] = -1;
+    int seen_cycles[NUM_OPS];
+    for (int i = 0; i < NUM_OPS; i++) seen_cycles[i] = -1;
     const int opbytes = (w + 7) / 8;
     if (opbytes > 8) {
         fprintf(stderr, "width %d too wide for the soak harness (max 64)\n", w);
@@ -52,8 +55,18 @@ int main(int argc, char** argv) {
 
     Verilated::commandArgs(argc, argv);
     Vfp_unit* top = new Vfp_unit;
+    // Synchronous active-low reset (clears the pipeline valids and the
+    // fp_unit result-port reservation), released before the vectors.
     top->clk = 0;
-    top->rst_n = 1;  // synchronous active-low reset released before vectors
+    top->rst_n = 0;
+    top->in_valid = 0;
+    top->eval();
+    for (int i = 0; i < 4; i++) {
+        top->clk = 1; top->eval();
+        top->clk = 0; top->eval();
+    }
+    top->rst_n = 1;
+    top->eval();
 
     FILE* f = fopen(path, "rb");
     if (!f) {
@@ -90,16 +103,24 @@ int main(int argc, char** argv) {
         top->a = a;
         top->b = b;
         top->c = C;
+        // Hold the request until fp_unit accepts it (in_ready at the edge);
+        // the latency is counted from the accepting edge.
         top->in_valid = 1;
         top->clk = 0;
         top->eval();  // inputs presented
+        int waits = 0;
+        while (!top->in_ready && waits < 1024) {
+            top->clk = 1; top->eval();
+            top->clk = 0; top->eval();
+            waits++;
+        }
         int cycles = 0;
         do {
             top->clk = 1;
-            top->eval();  // posedge samples the start / advances the pipeline
+            top->eval();  // posedge samples the start / advances
             top->clk = 0;
-            top->eval();
             top->in_valid = 0;
+            top->eval();
             cycles++;
         } while (!top->out_valid && cycles < 1024);
         // Constant per-operation latency: every vector of an op must take the

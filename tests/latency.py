@@ -11,7 +11,8 @@ Usage:
     uv run python tests/latency.py --width 8 23       # single format
     uv run python tests/latency.py --json out.json    # machine-readable
 
-The cycle counts are measured at the design's operating clock (250 MHz here);
+The cycle counts are clock cycles (the operating clock is set by the
+implementation run; see README);
 the printed table is the canonical per-op latency reference (README/HANDOFF).
 """
 
@@ -25,23 +26,19 @@ from concurrent.futures import ProcessPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from reference.formats import NUM_OPS, OP_NAMES  # noqa: E402
+from rtl_files import rtl_paths  # noqa: E402
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-RTL = [os.path.join(ROOT, "rtl", f) for f in
-       ("fp_pkg.sv", "fp_add.sv", "fp_add_pipe.sv", "fp_add_e8m0.sv",
-        "fp_mul.sv", "fp_mul_core.sv", "fp_mul_pipe.sv", "fp_mul_e8m0.sv", "fp_div.sv", "fp_div_srt.sv", "fp_sqrt_srt.sv", "fp_div_e8m0.sv",
-        "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_divsqrt_iter.sv",
-        "fp_fma.sv", "fp_fma_pipe.sv", "fp_fma_e8m0.sv",
-        "fp_minmax.sv", "fp_minmax_pipe.sv", "fp_cmp.sv", "fp_cmp_pipe.sv", "fp_totalorder.sv", "fp_totalorder_pipe.sv",
-        "fp_roundint.sv", "fp_roundint_pipe.sv", "fp_roundint_e8m0.sv", "fp_unit.sv")]
+RTL = rtl_paths()
 HARNESS = os.path.join(HERE, "latency_main.cpp")
 BUILD_DIR = os.path.join(ROOT, "latency_build")
 
 # Standard width matrix (binary16, binary32, E4M3, BF16, E8M0).
 DEFAULT_FORMATS = [(5, 10), (8, 23), (4, 3), (8, 7), (8, 0)]
 
-OPS = ["add", "sub", "mul", "div", "sqrt", "fma",
-       "min", "max", "cmp", "rndint", "totalorder"]
+OPS = list(OP_NAMES)
 
 
 def _env() -> dict:
@@ -68,18 +65,21 @@ def _read_stamp(build_dir: str, name: str) -> str | None:
     return open(p).read().strip()
 
 
-def build(wexp: int, wmant: int) -> str:
-    build_dir = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}")
+def build(wexp: int, wmant: int, impl: int = 1) -> str:
+    build_dir = os.path.join(BUILD_DIR, f"exp{wexp}_mant{wmant}"
+                             + ("" if impl == 1 else f"_ds{impl}"))
     os.makedirs(build_dir, exist_ok=True)
     binary = os.path.join(build_dir, "fp_latency")
-    want = _stamp()
+    want = _stamp() + f"_ds{impl}"
     if (os.path.exists(binary) and os.environ.get("FORCE_REBUILD", "0") != "1"
             and _read_stamp(build_dir, "binary.stamp") == want):
         return binary
     subprocess.check_call([
-        "verilator", "--cc", "--exe", "--build", "--timing",
+        "verilator", "--cc", "--exe", "--build", "--timing", "--assert",
         "--top-module", "fp_unit",
+        "-CFLAGS", f"-DNUM_OPS={NUM_OPS}",
         f"-GW_EXP={wexp}", f"-GW_MANT={wmant}",
+        *([f"-GDIVSQRT_IMPL={impl}"] if impl != 1 else []),
         "--Mdir", build_dir, "--prefix", "Vfp_unit",
         "-o", "fp_latency",
         *RTL, HARNESS,
@@ -90,8 +90,8 @@ def build(wexp: int, wmant: int) -> str:
 
 
 def run_width(job: tuple) -> tuple:
-    wexp, wmant = job
-    binary = build(wexp, wmant)
+    wexp, wmant, impl = job
+    binary = build(wexp, wmant, impl)
     proc = subprocess.run([binary, str(wexp), str(wmant)],
                           capture_output=True, text=True)
     sys.stderr.write(proc.stderr)
@@ -100,7 +100,7 @@ def run_width(job: tuple) -> tuple:
         if line.startswith("LATENCY op="):
             fields = dict(kv.split("=") for kv in line.split()[1:])
             cycles[int(fields["op"])] = int(fields["cycles"])
-    ok = proc.returncode == 0 and len(cycles) == 11
+    ok = proc.returncode == 0 and len(cycles) == NUM_OPS
     return (wexp, wmant, cycles, ok)
 
 
@@ -111,13 +111,15 @@ def main() -> int:
                     help="single format to probe (repeatable; default: matrix)")
     ap.add_argument("--json", type=str, default=None,
                     help="write the measured table as JSON")
+    ap.add_argument("--divsqrt", type=int, choices=(0, 1, 2, 3), default=1,
+                    help="fp_unit DIVSQRT_IMPL (1 SRT default, 2 iterative, 3 SRT 250 MHz, 0 comb)")
     ap.add_argument("--jobs", type=int, default=0,
                     help="widths to run concurrently (0 = one per core)")
     args = ap.parse_args()
 
     formats = [tuple(w) for w in args.width] if args.width else DEFAULT_FORMATS
     jobs = args.jobs if args.jobs > 0 else min(len(formats), os.cpu_count() or 1)
-    work = [(wexp, wmant) for wexp, wmant in formats]
+    work = [(wexp, wmant, args.divsqrt) for wexp, wmant in formats]
     if jobs > 1 and len(work) > 1:
         with ProcessPoolExecutor(max_workers=jobs) as ex:
             results = list(ex.map(run_width, work))
@@ -132,9 +134,9 @@ def main() -> int:
     table = {}
     ok = True
     for (wexp, wmant, cycles, wok), name in zip(results, names):
-        row = "  ".join(f"{cycles.get(i, 0):>9}" for i in range(11))
+        row = "  ".join(f"{cycles.get(i, 0):>9}" for i in range(NUM_OPS))
         print(f"{name:<{colw}}{row}")
-        table[f"{wexp}x{wmant}"] = {OPS[i]: cycles.get(i) for i in range(11)}
+        table[f"{wexp}x{wmant}"] = {OPS[i]: cycles.get(i) for i in range(NUM_OPS)}
         ok = ok and wok
     print("ALL LATENCY PROBES PASS" if ok else "SOME LATENCY PROBES FAILED")
 

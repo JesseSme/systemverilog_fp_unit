@@ -28,13 +28,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-RTL = [ROOT / "rtl" / f for f in (
-    "fp_pkg.sv", "fp_add.sv", "fp_add_pipe.sv", "fp_add_e8m0.sv",
-    "fp_mul.sv", "fp_mul_core.sv", "fp_mul_pipe.sv", "fp_mul_e8m0.sv", "fp_div.sv", "fp_div_srt.sv", "fp_sqrt_srt.sv", "fp_div_e8m0.sv",
-    "fp_sqrt.sv", "fp_sqrt_e8m0.sv", "fp_divsqrt_iter.sv",
-    "fp_fma.sv", "fp_fma_pipe.sv", "fp_fma_e8m0.sv",
-    "fp_minmax.sv", "fp_minmax_pipe.sv", "fp_cmp.sv", "fp_cmp_pipe.sv", "fp_totalorder.sv", "fp_totalorder_pipe.sv", "fp_roundint.sv", "fp_roundint_pipe.sv",
-    "fp_roundint_e8m0.sv", "fp_unit.sv")]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from rtl_files import rtl_files  # noqa: E402
+
+RTL = rtl_files()
 
 OSS = Path(os.environ.get(
     "OSS", "/home/jesse/Documents/oss-cad-suite-linux-x64-20260813/oss-cad-suite"))
@@ -121,7 +118,7 @@ def area_once(wexp: int, wmant: int, timeout: int, iter_mode: bool = False) -> d
     script = "; ".join([
         "read_verilog -sv " + " ".join(str(p) for p in RTL),
         f"chparam -set W_EXP {wexp} -set W_MANT {wmant}"
-        + (" -set ITER_DIVSQRT 1" if iter_mode else "") + " fp_unit",
+        + (" -set DIVSQRT_IMPL 2" if iter_mode else "") + " fp_unit",
         "hierarchy -top fp_unit",
         # abc optimization is skipped: it is intractably slow on the
         # combinational divider/square root at binary32 and the pre-abc
@@ -202,7 +199,7 @@ def compare(pa: Path, pb: Path) -> int:
     a = json.loads(pa.read_text())
     b = json.loads(pb.read_text())
     if bool(a.get("iter_divsqrt")) != bool(b.get("iter_divsqrt")):
-        print(f"note: config differs (ITER_DIVSQRT {a.get('iter_divsqrt')} -> "
+        print(f"note: config differs (DIVSQRT_IMPL=2 {a.get('iter_divsqrt')} -> "
               f"{b.get('iter_divsqrt')})")
     for section in ("area", "runtime"):
         if section not in a or section not in b:
@@ -238,7 +235,7 @@ def main() -> int:
                     metavar=("W_EXP", "W_MANT"),
                     help="area format (repeatable; default: standard matrix)")
     ap.add_argument("--iter", action="store_true",
-                    help="measure with ITER_DIVSQRT=1 (iterative div/sqrt engine)")
+                    help="measure with DIVSQRT_IMPL=2 (iterative div/sqrt engine)")
     ap.add_argument("--targets", nargs="+", choices=sorted(TARGETS),
                     default=DEFAULT_TARGETS, help="runtime targets to time")
     ap.add_argument("--out", type=Path, help="JSON output path")
