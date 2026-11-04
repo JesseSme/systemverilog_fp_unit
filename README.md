@@ -13,6 +13,12 @@ rounding-direction attributes (4.3), full subnormal support (3.3) and the
 five exception flags (7.2-7.6, including divide-by-zero 7.3). The operation is
 selected by the 4-bit `mode` input (`fp_pkg::op_t`, all 16 codes used).
 
+**Integration guide and core reference: [docs/fp_unit_core.md](docs/fp_unit_core.md)**
+(ports, handshake, opcodes, latencies, AXI register map, Vivado/block-design
+use). Plain Verilog-2001 and VHDL tops of both the streaming core and the
+AXI4-Lite wrapper are in `rtl/top/`, for Vivado block designs and VHDL
+projects.
+
 ## Layout
 
     rtl/                fp_pkg.sv, fp_add.sv, fp_mul.sv, fp_div.sv, fp_sqrt.sv,
@@ -23,10 +29,15 @@ selected by the 4-bit `mode` input (`fp_pkg::op_t`, all 16 codes used).
                         fp_unit.sv (synthesizable SV),
                         fp_unit_axilite.sv (AXI4-Lite register wrapper),
                         fp_exp_seq.sv (fp32 exp), fp32_to_bf16_round.sv
-    rtl/filelist.f      THE RTL file list (+ filelist_wrappers.f); every harness,
-                        the Makefile and syn/ read it
-    syn/                fp_unit_timing.sv (I/O-registering OOC wrapper) and
-                        vivado-impl.tcl (make vivado)
+    rtl/top/            Verilog-2001 / VHDL tops: fp_unit_top.v, fp_unit_vhd.vhd,
+                        fp_unit_axilite_top.v, fp_unit_axilite_vhd.vhd, and
+                        fp_unit_flat.sv (plain-vector shim over fp_unit)
+    rtl/filelist.f      THE RTL file list (+ filelist_wrappers.f, filelist_vhdl.f);
+                        every harness, the Makefile and syn/ read it
+    docs/               fp_unit_core.md (user guide), proposals/ (design notes)
+    syn/                fp_unit_timing.sv (I/O-registering OOC wrapper),
+                        vivado-impl.tcl (make vivado), vivado-module.tcl,
+                        vivado-top.tcl / vivado-bd-check.tcl (Verilog/VHDL tops)
     tests/reference/    bit-exact Python oracle (exact rational arithmetic)
     tests/test_fp_unit.py     cocotb tests (directed vectors + randomized)
     tests/test_fp_unit_axilite.py  cocotb AXI4-Lite register-map tests
@@ -38,6 +49,7 @@ selected by the 4-bit `mode` input (`fp_pkg::op_t`, all 16 codes used).
     tests/bf16.py             fp32_to_bf16_round: all 2^32 inputs
     tests/test_fp_exp_seq.py  fp_exp_seq accuracy (cocotb)
     tests/metrics.py          area/timing proxies (yosys) + target runtimes
+    tests/vivado/             xsim testbenches of the Verilog/VHDL tops (run_xsim.py)
     metrics/                  baseline/after metrics JSON (for --compare)
     formal/ + bmc_m6_*.sby    SymbiYosys formal property proofs of the M6 ops
 
@@ -63,6 +75,10 @@ selected by the 4-bit `mode` input (`fp_pkg::op_t`, all 16 codes used).
     make vivado [VIVADO_ARGS="period W_EXP W_MANT DIVSQRT_IMPL"]   # OOC implementation
     make formal   # SymbiYosys BMC proofs (needs the oss-cad-suite)
     make formal-equiv      # add/mul pipelines == fp_add/fp_mul (BMC, ~15 min)
+    make regress-tops      # cocotb suites through the Verilog-2001 tops
+    make xsim-tops         # Verilog + VHDL tops in Vivado xsim vs the oracle
+    make vivado-bd-check   # block-design module references of the tops
+    make vivado-top TOP_ARGS="fp_unit_vhd 5.600 W_EXP=8 W_MANT=23"
     make metrics-area      # yosys cell count + ltp per format (baseline JSON)
     make metrics-runtime   # wall-clock of the standard targets
     make metrics-latency   # per-op in_valid -> out_valid cycle table

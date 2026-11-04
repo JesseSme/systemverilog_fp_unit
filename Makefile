@@ -5,7 +5,7 @@ SIM ?= verilator
 # oss-cad-suite provides SymbiYosys (sby) + Yosys for formal verification.
 OSS ?= /home/jesse/Documents/oss-cad-suite-linux-x64-20260813/oss-cad-suite
 
-.PHONY: regress regress-all regress-axilite smoke soak coverage formal formal-equiv check-ds3 lint bf16 stream regress-exp vivado \
+.PHONY: regress regress-all regress-axilite smoke soak coverage formal formal-equiv check-ds3 regress-tops xsim-tops vivado-bd-check vivado-top lint bf16 stream regress-exp vivado \
         exhaustive-iter soak-iter stream-iter regress-axilite-iter \
         metrics-area metrics-runtime metrics-latency metrics-compare clean
 
@@ -121,9 +121,10 @@ metrics-compare:
 	uv run python tests/metrics.py --compare $(BEFORE) $(AFTER)
 
 # RTL file lists: rtl/filelist.f (fp_unit + datapaths) and
-# rtl/filelist_wrappers.f (fp_unit_axilite, fp32_to_bf16_round, fp_exp_seq).
-RTL  := $(shell cat rtl/filelist.f)
-WRAP := $(shell cat rtl/filelist_wrappers.f)
+# rtl/filelist_wrappers.f (fp_unit_axilite, fp32_to_bf16_round, fp_exp_seq,
+# and the Verilog tops in rtl/top/); rtl/filelist_vhdl.f has the VHDL tops.
+RTL  := $(shell grep -v '^\#' rtl/filelist.f)
+WRAP := $(shell grep -v '^\#' rtl/filelist_wrappers.f)
 VLINT := verilator --lint-only -Wall --timing
 
 # Vivado OOC implementation (needs vivado on PATH; not run by default):
@@ -133,6 +134,26 @@ VIVADO_ARGS ?= 5.600 8 23 1
 vivado:
 	@command -v vivado >/dev/null || { echo "vivado not on PATH; run: vivado -mode batch -source syn/vivado-impl.tcl -tclargs $(VIVADO_ARGS)"; exit 1; }
 	vivado -mode batch -nojournal -nolog -source syn/vivado-impl.tcl -tclargs $(VIVADO_ARGS)
+
+# Verilog/VHDL tops (rtl/top/, docs/fp_unit_core.md):
+#   regress-tops      cocotb suites through the Verilog-2001 tops (Verilator)
+#   xsim-tops         Verilog + VHDL tops side by side in Vivado xsim vs the oracle
+#   vivado-bd-check   block-design module references of all four tops
+#   vivado-top        OOC implementation with a top, e.g.
+#                     make vivado-top TOP_ARGS="fp_unit_vhd 5.600 W_EXP=8 W_MANT=23"
+TOP_ARGS ?= fp_unit_vhd 5.600 W_EXP=8 W_MANT=23
+regress-tops:
+	uv run python tests/run_regression.py --all --top fp_unit_top
+	uv run python tests/run_regression.py --all --top fp_unit_axilite_top --tests test_fp_unit_axilite
+
+xsim-tops:
+	uv run python tests/vivado/run_xsim.py
+
+vivado-bd-check:
+	vivado -mode batch -nojournal -nolog -source syn/vivado-bd-check.tcl
+
+vivado-top:
+	vivado -mode batch -nojournal -nolog -source syn/vivado-top.tcl -tclargs $(TOP_ARGS)
 
 # (fp_exp_seq line: Verilator 5.020 reports a false VARHIDDEN, its port `x`
 # "hidden" by function arguments named x inside the pruned fp_unit
@@ -148,6 +169,9 @@ lint:
 	$(VLINT) --top-module fp_unit -GW_EXP=11 -GW_MANT=52 $(RTL)
 	$(VLINT) --top-module fp_unit -GW_EXP=8 -GW_MANT=0 $(RTL)
 	$(VLINT) --top-module fp_unit_axilite $(RTL) rtl/fp_unit_axilite.sv
+	$(VLINT) --top-module fp_unit_top $(RTL) $(WRAP)
+	$(VLINT) --top-module fp_unit_top -GW_EXP=11 -GW_MANT=52 -GTAG_W=4 -GOPS_EN=39 -GDIVSQRT_IMPL=3 $(RTL) $(WRAP)
+	$(VLINT) --top-module fp_unit_axilite_top $(RTL) $(WRAP)
 	$(VLINT) -Wno-VARHIDDEN --top-module fp_exp_seq $(RTL) rtl/fp_exp_seq.sv
 	$(VLINT) --top-module fp_unit_timing $(RTL) syn/fp_unit_timing.sv
 	$(VLINT) rtl/fp32_to_bf16_round.sv

@@ -43,3 +43,6 @@ syn/out/
 # AI-session transcripts (kept locally, not versioned)
 ses_*.json
 session-ses_*.md
+
+# Vivado xsim builds of the Verilog/VHDL tops (tests/vivado/run_xsim.py)
+xsim_build/
