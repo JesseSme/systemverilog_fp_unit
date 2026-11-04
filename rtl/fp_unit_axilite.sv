@@ -293,17 +293,18 @@ module fp_unit_axilite #(
       reg_c      <= '0;
     end else begin
       case (wstate)
+        // BVALID rises with the W_RESP state and is held until BREADY
+        // (a master may hold BREADY high before BVALID, AXI A3.3.1).
         W_IDLE: begin
-          bvalid <= 1'b0;
           if (s_axi_awvalid && s_axi_wvalid) begin
             dec_t d = decode(s_axi_awaddr);
-            werr  <= ~d.valid;
+            werr   <= ~d.valid;
+            bvalid <= 1'b1;
             wstate <= W_RESP;
             write_regs(d.sel, d.word, s_axi_wdata, s_axi_wstrb);
           end
         end
         W_RESP: begin
-          bvalid <= 1'b1;
           if (s_axi_bready) begin
             bvalid <= 1'b0;
             wstate <= W_IDLE;
@@ -320,24 +321,43 @@ module fp_unit_axilite #(
   assign s_axi_bvalid  = bvalid;
 
   // ---- AXI-Lite read path -------------------------------------------------------
-  logic [ADDR_WIDTH-1:0] araddr;
+  // The read data and response are registered at the AR handshake, so they
+  // stay stable while RVALID waits for RREADY; RVALID rises with R_DATA and
+  // is held until RREADY (which a master may assert before RVALID).
   logic                  rvalid;
   logic [1:0]            rstate;
+  logic [31:0]           rdata_q;
+  logic                  rerr_q;
   localparam logic [1:0] R_IDLE = 2'b00, R_DATA = 2'b01;
 
   dec_t rdec;
-  assign rdec = decode(araddr);
+  assign rdec = decode(s_axi_araddr);
+  // The word selects are continuous assignments, not calls inside the
+  // always_comb below: Vivado xsim (2026.1.1) leaves a signal that a called
+  // function uses only as a part-select index out of the always_comb /
+  // always @* sensitivity, so after a read of a wide register's low word, a
+  // read of its high word (only the word index changes) returned the low
+  // word again in simulation. Synthesis and Verilator were not affected.
+  dec_sel_e    rsel;
+  logic [7:0]  rword;
+  logic [31:0] rd_a, rd_b, rd_c, rd_res;
+  assign rsel   = rdec.sel;
+  assign rword  = rdec.word;
+  assign rd_a   = rd_wide(reg_a, rword);
+  assign rd_b   = rd_wide(reg_b, rword);
+  assign rd_c   = rd_wide(reg_c, rword);
+  assign rd_res = rd_wide(reg_result, rword);
 
   logic [31:0] rdata;
   always_comb begin
-    case (rdec.sel)
+    case (rsel)
       DEC_CTRL:   rdata = reg_ctrl;
       DEC_OPCODE: rdata = reg_opcode;
-      DEC_A:      rdata = rd_wide(reg_a, rdec.word);
-      DEC_B:      rdata = rd_wide(reg_b, rdec.word);
-      DEC_C:      rdata = rd_wide(reg_c, rdec.word);
+      DEC_A:      rdata = rd_a;
+      DEC_B:      rdata = rd_b;
+      DEC_C:      rdata = rd_c;
       DEC_STATUS: rdata = status_vec;
-      DEC_RESULT: rdata = rd_wide(reg_result, rdec.word);
+      DEC_RESULT: rdata = rd_res;
       DEC_CMP:    rdata = reg_cmp;
       default:    rdata = 32'd0;
     endcase
@@ -345,20 +365,21 @@ module fp_unit_axilite #(
 
   always_ff @(posedge s_axi_aclk) begin
     if (!s_axi_aresetn) begin
-      rstate <= R_IDLE;
-      araddr <= '0;
-      rvalid <= 1'b0;
+      rstate  <= R_IDLE;
+      rvalid  <= 1'b0;
+      rdata_q <= 32'd0;
+      rerr_q  <= 1'b0;
     end else begin
       case (rstate)
         R_IDLE: begin
-          rvalid <= 1'b0;
           if (s_axi_arvalid) begin
-            araddr <= s_axi_araddr;
-            rstate <= R_DATA;
+            rdata_q <= rdata;
+            rerr_q  <= ~rdec.valid;
+            rvalid  <= 1'b1;
+            rstate  <= R_DATA;
           end
         end
         R_DATA: begin
-          rvalid <= 1'b1;
           if (s_axi_rready) begin
             rvalid <= 1'b0;
             rstate <= R_IDLE;
@@ -371,8 +392,8 @@ module fp_unit_axilite #(
 
   assign s_axi_arready = (rstate == R_IDLE);
   assign s_axi_rvalid  = rvalid;
-  assign s_axi_rdata   = rdata;
-  assign s_axi_rresp   = rdec.valid ? AXI_OKAY : AXI_DECERR;
+  assign s_axi_rdata   = rdata_q;
+  assign s_axi_rresp   = rerr_q ? AXI_DECERR : AXI_OKAY;
 
   // ---- FPU core ---------------------------------------------------------------
   fp_unit #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DIVSQRT_IMPL(DIVSQRT_IMPL)) u_fp_unit (

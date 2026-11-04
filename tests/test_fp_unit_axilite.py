@@ -84,10 +84,27 @@ async def reset(dut):
     await FallingEdge(dut.s_axi_aclk)
 
 
+# When True, write_word/read_word raise BREADY/RREADY at the start of the
+# transaction, before the slave's BVALID/RVALID (allowed by AXI, and what
+# many masters do); test_ready_before_valid sets it.
+EARLY_READY = False
+HANDSHAKE_TIMEOUT = 100   # cycles
+
+
+async def _wait_high(dut, sig, what):
+    for _ in range(HANDSHAKE_TIMEOUT):
+        if int(sig.value):
+            return
+        await RisingEdge(dut.s_axi_aclk)
+    raise AssertionError(f"timed out waiting for {what}")
+
+
 async def write_word(dut, addr, data, strb=0xF, idle=0):
     """A single AXI-Lite 32-bit write. Returns the write response code."""
     for _ in range(idle):
         await RisingEdge(dut.s_axi_aclk)
+    if EARLY_READY:
+        dut.s_axi_bready.value = 1
     dut.s_axi_awaddr.value = addr & ((1 << 32) - 1)
     dut.s_axi_awvalid.value = 1
     dut.s_axi_wdata.value = data & 0xFFFFFFFF
@@ -98,8 +115,7 @@ async def write_word(dut, addr, data, strb=0xF, idle=0):
     await RisingEdge(dut.s_axi_aclk)          # acceptance posedge
     dut.s_axi_awvalid.value = 0
     dut.s_axi_wvalid.value = 0
-    while not int(dut.s_axi_bvalid.value):
-        await RisingEdge(dut.s_axi_aclk)
+    await _wait_high(dut, dut.s_axi_bvalid, "BVALID")
     resp = int(dut.s_axi_bresp.value)
     dut.s_axi_bready.value = 1
     await RisingEdge(dut.s_axi_aclk)
@@ -111,14 +127,15 @@ async def read_word(dut, addr, idle=0):
     """A single AXI-Lite 32-bit read. Returns (data, response code)."""
     for _ in range(idle):
         await RisingEdge(dut.s_axi_aclk)
+    if EARLY_READY:
+        dut.s_axi_rready.value = 1
     dut.s_axi_araddr.value = addr & ((1 << 32) - 1)
     dut.s_axi_arvalid.value = 1
     while not int(dut.s_axi_arready.value):
         await RisingEdge(dut.s_axi_aclk)
     await RisingEdge(dut.s_axi_aclk)          # accept + move to R_DATA
     dut.s_axi_arvalid.value = 0
-    while not int(dut.s_axi_rvalid.value):
-        await RisingEdge(dut.s_axi_aclk)
+    await _wait_high(dut, dut.s_axi_rvalid, "RVALID")
     data = int(dut.s_axi_rdata.value)
     resp = int(dut.s_axi_rresp.value)
     dut.s_axi_rready.value = 1
@@ -253,6 +270,37 @@ async def test_protocol(dut):
     # Re-trigger with a new op: SUB a - a = 0.
     result, flags, cc, _st = await run_op(dut, OP_SUB, 0, a, a)
     assert (result & ((1 << W) - 1)) == 0, hex(result)
+
+
+@cocotb.test()
+async def test_ready_before_valid(dut):
+    """BREADY/RREADY held high before BVALID/RVALID (legal AXI master
+    behaviour): every transaction must still complete, with the right data.
+    The slave used to deassert BVALID/RVALID in the cycle it would have
+    asserted them, so such a master waited forever."""
+    global EARLY_READY
+    cocotb.start_soon(Clock(dut.s_axi_aclk, 10, units="ns").start())
+    await reset(dut)
+    EARLY_READY = True
+    try:
+        pattern = 0x5A5AA5A5 & ((1 << REG_W) - 1)
+        await write_operand(dut, ADDR_B, pattern)
+        assert (await read_operand(dut, ADDR_B)) == pattern
+        data, resp = await read_word(dut, TOTAL_BYTES)
+        assert resp == AXI_DECERR and data == 0, (hex(data), resp)
+        rng = random.Random(SEED ^ 0xEA41)
+        for i in range(20):
+            a, b = gen.pair_stream(rng, FMT, 1)[0]
+            mode = rng.randrange(NUM_OPS)
+            rm = rng.randrange(5)
+            c = gen.operand(rng, FMT)
+            exp_y, exp_f, exp_c = ops.dispatch(mode, a, b, c, rm, FMT)
+            result, flags, cc, _st = await run_op(dut, mode, rm, a, b, c)
+            y = result & ((1 << W) - 1)
+            assert (y, flags, cc) == (exp_y, exp_f, exp_c), \
+                (i, mode, rm, hex(a), hex(b), hex(y), flags, cc, hex(exp_y), exp_f, exp_c)
+    finally:
+        EARLY_READY = False
 
 
 @cocotb.test()
