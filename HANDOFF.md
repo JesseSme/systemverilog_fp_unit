@@ -240,6 +240,22 @@ exhaustive sweep's reach):
 harness was validated against a deliberately false property (it reports FAIL
 with a counterexample), so the passes are not vacuous.
 
+**Pipeline equivalence** (`make formal-equiv`, `formal/fp_pipe_equiv.sv`):
+`fp_add_pipe` / `fp_mul_pipe` against the combinational `fp_add` / `fp_mul`
+on the same free a/b/rm/op stream (start free every cycle), reference
+delayed by the latency, BMC depth latency + 2 (reset, issue, drain).
+
+| Config | Width | Result (bitwuzla) |
+|--------|-------|-------------------|
+| `bmc_equiv_add_e4m3.sby` / `bmc_equiv_mul_e4m3.sby` | (4,3) | PASS, < 1 s |
+| `bmc_equiv_add_bf16.sby` / `bmc_equiv_mul_bf16.sby` | (8,7) | PASS, 4 s / 14 s |
+| `bmc_equiv_add_b16.sby` | (5,10) | PASS, 10 s |
+| `bmc_equiv_mul_b16.sby` | (5,10) | PASS, 12-13 min |
+
+Validated with RTL mutants (a one-bit output flip for one result value in
+`fp_add_pipe`, at E4M3 and binary16): both FAIL at step 4 with a
+counterexample.
+
 > **Arithmetic-op proofs unblocked (item 3).** The arithmetic and division
 > laws now PROVE at the 8-bit widths (and division at binary16). The earlier
 > "write_smt2 corruption" diagnosis (bug 23) was a red herring: the properties
@@ -618,11 +634,32 @@ The regression is now fast (~1 s for the full 8-width matrix at
 - **Coverage and formal depth**: Verilator line/toggle coverage is collected
   by `make coverage`, which runs a 1M-vector soak at the medium widths plus an
   E8M0 soak and the full exhaustive all-8-bit-format sweep, then merges and
-  annotates every module. Combined line coverage is ~88%; the E8M0 datapaths
-  (`fp_*_e8m0`) are covered at 85-98%. The remaining gaps are defensive /
-  constant-generate paths unreachable even by the exhaustive sweep (e.g. the
-  `W_MANT > 0` guard inside the generic datapaths, which is always true when
-  they are instantiated). The formal suite runs 8 configs; the arithmetic laws
+  annotates every module. Refreshed 2026-11-04 (plan P4.4) after Phases 0-4,
+  from the default and `DIVSQRT_IMPL=3` soak (binary16, BF16, E4M3, E8M0,
+  binary64) and exhaustive builds plus the iterative-engine (`--iter`)
+  exhaustive and soak, merged from fresh runs only. Line coverage (lines
+  hit at least once, from `coverage.info`):
+
+  | module | lines | % | module | lines | % |
+  |--------|------:|--:|--------|------:|--:|
+  | fp_add_pipe | 332/349 | 95.1 | fp_mul_pipe | 289/314 | 92.0 |
+  | fp_mul_core | 78/85 | 91.8 | fp_fma_pipe | 474/553 | 85.7 |
+  | fp_div_srt | 363/403 | 90.1 | fp_sqrt_srt | 504/573 | 88.0 |
+  | fp_divsqrt_iter | 318/348 | 91.4 | fp_roundint_pipe | 127/144 | 88.2 |
+  | fp_misc_pipe | 98/100 | 98.0 | fp_minmax_pipe | 58/59 | 98.3 |
+  | fp_cmp_pipe | 62/66 | 93.9 | fp_totalorder_pipe | 18/23 | 78.3 |
+  | fp_unit | 94/101 | 93.1 | fp_*_e8m0 (6 modules) | 453/474 | 91.5-98.3 |
+  | **total** | **3268/3592** | **91.0** | | | |
+
+  (`verilator_coverage --annotate` reports 62 % because it counts a point as
+  covered only at >= 10 hits and includes toggle points.) The remaining
+  gaps are mostly defensive / constant-generate paths unreachable even by
+  the exhaustive sweep (e.g. the `W_MANT > 0` guard inside the generic
+  datapaths, which is always true when they are instantiated, and the
+  DPS/FOLD_STG/STAGE_FOLD branches a given build does not select).
+  `make coverage` now deletes old `coverage.dat` files first: merging data
+  from build directories it does not rerun (e.g. `*_iter`) mixed in stale
+  line numbers (an unfiltered merge today read 84.9 %). The formal suite runs 8 configs; the arithmetic laws
   at binary16 (2^32 pairs, fma wide accumulator) remain too heavy for the SMT
   solver to close in reasonable time.
 
@@ -923,5 +960,14 @@ vs. M5 FMA + min/max)
 | Phase 3 | New ops filling codes 11-15: OP_SGNJ (5.5.1), OP_CLASS (5.7.2), OP_NEXT (5.3.1), OP_MINMAXNUM (9.6), OP_RNDINTX (roundToIntegralExact). `rtl/fp_misc_pipe.sv` (1 cycle, format-generic incl. E8M0); `fp_roundint_pipe`/`fp_roundint_e8m0` gain an `exact` input. Oracles checked against brute-force enumeration on every 8-bit format; hand-written directed vectors; exhaustive sweep now 16 ops |
 | fp_pkg | Package functions assign their name instead of `return` (yosys 0.68, used by `make formal`, cannot parse `return`) |
 
-Not done: Vivado re-measurement (no Vivado on the development host; the
-README numbers predate these changes), Phase 4 (advanced performance work).
+## Change summary (Phase 3.3 + Phase 4, branch improve/plan, 2026-11-04)
+
+| Task | Change |
+|------|--------|
+| Vivado | Re-measured with Vivado 2026.1.1 (`/media/lfs/2026.1.1`), xcvu9p-2L, binary32, before the Phase 4 changes: `DIVSQRT_IMPL=1` 5.6 ns WNS +0.056, 13,488 LUTs; `=2` 4.0 ns +0.066, 7,368 LUTs. The Phase 0-3 interface work cost no Fmax |
+| P4.1 | **Fixed-width carry-save SRT** (`fp_div_srt`, `fp_sqrt_srt`): S, C modulo 2^CSW (div S_W+4, sqrt 2*NDIG+5) instead of a carry-propagate fold at every stage (models first: `verification/srt/*_model.py`, exhaustive at small widths). Sqrt's `bits - d(8q+d)` (three chained CPAs) became two 3:2 levels using {q, d} / {qm, 8-abs(d)}; its threshold arithmetic is 6-bit / 13-bit (ranges checked in the model). New parameters `STAGE_FOLD`, `FOLD_STG`; the div round stage takes precomputed exponent decisions. New **`DIVSQRT_IMPL=3`** (DPS 1, FOLD_STG): fully pipelined div/sqrt at **4.0 ns** (+0.001, 13,368 LUTs), div 17 / sqrt 16 cycles at binary32. The default `=1` improves to +0.131 ns at 5.6 ns with 12,656 LUTs (-830) |
+| sqrt bug | `fp_sqrt_srt` `thr_digit`: the compare counter was 3 bits, so all 8 compares true (digit +4) wrapped to digit -4. Found by the SRT differential at DPS=2 (1 in 5M binary64 / (10,40) radicands on the old RTL); not reached through the old `fp_unit` (sqrt DPS 1 with a fold per digit gives an exact estimate), but reachable once the fold is removed. Fixed (4-bit counter); directed binary64 / (10,40) vectors in `test_directed_sqrt` (they fail with the old counter on the new RTL) |
+| P4.3 | Formal equivalence add/mul pipe vs combinational reference (table above), `make formal-equiv` |
+| P4.2 | Not attempted: every `fp_add_pipe` stage is near the clock (S1 alone +0.279 ns at 5.6 ns, +0.016 at 4.0), so a 2-cycle add needs a dual-path (near/far) adder with LZA, a full redesign rather than a stage merge. Ask the owner whether it is worth it (add 3 -> 2 cycles) |
+| 3.3 | Design notes in `docs/proposals/` (signaling compare, integer and format conversions, scaleB/logB, remainder) with the shared 5-bit opcode decision; nothing implemented |
+| tools | `syn/vivado-module.tcl` (one module OOC); `vivado-impl.tcl` writes the routed checkpoint and a hierarchical utilization; `run_diff.py --param`; `make check-ds3`; harnesses accept `--divsqrt 3` / `FP_DIVSQRT_IMPL=3` |

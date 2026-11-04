@@ -57,8 +57,12 @@ selected by the 4-bit `mode` input (`fp_pkg::op_t`, all 16 codes used).
     make regress-exp       # fp_exp_seq accuracy
     make exhaustive-iter | make soak-iter | make stream-iter | make regress-axilite-iter
                            # the same on the iterative div/sqrt engine (DIVSQRT_IMPL=2)
+    make check-ds3         # regression/exhaustive/soak/stream on DIVSQRT_IMPL=3
+    uv run python verification/srt/run_diff.py [--param DPS=1 --param FOLD_STG=1]
+                           # SRT div/sqrt modules vs combinational, streaming
     make vivado [VIVADO_ARGS="period W_EXP W_MANT DIVSQRT_IMPL"]   # OOC implementation
     make formal   # SymbiYosys BMC proofs (needs the oss-cad-suite)
+    make formal-equiv      # add/mul pipelines == fp_add/fp_mul (BMC, ~15 min)
     make metrics-area      # yosys cell count + ltp per format (baseline JSON)
     make metrics-runtime   # wall-clock of the standard targets
     make metrics-latency   # per-op in_valid -> out_valid cycle table
@@ -97,7 +101,8 @@ selected by the 4-bit `mode` input (`fp_pkg::op_t`, all 16 codes used).
 ## Interface (`fp_unit`)
 
     parameter  W_EXP, W_MANT          format
-    parameter  DIVSQRT_IMPL = 1       1 SRT pipelines, 2 iterative engine, 0 combinational
+    parameter  DIVSQRT_IMPL = 1       1 SRT pipelines (5.6 ns), 3 SRT 4.0 ns form,
+                                      2 iterative engine, 0 combinational
     parameter  TAG_W = 1              request tag width
     parameter  OPS_EN = 16'hFFFF      bit i enables op_t value i
     input      clk, rst_n             rst_n synchronous, active low
@@ -131,7 +136,7 @@ selected by the 4-bit `mode` input (`fp_pkg::op_t`, all 16 codes used).
   matches the reservation and that no two pipelines ever deliver in the same
   cycle.
 
-## Pipelined latency-optimized core (178.6 MHz on VU9P-2L)
+## Pipelined latency-optimized core (178.6 / 250 MHz on VU9P-2L)
 
 The default configuration is fully pipelined with fixed, input-independent
 latency per operation. Latencies in cycles (`make metrics-latency`; sgnj,
@@ -149,6 +154,11 @@ class, next and minmaxnum are 1 cycle; rndintx equals rndint):
 With `DIVSQRT_IMPL = 2` (iterative engine, one div/sqrt in flight) div and
 sqrt take floor((W_MANT+3)/2) + 3 cycles: E5M2 5, E4M3 6, BF16 8, binary16 9,
 binary32 16, binary64 30; everything else is unchanged.
+
+With `DIVSQRT_IMPL = 3` (the SRT pipelines in their 4.0 ns form: one digit per
+stage and a register after the final fold, still one start per cycle) div /
+sqrt take E4M3 7/6, E5M2 7/5, BF16 9/8, binary16 11/9, binary32 17/16,
+binary64 32/30 cycles; everything else is unchanged.
 
 * `fp_add_pipe`: 3 stages. S1 unpacks/classifies and computes the per-operand
   alignment shift amounts (signed, from the exponent fields; the subnormal
@@ -168,19 +178,28 @@ binary32 16, binary64 30; everything else is unchanged.
   pipelines. The synthesized design uses **0 DSPs**.
 * `fp_div_srt` / `fp_sqrt_srt`: the generic-format div and sqrt datapaths are
   fully unrolled radix-4 SRT pipelines (carry-save remainder, one start per
-  cycle, fixed latency). Division packs 2 digits per stage (u' = 4u - 4dD,
-  d in {-2..2}; QST via 4 precomputed thresholds per 1/32 divisor cell).
-  Sqrt packs 1 digit per stage (R' = 16R + bits - d(8q+d), d in {-4..4}; the
-  non-restoring |R| <= 2q invariant makes the digit round(p/(8q)) selectable
-  from the carry-save estimate). Both use on-the-fly Q/QM conversion for
-  negative digits, fold the carry-save pair at each stage boundary, and were
-  validated bit-exactly against fp_div/fp_sqrt (verification/srt). Sqrt's
-  q-dependent term does not fit 2 digits/stage at this clock, so it uses one
-  digit per stage (15 cycles binary32); division reaches 9.
-* `fp_divsqrt_iter` (not instantiated): the former radix-4 iterative engine
-  (latency K+3) kept in-tree as a reference; `ITER_DIVSQRT = 0` still selects
-  the legacy combinational `fp_div`/`fp_sqrt`. The `--iter` harness flags and
-  `FP_ITER_DIVSQRT=1` now select the same SRT default.
+  cycle, fixed latency). Division: u' = 4u - 4dD, d in {-2..2}, QST via 4
+  precomputed thresholds per 1/32 divisor cell. Sqrt: R' = 16R + bits -
+  d(8q+d), d in {-4..4}; the non-restoring |R| <= 2q invariant makes the
+  digit round(p/(8q)) selectable from the carry-save estimate. Both use
+  on-the-fly Q/QM conversion for negative digits and were validated
+  bit-exactly against fp_div/fp_sqrt (verification/srt). The remainder is a
+  **fixed-width** carry-save pair (S and C modulo 2^CSW, CSW = S_W+4 for
+  div, 2*NDIG+5 for sqrt, the proven minimum plus at most one bit): the
+  recurrence is linear, so S+C stays congruent to the true residual, the
+  wrapped estimate window equals the exact one, and the residual is
+  recovered once at the end. The sqrt update -d(8q+d) needs no adder:
+  8q+d = {q, d} for d > 0 and {qm, 8-|d|} for d < 0, fed through two 3:2
+  levels with the negation's +1s in the zero carry LSBs. Parameters: `DPS`
+  digits per stage; `STAGE_FOLD` (default on for DPS >= 2) folds S+C at each
+  stage boundary so the next stage's first estimate needs no add;
+  `FOLD_STG` registers the final fold separately from the rounding (+1
+  cycle). `DIVSQRT_IMPL = 1` uses div DPS 2 (folded) and sqrt DPS 1
+  (unfolded); `DIVSQRT_IMPL = 3` uses DPS 1, no stage fold and FOLD_STG for
+  both.
+* `fp_divsqrt_iter` (`DIVSQRT_IMPL = 2`): the radix-4 iterative engine
+  (latency K+3, one operation in flight); `DIVSQRT_IMPL = 0` selects the
+  legacy combinational `fp_div`/`fp_sqrt`.
 * `fp_fma_pipe`: 7 cycles for W_MANT+1 <= 32 (8 above). The subnormal-candidate
   shift is computed from the pre-normalization accumulator in the normalize
   stage (the fp_add_pipe placement-ahead trick), so round/encode is a single
@@ -190,30 +209,27 @@ binary32 16, binary64 30; everything else is unchanged.
 * `fp_roundint_pipe`: 2 stages (prepare/GRS/round fused); `fp_minmax_pipe`/
   `fp_cmp_pipe`/`fp_totalorder_pipe`: 1 stage (compare/select + register).
 
-Measured with the single Vivado implementation run (non-project batch,
-`synth_design -mode out_of_context`, 5.600 ns clock, `place_design`,
-`route_design`) on **xcvu9p-flga2104-2L-e** at commit `0c8b86f`, i.e.
-BEFORE the in_ready/tag interface, OPS_EN and the Phase 3 operations were
-added. Those add a small reservation shifter, the 1-cycle fp_misc_pipe and
-an inexact bit in fp_roundint_pipe, none on the div/sqrt critical path, but
-the numbers have not been re-measured yet (no Vivado on the development
-host): rerun `make vivado` (5.6 ns SRT) and
-`make vivado VIVADO_ARGS="4.000 8 23 2"` (iterative, 250 MHz):
+Measured with `make vivado` (`syn/vivado-impl.tcl`: non-project batch,
+`synth_design -mode out_of_context`, opt, place, phys_opt, route, phys_opt;
+I/O registered by `syn/fp_unit_timing.sv`) with Vivado 2026.1.1 on
+**xcvu9p-flga2104-2L-e**, binary32, 2026-11-04:
 
-    WNS +0.055 ns, TNS 0, 0 failing endpoints  -> 178.6 MHz met
-    13338 CLB LUTs, 3993 CLB registers, 0 DSPs
-    (critical path: the div/sqrt SRT stage; the 4-digit-packed division stage
-    measures 5.53 ns)
+    build                    clock     WNS      CLB LUTs  regs   DSP  limiting path
+    DIVSQRT_IMPL=1 (default) 5.600 ns  +0.131   12,656   4,089   0   div SRT stage (2 digits)
+    DIVSQRT_IMPL=3 (SRT)     4.000 ns  +0.001   13,368   5,143   0   all pipelines within 50 ps
+    DIVSQRT_IMPL=2 (iter)    4.000 ns  +0.066    7,368   2,255   0   fma / iter / mul
 
-The SRT div/sqrt pipelines do not fit the previous 4.000 ns clock (the packed
-stages measure 5.4-5.6 ns, route-dominated), so the clock was relaxed and
-bisected: 5.550 ns fails (-0.066), 5.580 ns passes exactly, 5.600-5.700 ns
-pass with margin; the operating point is set to 5.600 ns (178.6 MHz) for
-margin. The non-div/sqrt pipelines still have large positive slack at this
-clock. The cycle counts above are what improved; in wall-clock terms division
-improves (9 x 5.6 = 50 ns vs 16 x 4 = 64 ns at the old clock) while sqrt is
-about flat-to-worse (15 x 5.6 = 84 ns) and every other operation is 1.4x
-slower, so this landing trades overall throughput for division latency.
+(`make vivado VIVADO_ARGS="4.000 8 23 3"` for the second row, `"4.000 8 23
+2"` for the third; `syn/vivado-module.tcl` times one datapath module.)
+Before the fixed-width carry-save change the default build measured +0.055 ns
+and 13,338 LUTs at commit `0c8b86f`, with the sqrt stage limiting; it does
+not fit 4.0 ns.
+
+Wall-clock latency at binary32: div 9 x 5.6 = 50 ns (`=1`), 17 x 4.0 = 68 ns
+(`=3`), 16 x 4.0 = 64 ns but one at a time (`=2`); sqrt 84 / 64 / 64 ns;
+every other operation is 1.4x faster at 4.0 ns. `DIVSQRT_IMPL = 3` is the
+fastest choice unless division latency dominates; it costs 700 more LUTs
+and 1,000 more registers than `=1`.
 
 The progression: the original combinational design measured 17.6 ns
 (~57 MHz); the Fmax pass pipelined every operation and closed at 4.00 ns with
@@ -233,10 +249,11 @@ setup/publish folds were measured and rejected at 4.000 ns. The final pass
 replaced the div/sqrt datapaths with the SRT pipelines above, cutting the
 cycle counts (div 16 -> 9, sqrt 16 -> 15 at binary32) at the cost of the
 operating clock (250 -> 178.6 MHz); the trade-offs are analysed above.
-`ITER_DIVSQRT = 0`
-selects the legacy combinational divider and square root (much longer critical
-path); the other operations stay pipelined. The legacy modules are kept for
-the formal property checks.
+The fixed-width carry-save SRT pipelines (`DIVSQRT_IMPL = 3`) then brought
+the fully pipelined div/sqrt back to 4.0 ns. `DIVSQRT_IMPL = 0` selects the
+legacy combinational divider and square root (much longer critical path);
+the other operations stay pipelined. The legacy modules are kept for the
+formal property checks.
 
 `tests/latency.py`
 (`make metrics-latency`) prints the per-op cycle table above and checks that

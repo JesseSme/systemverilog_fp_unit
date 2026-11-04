@@ -5,7 +5,7 @@ SIM ?= verilator
 # oss-cad-suite provides SymbiYosys (sby) + Yosys for formal verification.
 OSS ?= /home/jesse/Documents/oss-cad-suite-linux-x64-20260813/oss-cad-suite
 
-.PHONY: regress regress-all regress-axilite smoke soak coverage formal lint bf16 stream regress-exp vivado \
+.PHONY: regress regress-all regress-axilite smoke soak coverage formal formal-equiv check-ds3 lint bf16 stream regress-exp vivado \
         exhaustive-iter soak-iter stream-iter regress-axilite-iter \
         metrics-area metrics-runtime metrics-latency metrics-compare clean
 
@@ -55,6 +55,17 @@ stream-iter:
 regress-axilite-iter:
 	FP_DIVSQRT_IMPL=2 uv run python tests/run_regression.py --top fp_unit_axilite --tests test_fp_unit_axilite
 
+# SRT pipelines in their 4.0 ns form (fp_unit DIVSQRT_IMPL=3): full cocotb
+# matrix, exhaustive 8-bit sweep, soak, streaming test, plus the SRT
+# module differential in that configuration.
+check-ds3:
+	FP_DIVSQRT_IMPL=3 uv run python tests/run_regression.py --all
+	uv run python tests/exhaustive.py --divsqrt 3
+	uv run python tests/soak.py --divsqrt 3
+	uv run python tests/stream.py --param DIVSQRT_IMPL=3
+	FP_DIVSQRT_IMPL=3 uv run python tests/run_regression.py --top fp_unit_axilite --tests test_fp_unit_axilite
+	uv run python verification/srt/run_diff.py --param DPS=1 --param FOLD_STG=1
+
 # Cross-width randomized soak (binary16, BF16, E4M3 by default; tens of
 # millions of vectors against the bit-exact oracle at C++ speed).
 soak:
@@ -64,7 +75,10 @@ soak:
 # plus the exhaustive all-8-bit-format sweep (which covers every edge path,
 # including the E8M0 datapaths and the degenerate exponent ranges), merged and
 # annotated into coverage_annotate/.
+# (old coverage.dat files are removed first: build directories this target
+# does not rerun, e.g. *_iter, would otherwise merge stale line numbers.)
 coverage:
+	rm -f soak_build/*/coverage.dat exhaustive_build/*/coverage.dat
 	uv run python tests/soak.py --vectors 1000000
 	uv run python tests/soak.py --width 8 0 --vectors 1000000
 	uv run python tests/exhaustive.py
@@ -78,6 +92,15 @@ coverage:
 # E4M3/E5M2/binary16. Needs the oss-cad-suite.
 formal:
 	@export PATH="$(OSS)/bin:$(PATH)"; for f in bmc_m6_b16.sby bmc_m6_e4m3.sby bmc_m6_e7m0.sby bmc_arith_e4m3.sby bmc_arith_e5m2.sby bmc_div_e4m3.sby bmc_div_e5m2.sby bmc_div_b16.sby; do \
+	  echo "=== $$f ==="; sby -f $$f || exit 1; done
+
+# Formal equivalence of the add/mul pipelines against the combinational
+# fp_add / fp_mul (formal/fp_pipe_equiv.sv; plan P4.3): every operand pair
+# and rounding mode, any in-flight history. E4M3, bfloat16 and binary16 add
+# close in seconds; binary16 mul (two different 11x11 multiplier
+# structures) takes ~13 min with bitwuzla.
+formal-equiv:
+	@export PATH="$(OSS)/bin:$(PATH)"; for f in bmc_equiv_add_e4m3.sby bmc_equiv_mul_e4m3.sby bmc_equiv_add_bf16.sby bmc_equiv_mul_bf16.sby bmc_equiv_add_b16.sby bmc_equiv_mul_b16.sby; do \
 	  echo "=== $$f ==="; sby -f $$f || exit 1; done
 
 # Area/timing proxies (Yosys synth + stat + ltp) and target runtimes; see
@@ -119,6 +142,9 @@ lint:
 	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=0 $(RTL)
 	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=2 $(RTL)
 	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=2 -GW_EXP=11 -GW_MANT=52 $(RTL)
+	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=3 $(RTL)
+	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=3 -GW_EXP=11 -GW_MANT=52 $(RTL)
+	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=3 -GW_EXP=4 -GW_MANT=3 $(RTL)
 	$(VLINT) --top-module fp_unit -GW_EXP=11 -GW_MANT=52 $(RTL)
 	$(VLINT) --top-module fp_unit -GW_EXP=8 -GW_MANT=0 $(RTL)
 	$(VLINT) --top-module fp_unit_axilite $(RTL) rtl/fp_unit_axilite.sv

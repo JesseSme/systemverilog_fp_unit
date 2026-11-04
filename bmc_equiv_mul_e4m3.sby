@@ -1,0 +1,33 @@
+# SymbiYosys BMC: pipelined datapath == combinational reference (mul_e4m3).
+# See formal/fp_pipe_equiv.sv (the add files are read too: yosys elaborates
+# the default-parameter fp_pipe_equiv as well). Run via:  sby -f bmc_equiv_mul_e4m3.sby
+
+[tasks]
+bmc
+
+[options]
+mode bmc
+depth 6
+expect pass
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+read_verilog -sv -formal fp_pkg.sv
+read_verilog -sv -formal fp_add.sv
+read_verilog -sv -formal fp_add_pipe.sv
+read_verilog -sv -formal fp_mul.sv
+read_verilog -sv -formal fp_mul_core.sv
+read_verilog -sv -formal fp_mul_pipe.sv
+read_verilog -sv -formal fp_pipe_equiv.sv
+prep -top fp_pipe_equiv_mul_e4m3
+
+[files]
+rtl/fp_pkg.sv
+rtl/fp_add.sv
+rtl/fp_add_pipe.sv
+rtl/fp_mul.sv
+rtl/fp_mul_core.sv
+rtl/fp_mul_pipe.sv
+formal/fp_pipe_equiv.sv

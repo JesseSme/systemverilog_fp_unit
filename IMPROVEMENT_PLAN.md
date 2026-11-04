@@ -10,8 +10,17 @@
 >   their name instead.
 > - `fp_exp_seq` is far less accurate than its header claimed (T1.4).
 >
-> Still open: the Vivado re-measurement (T0.3/T2.1; no Vivado on the
-> development host), Phase 4, and the Phase 3.3 design notes.
+> **Update 2026-11-04:** Vivado 2026.1.1 found on the host
+> (`/media/lfs/2026.1.1`); every build re-measured (README table). Phase
+> 3.3: design notes in `docs/proposals/`. Phase 4: P4.1 done (fixed-width
+> carry-save SRT, `DIVSQRT_IMPL = 3` closes 4.000 ns fully pipelined; also
+> found and fixed a latent sqrt digit-select overflow), P4.3 done (add/mul
+> pipe == combinational at E4M3, bfloat16 and binary16), P4.4 done
+> (HANDOFF coverage section), P4.2 not attempted (needs a dual-path adder;
+> see HANDOFF). Correction to P4.1 below: removing the per-stage fold is a
+> win at one digit per stage only; with two digits per stage the fold keeps
+> the next stage's first estimate add-free, so it is now a parameter
+> (`STAGE_FOLD`).
 
 Written 2026-11-03 against `master` @ `0c8b86f` ("Merge opt/divsqrt-srt").
 The reader is an implementing agent. Do the tasks in order. Each task lists the
