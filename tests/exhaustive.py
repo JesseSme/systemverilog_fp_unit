@@ -157,9 +157,9 @@ def main() -> None:
                     help="single format to test (default: all 8-bit formats)")
     ap.add_argument("--keep", action="store_true",
                     help="keep previously generated expected files")
-    ap.add_argument("--divsqrt", type=int, choices=(0, 1, 2), default=1,
+    ap.add_argument("--divsqrt", type=int, choices=(0, 1, 2, 3), default=1,
                     help="fp_unit DIVSQRT_IMPL: 1 SRT pipelines (default), "
-                         "2 iterative engine, 0 combinational reference")
+                         "2 iterative engine, 3 SRT 250 MHz form, 0 combinational reference")
     ap.add_argument("--iter", action="store_true",
                     help="shorthand for --divsqrt 2 (iterative div/sqrt engine)")
     ap.add_argument("--jobs", type=int, default=0,
@@ -172,7 +172,8 @@ def main() -> None:
         widths = FORMATS_8BIT
 
     impl = 2 if args.iter else args.divsqrt
-    mode = {0: " (combinational div/sqrt)", 1: "", 2: " (iterative div/sqrt)"}[impl]
+    mode = {0: " (combinational div/sqrt)", 1: "", 2: " (iterative div/sqrt)",
+            3: " (SRT div/sqrt, 250 MHz form)"}[impl]
     for wexp, wmant in widths:
         print(f"=== 8-bit format W_EXP={wexp} W_MANT={wmant}{mode} ===", flush=True)
 

@@ -11,6 +11,7 @@ radicand-slice bugs during the SRT rework.
 Usage:
     uv run python verification/srt/run_diff.py                 # default matrix
     uv run python verification/srt/run_diff.py --width 8 23 --vectors 2000000
+    uv run python verification/srt/run_diff.py --param DPS=1 --param FOLD_STG=1
 """
 
 import argparse
@@ -40,15 +41,17 @@ def _env() -> dict:
 
 
 def build_and_run(job) -> tuple:
-    wexp, wmant, vectors, seed = job
+    wexp, wmant, vectors, seed, params = job
+    psuffix = "".join(f"_{k}{v}" for k, v in params)
     results = []
     for op, (top, module, wrapper, harness) in OPS.items():
-        name = f"{op}_{wexp}x{wmant}"
+        name = f"{op}_{wexp}x{wmant}{psuffix}"
         bdir = os.path.join(BUILD, name)
         exe = os.path.join(bdir, op)
         os.makedirs(bdir, exist_ok=True)
         cmd = ["verilator", "--cc", "--exe", "--build", "--timing",
                "--top-module", top, f"-GW_EXP={wexp}", f"-GW_MANT={wmant}",
+               *[f"-G{k}={v}" for k, v in params],
                "--Mdir", bdir, "--prefix", "V" + top, "-o", op,
                *COMMON_RTL,
                os.path.join(ROOT, "rtl", module),
@@ -75,10 +78,13 @@ def main() -> int:
     ap.add_argument("--vectors", type=int, default=300000)
     ap.add_argument("--seed", type=lambda s: int(s, 0), default=0x123456789abcdef)
     ap.add_argument("--jobs", type=int, default=0)
+    ap.add_argument("--param", action="append", default=[], metavar="K=V",
+                    help="SRT module parameter override, e.g. DPS=1 or FOLD_STG=1")
     args = ap.parse_args()
 
     formats = [tuple(w) for w in args.width] if args.width else DEFAULT_FORMATS
-    work = [(we, wm, args.vectors, args.seed) for we, wm in formats]
+    params = tuple(tuple(p.split("=", 1)) for p in args.param)
+    work = [(we, wm, args.vectors, args.seed, params) for we, wm in formats]
     jobs = args.jobs if args.jobs > 0 else min(len(work), os.cpu_count() or 1)
     if jobs > 1 and len(work) > 1:
         with ProcessPoolExecutor(max_workers=jobs) as ex:
@@ -90,7 +96,7 @@ def main() -> int:
     for wexp, wmant, res in results:
         for op, op_ok, line in res:
             ok = ok and op_ok
-            print(f"W_EXP={wexp} W_MANT={wmant} {op:4s}: {'PASS' if op_ok else 'FAIL'}  {line}")
+            print(f"W_EXP={wexp} W_MANT={wmant}{''.join(f' {k}={v}' for k, v in params)} {op:4s}: {'PASS' if op_ok else 'FAIL'}  {line}")
     print("ALL SRT DIFFERENTIALS PASS" if ok else "SOME SRT DIFFERENTIALS FAILED")
     return 0 if ok else 1
 

@@ -93,22 +93,24 @@ package fp_pkg;
     lat_fma = (w_mant + 1 <= 32) ? 7 : 8;
   endfunction
 
-  // fp_div_srt: NSTG + 2 with NSTG = ceil(NDIG / dps).
-  function automatic int lat_div_srt(input int w_mant, input int dps);
+  // fp_div_srt: NSTG + 2 + fold_stg with NSTG = ceil(NDIG / dps).
+  function automatic int lat_div_srt(input int w_mant, input int dps,
+                                     input int fold_stg);
     int s_w, target, ndig;
     s_w    = w_mant + 1;
     target = s_w + 2;
     ndig   = (target % 2 == 0) ? (target / 2 + 1) : ((target + 1) / 2 + 1);
-    lat_div_srt = (ndig + dps - 1) / dps + 2;
+    lat_div_srt = (ndig + dps - 1) / dps + 2 + fold_stg;
   endfunction
 
-  // fp_sqrt_srt: NSTG + 2 with NDIG = (R_W + PAD - 4) / 4.
-  function automatic int lat_sqrt_srt(input int w_mant, input int dps);
+  // fp_sqrt_srt: NSTG + 2 + fold_stg with NDIG = (R_W + PAD - 4) / 4.
+  function automatic int lat_sqrt_srt(input int w_mant, input int dps,
+                                      input int fold_stg);
     int s_w, re, ndig;
     s_w  = w_mant + 1;
     re   = 2 * s_w + 6 + ((s_w % 2 == 0) ? 2 : 0);
     ndig = (re - 4) / 4;
-    lat_sqrt_srt = (ndig + dps - 1) / dps + 2;
+    lat_sqrt_srt = (ndig + dps - 1) / dps + 2 + fold_stg;
   endfunction
 
   // fp_divsqrt_iter: K + 3 with K = floor((W_MANT+3)/2) (one op at a time).

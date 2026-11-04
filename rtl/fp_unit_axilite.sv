@@ -42,7 +42,8 @@ module fp_unit_axilite #(
   parameter int W_MANT      = 23,
   parameter int ADDR_WIDTH  = 6,
   // Passed through to fp_unit (see fp_unit.sv): 1 (default) pipelined SRT
-  // div/sqrt, 2 iterative engine, 0 combinational reference.
+  // div/sqrt, 3 SRT in the 4.0 ns form, 2 iterative engine, 0 combinational
+  // reference.
   parameter int DIVSQRT_IMPL = 1
 ) (
   input  logic                  s_axi_aclk,

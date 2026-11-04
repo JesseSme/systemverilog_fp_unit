@@ -111,8 +111,8 @@ def main() -> int:
                     help="single format to probe (repeatable; default: matrix)")
     ap.add_argument("--json", type=str, default=None,
                     help="write the measured table as JSON")
-    ap.add_argument("--divsqrt", type=int, choices=(0, 1, 2), default=1,
-                    help="fp_unit DIVSQRT_IMPL (1 SRT default, 2 iterative, 0 comb)")
+    ap.add_argument("--divsqrt", type=int, choices=(0, 1, 2, 3), default=1,
+                    help="fp_unit DIVSQRT_IMPL (1 SRT default, 2 iterative, 3 SRT 250 MHz, 0 comb)")
     ap.add_argument("--jobs", type=int, default=0,
                     help="widths to run concurrently (0 = one per core)")
     args = ap.parse_args()

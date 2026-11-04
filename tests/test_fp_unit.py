@@ -758,6 +758,23 @@ def _directed_sqrt_vectors(fmt):
             (OP_SQRT, MODE_RP,  m2, 0, 0x3DA9, ine, "sqrt(2) (RP)"),
         ]
 
+    # --- fp_sqrt_srt digit +4 (all eight selection compares true): the 3-bit
+    # compare counter used to wrap to 0 and select digit -4 instead. Found by
+    # the SRT streaming differential (1 in 5M random binary64 / (10,40)
+    # radicands); expected values from the oracle and combinational fp_sqrt.
+    if fmt.W_EXP == 11 and fmt.W_MANT == 52:
+        v += [
+            (OP_SQRT, MODE_RNA, 0x00050DBA2071B53C, 0, 0x1FF1FBF51ACCCE3B, ine,
+             "sqrt digit +4 (subnormal radicand)"),
+            (OP_SQRT, MODE_RM, 0x3FF437FBCDB25049, 0, 0x3FF1FC6F8F4E463D, ine,
+             "sqrt digit +4 (fixed-width carry-save case)"),
+        ]
+    if fmt.W_EXP == 10 and fmt.W_MANT == 40:
+        v += [
+            (OP_SQRT, MODE_RZ, 0x1FD439966A0C6, 0, 0x1FE1FD262E3A0, ine,
+             "sqrt digit +4"),
+        ]
+
     # --- boundary: sqrt of min normal is exact (emin is even for W_EXP >= 2).
     v += [
         (OP_SQRT, MODE_RNE, minn, 0, encode_finite(0, fmt.emin // 2 + fmt.bias, 0, fmt), 0,

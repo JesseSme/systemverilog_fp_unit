@@ -54,6 +54,10 @@ module fp_unit #(
   //     K+3 (K = floor((W_MANT+3)/2)), ONE div/sqrt in flight at a time
   //     (in_ready is low for div/sqrt while it is busy); the 250 MHz
   //     configuration with about half the LUTs.
+  //   3: the SRT pipelines in their 250 MHz form (one radix-4 digit per
+  //     stage, carry-save across the stage boundaries, a register after
+  //     the final fold): one start per cycle like 1, closes 4.0 ns on
+  //     VU9P-2L, more cycles of latency (README table).
   //   0: the combinational reference datapaths (fp_div / fp_sqrt)
   //     registered once (latency 1, very long critical path; reference and
   //     formal only).
@@ -110,12 +114,16 @@ module fp_unit #(
   localparam bit P_MUL    = GENERIC && EN_MUL;
   localparam bit P_FMA    = GENERIC && EN_FMA;
   localparam bit P_RND    = GENERIC && EN_RND;
-  localparam bit P_DIV    = GENERIC && (DIVSQRT_IMPL == 1) && EN_DIV;
-  localparam bit P_SQRT   = GENERIC && (DIVSQRT_IMPL == 1) && EN_SQRT;
+  localparam bit P_SRT    = (DIVSQRT_IMPL == 1) || (DIVSQRT_IMPL == 3);
+  localparam bit P_DIV    = GENERIC && P_SRT && EN_DIV;
+  localparam bit P_SQRT   = GENERIC && P_SRT && EN_SQRT;
   localparam bit P_ITER   = GENERIC && (DIVSQRT_IMPL == 2) && (EN_DIV || EN_SQRT);
   localparam bit P_COMBDS = GENERIC && (DIVSQRT_IMPL == 0) && (EN_DIV || EN_SQRT);
-  localparam int DIV_DPS  = 2;  // radix-4 digits per fp_div_srt stage
-  localparam int SQRT_DPS = 1;  // radix-4 digits per fp_sqrt_srt stage
+  // SRT configuration: radix-4 digits per stage, and the optional register
+  // after the final carry-save fold (see fp_div_srt / fp_sqrt_srt)
+  localparam int DIV_DPS  = (DIVSQRT_IMPL == 3) ? 1 : 2;
+  localparam int SQRT_DPS = 1;
+  localparam int SRT_FOLD_STG = (DIVSQRT_IMPL == 3) ? 1 : 0;
 
   // ---------------------------------------------- reserved encodings
   fp_pkg::rounding_t rm_eff;
@@ -130,9 +138,9 @@ module fp_unit #(
   localparam int LAT_ADD  = P_ADD ? fp_pkg::LAT_ADD : 1;
   localparam int LAT_MUL  = P_MUL ? fp_pkg::lat_mul(W_MANT) : 1;
   localparam int LAT_FMA  = P_FMA ? fp_pkg::lat_fma(W_MANT) : 1;
-  localparam int LAT_DIV  = P_DIV  ? fp_pkg::lat_div_srt(W_MANT, DIV_DPS)
+  localparam int LAT_DIV  = P_DIV  ? fp_pkg::lat_div_srt(W_MANT, DIV_DPS, SRT_FOLD_STG)
                           : P_ITER ? fp_pkg::lat_divsqrt_iter(W_MANT) : 1;
-  localparam int LAT_SQRT = P_SQRT ? fp_pkg::lat_sqrt_srt(W_MANT, SQRT_DPS)
+  localparam int LAT_SQRT = P_SQRT ? fp_pkg::lat_sqrt_srt(W_MANT, SQRT_DPS, SRT_FOLD_STG)
                           : P_ITER ? fp_pkg::lat_divsqrt_iter(W_MANT) : 1;
   localparam int LAT_RND  = P_RND ? fp_pkg::LAT_RNDINT : 1;
   localparam int LAT_ONE  = 1;  // min/max/cmp/totalOrder/misc, output register
@@ -257,7 +265,8 @@ module fp_unit #(
     end
 
     if (P_DIV) begin : g_div_srt
-      fp_div_srt #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DPS(DIV_DPS)) u_fp_div_srt (
+      fp_div_srt #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DPS(DIV_DPS),
+                   .FOLD_STG(SRT_FOLD_STG)) u_fp_div_srt (
         .a(a), .b(b), .rm(rm_eff), .start(start_div),
         .y(y_div_p), .flags(f_div_p),
         .clk(clk), .rst_n(rst_n), .out_valid(v_div)
@@ -267,7 +276,8 @@ module fp_unit #(
     end
 
     if (P_SQRT) begin : g_sqrt_srt
-      fp_sqrt_srt #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DPS(SQRT_DPS)) u_fp_sqrt_srt (
+      fp_sqrt_srt #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DPS(SQRT_DPS),
+                    .FOLD_STG(SRT_FOLD_STG)) u_fp_sqrt_srt (
         .a(a), .rm(rm_eff), .start(start_sqrt),
         .y(y_sqrt_p), .flags(f_sqrt_p),
         .clk(clk), .rst_n(rst_n), .out_valid(v_sqrt)

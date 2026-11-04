@@ -198,9 +198,9 @@ def main() -> int:
                     help="PRNG seed for the operand stream (default 0x50ac)")
     ap.add_argument("--keep", action="store_true",
                     help="keep previously generated expected files")
-    ap.add_argument("--divsqrt", type=int, choices=(0, 1, 2), default=1,
+    ap.add_argument("--divsqrt", type=int, choices=(0, 1, 2, 3), default=1,
                     help="fp_unit DIVSQRT_IMPL: 1 SRT pipelines (default), "
-                         "2 iterative engine, 0 combinational reference")
+                         "2 iterative engine, 3 SRT 250 MHz form, 0 combinational reference")
     ap.add_argument("--iter", action="store_true",
                     help="shorthand for --divsqrt 2 (iterative div/sqrt engine)")
     ap.add_argument("--jobs", type=int, default=0,
@@ -209,7 +209,8 @@ def main() -> int:
 
     widths = [tuple(args.width)] if args.width else DEFAULT_WIDTHS
     impl = 2 if args.iter else args.divsqrt
-    mode = {0: " (combinational div/sqrt)", 1: "", 2: " (iterative div/sqrt)"}[impl]
+    mode = {0: " (combinational div/sqrt)", 1: "", 2: " (iterative div/sqrt)",
+            3: " (SRT div/sqrt, 250 MHz form)"}[impl]
     for wexp, wmant in widths:
         print(f"=== soak W_EXP={wexp} W_MANT={wmant} ({args.vectors:,} vectors){mode} ===",
               flush=True)

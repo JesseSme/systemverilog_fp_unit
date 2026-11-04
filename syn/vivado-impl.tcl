@@ -4,7 +4,8 @@
 #
 # Defaults: 5.600 ns, binary32 (8 23), DIVSQRT_IMPL 1 (SRT pipelines).
 # The 250 MHz configuration is: -tclargs 4.000 8 23 2
-# Reports go to syn/out/<tag>/ (gitignored); rerunning overwrites them.
+# Reports and the routed checkpoint go to syn/out/<tag>/ (gitignored);
+# rerunning overwrites them.
 # The RTL list comes from rtl/filelist.f plus the I/O-registering wrapper
 # syn/fp_unit_timing.sv.
 
@@ -36,7 +37,9 @@ place_design
 phys_opt_design
 route_design
 phys_opt_design
+write_checkpoint -force [file join $outdir routed.dcp]
 report_timing_summary -file [file join $outdir timing_summary.rpt]
 report_timing -max_paths 10 -file [file join $outdir timing_paths.rpt]
 report_utilization -file [file join $outdir utilization.rpt]
+report_utilization -hierarchical -hierarchical_depth 3 -file [file join $outdir utilization_hier.rpt]
 puts "VIVADO DONE: $tag WNS [get_property SLACK [get_timing_paths -max_paths 1 -setup]] ns"
