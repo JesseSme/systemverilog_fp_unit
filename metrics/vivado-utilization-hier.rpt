@@ -1,0 +1,44 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2026.1.1 (lin64) Build 6605303 Fri Sep 04 05:45:32 MDT 2026
+| Date         : Wed Nov  4 11:41:33 2026
+| Host         : jesse-Dell-Pro-Max-Tower-T2-FCT2250 running 64-bit Ubuntu 24.04.5 LTS
+| Command      : report_utilization -hierarchical -hierarchical_depth 3 -file /home/jesse/Documents/systemverilog_fp_unit/syn/out/w8x23_ds1_5.6ns/utilization_hier.rpt
+| Design       : fp_unit_timing
+| Device       : xcvu9p-flga2104-2L-e
+| Speed File   : -2L
+| Design State : Physopt postRoute
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Utilization Design Information
+
+Table of Contents
+-----------------
+1. Utilization by Hierarchy
+
+1. Utilization by Hierarchy
+---------------------------
+
++------------------------------+------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+|           Instance           |      Module      | Total LUTs | Logic LUTs | LUTRAMs | SRLs |  FFs | RAMB36 | RAMB18 | URAM | DSP Blocks |
++------------------------------+------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+| fp_unit_timing               |            (top) |      12656 |      12526 |       0 |  130 | 4089 |      0 |      0 |    0 |          0 |
+|   (fp_unit_timing)           |            (top) |          4 |          4 |       0 |    0 |  147 |      0 |      0 |    0 |          0 |
+|   u_fp_unit                  |          fp_unit |      12653 |      12523 |       0 |  130 | 3942 |      0 |      0 |    0 |          0 |
+|     g_sqrt_srt.u_fp_sqrt_srt |      fp_sqrt_srt |       3646 |       3602 |       0 |   44 | 1231 |      0 |      0 |    0 |          0 |
+|     g_add.u_fp_add_pipe      |      fp_add_pipe |       1079 |       1079 |       0 |    0 |  225 |      0 |      0 |    0 |          0 |
+|     g_cmp.u_fp_cmp_pipe      |      fp_cmp_pipe |        115 |        115 |       0 |    0 |    4 |      0 |      0 |    0 |          0 |
+|     g_div_srt.u_fp_div_srt   |       fp_div_srt |       3095 |       3049 |       0 |   46 |  908 |      0 |      0 |    0 |          0 |
+|     g_fma.u_fp_fma_pipe      |      fp_fma_pipe |       2838 |       2802 |       0 |   36 |  924 |      0 |      0 |    0 |          0 |
+|       (g_fma.u_fp_fma_pipe)  |      fp_fma_pipe |       2154 |       2118 |       0 |   36 |  708 |      0 |      0 |    0 |          0 |
+|       u_core                 |    fp_mul_core_0 |        686 |        686 |       0 |    0 |  216 |      0 |      0 |    0 |          0 |
+|     g_misc.u_fp_misc_pipe    |     fp_misc_pipe |        292 |        292 |       0 |    0 |   34 |      0 |      0 |    0 |          0 |
+|     g_mm.u_fp_minmax_pipe    |   fp_minmax_pipe |        149 |        149 |       0 |    0 |   34 |      0 |      0 |    0 |          0 |
+|     g_mul.u_fp_mul_pipe      |      fp_mul_pipe |        957 |        956 |       0 |    1 |  441 |      0 |      0 |    0 |          0 |
+|       (g_mul.u_fp_mul_pipe)  |      fp_mul_pipe |        333 |        333 |       0 |    0 |  225 |      0 |      0 |    0 |          0 |
+|       u_core                 |      fp_mul_core |        626 |        625 |       0 |    1 |  216 |      0 |      0 |    0 |          0 |
+|     g_rnd.u_fp_roundint_pipe | fp_roundint_pipe |        445 |        445 |       0 |    0 |  121 |      0 |      0 |    0 |          0 |
++------------------------------+------------------+------------+------------+---------+------+------+--------+--------+------+------------+
+* Note: The sum of lower-level cells may be larger than their parent cells total, due to cross-hierarchy LUT combining
+
+

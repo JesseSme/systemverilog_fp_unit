@@ -1,7 +1,7 @@
 [project]
 name = "systemverilog-fp-unit"
 version = "0.1.0"
-description = "Add your description here"
+description = "Verification environment (cocotb, Verilator, bit-exact Python oracle) of a parameterized IEEE 754-2019 floating-point unit in SystemVerilog"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

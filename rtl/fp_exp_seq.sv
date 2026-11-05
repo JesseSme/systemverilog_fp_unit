@@ -57,8 +57,6 @@ module fp_exp_seq (
   assign clamped_mag = (x[30:0] > C_MAX[30:0]) ? {x[31], C_MAX[30:0]} : x;
 
   // ------------------------------------------------------- fp_unit instances
-  fp_pkg::op_t       mul_mode;
-  fp_pkg::rounding_t mul_rm;
   logic [31:0]       mul_a, mul_b, mul_y;
   logic              mul_in_valid, mul_valid, mul_ready;
   /* verilator lint_off UNUSEDSIGNAL */
@@ -69,16 +67,14 @@ module fp_exp_seq (
 
   // Only the multiply datapath is built (OPS_EN), not the whole unit.
   fp_unit #(.W_EXP(8), .W_MANT(23),
-            .OPS_EN(16'd1 << fp_pkg::OP_MUL)) u_mul (
+            .OPS_EN(16'h0004)) u_mul (   // OPS_EN: OP_MUL (2) only
     .clk(clk), .rst_n(rst_n),
     .in_valid(mul_in_valid), .in_ready(mul_ready), .out_valid(mul_valid),
-    .mode(mul_mode), .rm(mul_rm),
+    .mode(fp_pkg::OP_MUL), .rm(fp_pkg::RM_RNE),
     .a(mul_a), .b(mul_b), .c('0), .in_tag(1'b0),
     .y(mul_y), .cmp(mul_cmp), .flags(mul_flags), .out_tag(mul_tag)
   );
 
-  fp_pkg::op_t       add_mode;
-  fp_pkg::rounding_t add_rm;
   logic [31:0]       add_a, add_b, add_y;
   logic              add_in_valid, add_valid, add_ready;
   /* verilator lint_off UNUSEDSIGNAL */
@@ -89,18 +85,14 @@ module fp_exp_seq (
 
   // Only the add/sub datapath is built (OPS_EN).
   fp_unit #(.W_EXP(8), .W_MANT(23),
-            .OPS_EN((16'd1 << fp_pkg::OP_ADD) | (16'd1 << fp_pkg::OP_SUB))) u_add (
+            .OPS_EN(16'h0003)) u_add (   // OPS_EN: OP_ADD (0), OP_SUB (1)
     .clk(clk), .rst_n(rst_n),
     .in_valid(add_in_valid), .in_ready(add_ready), .out_valid(add_valid),
-    .mode(add_mode), .rm(add_rm),
+    .mode(fp_pkg::OP_ADD), .rm(fp_pkg::RM_RNE),
     .a(add_a), .b(add_b), .c('0), .in_tag(1'b0),
     .y(add_y), .cmp(add_cmp), .flags(add_flags), .out_tag(add_tag)
   );
 
-  assign mul_mode = fp_pkg::OP_MUL;
-  assign mul_rm   = fp_pkg::RM_RNE;
-  assign add_mode = fp_pkg::OP_ADD;
-  assign add_rm   = fp_pkg::RM_RNE;
 
   // ------------------------------------------------------- sequencer
   // Step schedule (one operation per op-step, waiting for out_valid):

@@ -125,6 +125,19 @@ module fp_unit #(
   localparam int SQRT_DPS = 1;
   localparam int SRT_FOLD_STG = (DIVSQRT_IMPL == 3) ? 1 : 0;
 
+  // ---------------------------------------------- parameter checks
+  // Elaboration-time errors (Vivado, Verilator and Yosys stop with the
+  // message) instead of silently building a wrong datapath.
+  if (DIVSQRT_IMPL != 0 && DIVSQRT_IMPL != 1 && DIVSQRT_IMPL != 2 && DIVSQRT_IMPL != 3) begin : g_chk_divsqrt
+    $error("fp_unit: DIVSQRT_IMPL = %0d is not 0, 1, 2 or 3", DIVSQRT_IMPL);
+  end
+  if (TAG_W < 1) begin : g_chk_tag
+    $error("fp_unit: TAG_W = %0d must be at least 1", TAG_W);
+  end
+  if (W_EXP < 1 || W_MANT < 0) begin : g_chk_fmt
+    $error("fp_unit: W_EXP = %0d must be >= 1 and W_MANT = %0d >= 0", W_EXP, W_MANT);
+  end
+
   // ---------------------------------------------- reserved encodings
   fp_pkg::rounding_t rm_eff;
   assign rm_eff = (rm > fp_pkg::RM_RM) ? fp_pkg::RM_RNE : rm;
