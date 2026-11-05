@@ -1,9 +1,9 @@
-// Out-of-context timing wrapper for fp_unit (Vivado implementation runs).
+// Out-of-context timing wrapper for jsm_fp_unit (Vivado implementation runs).
 //
-// Registers every fp_unit input once and every output once, so the timed
+// Registers every jsm_fp_unit input once and every output once, so the timed
 // paths are register-to-register inside the design (no unconstrained
 // input/output port paths in an OOC run). rst_n is passed straight through
-// (fp_unit uses it synchronously). Used by syn/vivado-impl.tcl.
+// (jsm_fp_unit uses it synchronously). Used by syn/vivado-impl.tcl.
 
 module fp_unit_timing #(
   parameter int W_EXP        = 8,
@@ -15,8 +15,8 @@ module fp_unit_timing #(
   input  logic                    rst_n,
   input  logic                    in_valid,
   output logic                    in_ready,
-  input  fp_pkg::op_t             mode,
-  input  fp_pkg::rounding_t       rm,
+  input  jsm_fp_pkg::op_t             mode,
+  input  jsm_fp_pkg::rounding_t       rm,
   input  logic [1+W_EXP+W_MANT-1:0] a,
   input  logic [1+W_EXP+W_MANT-1:0] b,
   input  logic [1+W_EXP+W_MANT-1:0] c,
@@ -31,8 +31,8 @@ module fp_unit_timing #(
   localparam int W = 1 + W_EXP + W_MANT;
 
   logic              in_valid_q;
-  fp_pkg::op_t       mode_q;
-  fp_pkg::rounding_t rm_q;
+  jsm_fp_pkg::op_t       mode_q;
+  jsm_fp_pkg::rounding_t rm_q;
   logic [W-1:0]      a_q, b_q, c_q;
   logic [TAG_W-1:0]  in_tag_q;
 
@@ -58,7 +58,7 @@ module fp_unit_timing #(
     out_tag    <= out_tag_d;
   end
 
-  fp_unit #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DIVSQRT_IMPL(DIVSQRT_IMPL), .TAG_W(TAG_W)) u_fp_unit (
+  jsm_fp_unit #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DIVSQRT_IMPL(DIVSQRT_IMPL), .TAG_W(TAG_W)) u_fp_unit (
     .clk(clk), .rst_n(rst_n),
     .in_valid(in_valid_q), .in_ready(in_ready_d),
     .mode(mode_q), .rm(rm_q), .a(a_q), .b(b_q), .c(c_q), .in_tag(in_tag_q),

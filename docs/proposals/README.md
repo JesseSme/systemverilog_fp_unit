@@ -2,23 +2,23 @@
 
 These are proposals only; nothing here is implemented. Each note covers the
 opcode or interface change, the latency and an area estimate. The area
-figures are post-route Vivado 2026.1.1 LUT counts of existing `fp_unit`
+figures are post-route Vivado 2026.1.1 LUT counts of existing `jsm_fp_unit`
 blocks (binary32, xcvu9p-2L, `DIVSQRT_IMPL = 1`, 5.6 ns,
 `syn/vivado-impl.tcl` hierarchical report, 2026-11-04), scaled by the
 similarity of the new datapath:
 
 | block (binary32)     | LUTs  | FFs  |
 |----------------------|------:|-----:|
-| fp_sqrt_srt          | 4,584 | 1,383 |
-| fp_div_srt           | 3,031 |   900 |
-| fp_fma_pipe          | 2,834 |   924 |
-| fp_add_pipe          | 1,072 |   225 |
-| fp_mul_pipe          |   954 |   441 |
-| fp_roundint_pipe     |   442 |   121 |
-| fp_misc_pipe         |   294 |    34 |
-| fp_minmax_pipe       |   150 |    34 |
-| fp_cmp_pipe          |   114 |     4 |
-| fp_unit total        | 13,514 | 4,086 |
+| jsm_fp_sqrt_srt          | 4,584 | 1,383 |
+| jsm_fp_div_srt           | 3,031 |   900 |
+| jsm_fp_fma_pipe          | 2,834 |   924 |
+| jsm_fp_add_pipe          | 1,072 |   225 |
+| jsm_fp_mul_pipe          |   954 |   441 |
+| jsm_fp_roundint_pipe     |   442 |   121 |
+| jsm_fp_misc_pipe         |   294 |    34 |
+| jsm_fp_minmax_pipe       |   150 |    34 |
+| jsm_fp_cmp_pipe          |   114 |     4 |
+| jsm_fp_unit total        | 13,514 | 4,086 |
 
 | note | operations (IEEE 754-2019 clause) | new opcodes |
 |------|-----------------------------------|-------------|
@@ -30,7 +30,7 @@ similarity of the new datapath:
 
 ## Shared decision: the opcode space is full
 
-`fp_pkg::op_t` is 4 bits and all 16 codes are used (OP_SGNJ .. OP_RNDINTX
+`jsm_fp_pkg::op_t` is 4 bits and all 16 codes are used (OP_SGNJ .. OP_RNDINTX
 took the last five). Every note below needs new codes, so the first change,
 common to all of them, is:
 

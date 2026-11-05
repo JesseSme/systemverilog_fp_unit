@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Random fp_unit test vectors with oracle results, for the Vivado xsim
+"""Random jsm_fp_unit test vectors with oracle results, for the Vivado xsim
 testbenches of the Verilog/VHDL tops (tests/vivado/run_xsim.py).
 
 One vector per line, hex fields: op rm a b c y flags cmp

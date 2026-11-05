@@ -1,5 +1,5 @@
-// Vivado xsim testbench for the AXI4-Lite tops (rtl/top/fp_unit_axilite_top.v
-// and rtl/top/fp_unit_axilite_vhd.vhd), formats up to 64 bits wide.
+// Vivado xsim testbench for the AXI4-Lite tops (rtl/top/jsm_fp_unit_axilite_top.v
+// and rtl/top/jsm_fp_unit_axilite_vhd.vhd), formats up to 64 bits wide.
 //
 // A simple AXI4-Lite master drives the same transaction sequence into both
 // tops: write DATA_A/B/C (all words) and OPCODE, pulse CTRL.GO, poll
@@ -42,7 +42,7 @@ module tb_fp_unit_axilite_tops #(
   logic [1:0]    bresp [2], rresp [2];
   logic [31:0]   rdata [2];
 
-  fp_unit_axilite_top #(.W_EXP(W_EXP), .W_MANT(W_MANT), .ADDR_WIDTH(AW),
+  jsm_fp_unit_axilite_top #(.W_EXP(W_EXP), .W_MANT(W_MANT), .ADDR_WIDTH(AW),
                         .DIVSQRT_IMPL(DIVSQRT_IMPL)) u_verilog (
     .s_axi_aclk(clk), .s_axi_aresetn(aresetn),
     .s_axi_awaddr(awaddr), .s_axi_awvalid(awvalid), .s_axi_awready(awready[0]),
@@ -51,7 +51,7 @@ module tb_fp_unit_axilite_tops #(
     .s_axi_araddr(araddr), .s_axi_arvalid(arvalid), .s_axi_arready(arready[0]),
     .s_axi_rdata(rdata[0]), .s_axi_rresp(rresp[0]), .s_axi_rvalid(rvalid[0]), .s_axi_rready(rready));
 
-  fp_unit_axilite_vhd #(.W_EXP(W_EXP), .W_MANT(W_MANT), .ADDR_WIDTH(AW),
+  jsm_fp_unit_axilite_vhd #(.W_EXP(W_EXP), .W_MANT(W_MANT), .ADDR_WIDTH(AW),
                         .DIVSQRT_IMPL(DIVSQRT_IMPL)) u_vhdl (
     .s_axi_aclk(clk), .s_axi_aresetn(aresetn),
     .s_axi_awaddr(awaddr), .s_axi_awvalid(awvalid), .s_axi_awready(awready[1]),

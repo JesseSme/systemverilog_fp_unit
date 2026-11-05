@@ -86,7 +86,7 @@ def run(X, S_W, pad=None):
     return Q, (R != 0), None
 
 # ---------------------------------------------------------------------------
-# RTL-shaped model of rtl/fp_sqrt_srt.sv: the same digit loop with the RTL's
+# RTL-shaped model of rtl/jsm_fp_sqrt_srt.sv: the same digit loop with the RTL's
 # truncated carry-save estimate (`est_pe`) and threshold selection
 # (`thr_digit`). csw=None runs on exact integers; csw=N keeps S and C modulo
 # 2^N with no carry-propagate fold (what the RTL does, CSW = 2*NDIG + 5,
@@ -112,7 +112,7 @@ def thr_digit(q, pe, sh):
     return sum(pe >= t for t in ts) - 4
 
 def run_rtl(X, S_W, csw=None, ew=16):
-    """RTL-shaped fp_sqrt_srt digit loop. csw=None: exact integers (= the
+    """RTL-shaped jsm_fp_sqrt_srt digit loop. csw=None: exact integers (= the
     folded RTL); csw=N: S, C modulo 2^N with no fold, estimate window ew bits."""
     pad = 2 if S_W % 2 == 0 else 0
     RW = 2 * S_W + 6

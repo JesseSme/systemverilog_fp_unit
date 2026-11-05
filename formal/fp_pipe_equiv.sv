@@ -1,6 +1,6 @@
 // Formal equivalence of a pipelined datapath against its combinational
-// reference (plan P4.3): the same a/b/rm/op stream drives fp_add_pipe (or
-// fp_mul_pipe) and fp_add (fp_mul); the reference result is delayed by the
+// reference (plan P4.3): the same a/b/rm/op stream drives jsm_fp_add_pipe (or
+// jsm_fp_mul_pipe) and jsm_fp_add (jsm_fp_mul); the reference result is delayed by the
 // pipeline latency and must equal the pipeline's output whenever out_valid
 // is high, and out_valid must track the delayed start exactly.
 //
@@ -9,8 +9,8 @@
 // the first cycle after reset and checks it at the output, with the other
 // stages holding arbitrary in-flight operations.
 //
-//   OP_SEL = 0: fp_add_pipe vs fp_add (ADD and SUB through `op`)
-//   OP_SEL = 1: fp_mul_pipe vs fp_mul
+//   OP_SEL = 0: jsm_fp_add_pipe vs jsm_fp_add (ADD and SUB through `op`)
+//   OP_SEL = 1: jsm_fp_mul_pipe vs jsm_fp_mul
 
 module fp_pipe_equiv #(
   parameter int W_EXP  = 5,
@@ -22,39 +22,39 @@ module fp_pipe_equiv #(
   input logic                      start,
   input logic [1+W_EXP+W_MANT-1:0] a,
   input logic [1+W_EXP+W_MANT-1:0] b,
-  input fp_pkg::rounding_t         rm,
+  input jsm_fp_pkg::rounding_t         rm,
   input logic                      sub
 );
 
   localparam int W   = 1 + W_EXP + W_MANT;
-  localparam int LAT = (OP_SEL == 0) ? fp_pkg::LAT_ADD : fp_pkg::lat_mul(W_MANT);
+  localparam int LAT = (OP_SEL == 0) ? jsm_fp_pkg::LAT_ADD : jsm_fp_pkg::lat_mul(W_MANT);
 
   // the datapaths are only defined for the five rounding modes
-  always_comb assume (rm <= fp_pkg::RM_RM);
+  always_comb assume (rm <= jsm_fp_pkg::RM_RM);
 
   // reset in the first cycle
   logic init = 1'b1;
   always_ff @(posedge clk) init <= 1'b0;
   always_comb if (init) assume (!rst_n);
 
-  fp_pkg::op_t op;
-  assign op = sub ? fp_pkg::OP_SUB : fp_pkg::OP_ADD;
+  jsm_fp_pkg::op_t op;
+  assign op = sub ? jsm_fp_pkg::OP_SUB : jsm_fp_pkg::OP_ADD;
 
   logic [W-1:0] y_p, y_c;
   logic [4:0]   f_p, f_c;
   logic         v_p;
 
   if (OP_SEL == 0) begin : g_add
-    fp_add_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_pipe (
+    jsm_fp_add_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_pipe (
       .a(a), .b(b), .rm(rm), .op(op), .clk(clk), .rst_n(rst_n), .start(start),
       .y(y_p), .flags(f_p), .out_valid(v_p));
-    fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_ref (
+    jsm_fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_ref (
       .a(a), .b(b), .rm(rm), .op(op), .y(y_c), .flags(f_c));
   end else begin : g_mul
-    fp_mul_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_pipe (
+    jsm_fp_mul_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_pipe (
       .a(a), .b(b), .rm(rm), .clk(clk), .rst_n(rst_n), .start(start),
       .y(y_p), .flags(f_p), .out_valid(v_p));
-    fp_mul #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_ref (
+    jsm_fp_mul #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_ref (
       .a(a), .b(b), .rm(rm), .y(y_c), .flags(f_c));
   end
 
@@ -90,31 +90,31 @@ module fp_pipe_equiv #(
 endmodule
 
 module fp_pipe_equiv_add_e4m3 (input logic clk, rst_n, start, sub,
-                               input logic [7:0] a, b, input fp_pkg::rounding_t rm);
+                               input logic [7:0] a, b, input jsm_fp_pkg::rounding_t rm);
   fp_pipe_equiv #(.W_EXP(4), .W_MANT(3), .OP_SEL(0)) u (.*);
 endmodule
 
 module fp_pipe_equiv_mul_e4m3 (input logic clk, rst_n, start, sub,
-                               input logic [7:0] a, b, input fp_pkg::rounding_t rm);
+                               input logic [7:0] a, b, input jsm_fp_pkg::rounding_t rm);
   fp_pipe_equiv #(.W_EXP(4), .W_MANT(3), .OP_SEL(1)) u (.*);
 endmodule
 
 module fp_pipe_equiv_add_b16 (input logic clk, rst_n, start, sub,
-                              input logic [15:0] a, b, input fp_pkg::rounding_t rm);
+                              input logic [15:0] a, b, input jsm_fp_pkg::rounding_t rm);
   fp_pipe_equiv #(.W_EXP(5), .W_MANT(10), .OP_SEL(0)) u (.*);
 endmodule
 
 module fp_pipe_equiv_mul_b16 (input logic clk, rst_n, start, sub,
-                              input logic [15:0] a, b, input fp_pkg::rounding_t rm);
+                              input logic [15:0] a, b, input jsm_fp_pkg::rounding_t rm);
   fp_pipe_equiv #(.W_EXP(5), .W_MANT(10), .OP_SEL(1)) u (.*);
 endmodule
 
 module fp_pipe_equiv_add_bf16 (input logic clk, rst_n, start, sub,
-                               input logic [15:0] a, b, input fp_pkg::rounding_t rm);
+                               input logic [15:0] a, b, input jsm_fp_pkg::rounding_t rm);
   fp_pipe_equiv #(.W_EXP(8), .W_MANT(7), .OP_SEL(0)) u (.*);
 endmodule
 
 module fp_pipe_equiv_mul_bf16 (input logic clk, rst_n, start, sub,
-                               input logic [15:0] a, b, input fp_pkg::rounding_t rm);
+                               input logic [15:0] a, b, input jsm_fp_pkg::rounding_t rm);
   fp_pipe_equiv #(.W_EXP(8), .W_MANT(7), .OP_SEL(1)) u (.*);
 endmodule

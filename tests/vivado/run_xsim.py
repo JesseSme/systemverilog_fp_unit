@@ -6,9 +6,9 @@ with xvlog/xvhdl, then for each configuration elaborates a testbench that
 drives the Verilog top and the VHDL top side by side and checks every result
 against the bit-exact oracle (tests/vivado/gen_vectors.py):
 
-  * tb_fp_unit_tops: fp_unit_top.v + fp_unit_vhd.vhd, streaming requests
+  * tb_fp_unit_tops: jsm_fp_unit_top.v + jsm_fp_unit_vhd.vhd, streaming requests
     with random gaps, in_ready backpressure, out-of-order completion by tag;
-  * tb_fp_unit_axilite_tops: fp_unit_axilite_top.v + fp_unit_axilite_vhd.vhd
+  * tb_fp_unit_axilite_tops: jsm_fp_unit_axilite_top.v + jsm_fp_unit_axilite_vhd.vhd
     through an AXI4-Lite master.
 
 Needs Vivado (xvlog/xvhdl/xelab/xsim): on PATH, or found via VIVADO_SETTINGS

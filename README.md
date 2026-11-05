@@ -11,7 +11,7 @@ roundToIntegralExact (5.3.1, 5.9), totalOrder (5.10), nextUp/nextDown
 (5.3.1), copy/negate/abs/copySign (5.5.1) and class (5.7.2), with all five
 rounding-direction attributes (4.3), full subnormal support (3.3) and the
 five exception flags (7.2-7.6, including divide-by-zero 7.3). The operation is
-selected by the 4-bit `mode` input (`fp_pkg::op_t`, all 16 codes used).
+selected by the 4-bit `mode` input (`jsm_fp_pkg::op_t`, all 16 codes used).
 
 **Integration guide and core reference: [docs/fp_unit_core.md](docs/fp_unit_core.md)**
 (ports, handshake, opcodes, latencies, AXI register map, Vivado/block-design
@@ -21,17 +21,17 @@ projects.
 
 ## Layout
 
-    rtl/                fp_pkg.sv, fp_add.sv, fp_mul.sv, fp_div.sv, fp_sqrt.sv,
-                        fp_divsqrt_iter.sv, fp_fma.sv, fp_minmax.sv, fp_cmp.sv,
-                        fp_totalorder.sv, fp_roundint.sv, the *_e8m0.sv sibling
-                        modules, the *_pipe.sv pipelined siblings, fp_mul_core.sv,
-                        fp_div_srt.sv/fp_sqrt_srt.sv, fp_misc_pipe.sv,
-                        fp_unit.sv (synthesizable SV),
-                        fp_unit_axilite.sv (AXI4-Lite register wrapper),
-                        fp_exp_seq.sv (fp32 exp), fp32_to_bf16_round.sv
-    rtl/top/            Verilog-2001 / VHDL tops: fp_unit_top.v, fp_unit_vhd.vhd,
-                        fp_unit_axilite_top.v, fp_unit_axilite_vhd.vhd, and
-                        fp_unit_flat.sv (plain-vector shim over fp_unit)
+    rtl/                jsm_fp_pkg.sv, jsm_fp_add.sv, jsm_fp_mul.sv, jsm_fp_div.sv, jsm_fp_sqrt.sv,
+                        jsm_fp_divsqrt_iter.sv, jsm_fp_fma.sv, jsm_fp_minmax.sv, jsm_fp_cmp.sv,
+                        jsm_fp_totalorder.sv, jsm_fp_roundint.sv, the *_e8m0.sv sibling
+                        modules, the *_pipe.sv pipelined siblings, jsm_fp_mul_core.sv,
+                        jsm_fp_div_srt.sv/jsm_fp_sqrt_srt.sv, jsm_fp_misc_pipe.sv,
+                        jsm_fp_unit.sv (synthesizable SV),
+                        jsm_fp_unit_axilite.sv (AXI4-Lite register wrapper),
+                        jsm_fp_exp_seq.sv (fp32 exp), jsm_fp32_to_bf16_round.sv
+    rtl/top/            Verilog-2001 / VHDL tops: jsm_fp_unit_top.v, jsm_fp_unit_vhd.vhd,
+                        jsm_fp_unit_axilite_top.v, jsm_fp_unit_axilite_vhd.vhd, and
+                        jsm_fp_unit_flat.sv (plain-vector shim over jsm_fp_unit)
     rtl/filelist.f      THE RTL file list (+ filelist_wrappers.f, filelist_vhdl.f);
                         every harness, the Makefile and syn/ read it
     docs/               fp_unit_core.md (user guide), proposals/ (design notes)
@@ -46,8 +46,8 @@ projects.
     tests/soak.py             cross-width randomized soak (medium formats)
     tests/latency.py          per-op in_valid -> out_valid cycle-count probe
     tests/stream.py           back-to-back / mixed-op streaming test (tags)
-    tests/bf16.py             fp32_to_bf16_round: all 2^32 inputs
-    tests/test_fp_exp_seq.py  fp_exp_seq accuracy (cocotb)
+    tests/bf16.py             jsm_fp32_to_bf16_round: all 2^32 inputs
+    tests/test_fp_exp_seq.py  jsm_fp_exp_seq accuracy (cocotb)
     tests/metrics.py          area/timing proxies (yosys) + target runtimes
     tests/vivado/             xsim testbenches of the Verilog/VHDL tops (run_xsim.py)
     metrics/                  baseline/after metrics JSON (for --compare)
@@ -65,8 +65,8 @@ projects.
     uv run python tests/soak.py --iter               # DIVSQRT_IMPL=2 build
     make regress | make smoke | make soak | make lint
     make stream            # streaming + mixed-op test, OPS_EN subset build
-    make bf16              # fp32_to_bf16_round over all 2^32 inputs
-    make regress-exp       # fp_exp_seq accuracy
+    make bf16              # jsm_fp32_to_bf16_round over all 2^32 inputs
+    make regress-exp       # jsm_fp_exp_seq accuracy
     make exhaustive-iter | make soak-iter | make stream-iter | make regress-axilite-iter
                            # the same on the iterative div/sqrt engine (DIVSQRT_IMPL=2)
     make check-ds3         # regression/exhaustive/soak/stream on DIVSQRT_IMPL=3
@@ -74,11 +74,11 @@ projects.
                            # SRT div/sqrt modules vs combinational, streaming
     make vivado [VIVADO_ARGS="period W_EXP W_MANT DIVSQRT_IMPL"]   # OOC implementation
     make formal   # SymbiYosys BMC proofs (needs the oss-cad-suite)
-    make formal-equiv      # add/mul pipelines == fp_add/fp_mul (BMC, ~15 min)
+    make formal-equiv      # add/mul pipelines == jsm_fp_add/jsm_fp_mul (BMC, ~15 min)
     make regress-tops      # cocotb suites through the Verilog-2001 tops
     make xsim-tops         # Verilog + VHDL tops in Vivado xsim vs the oracle
     make vivado-bd-check   # block-design module references of the tops
-    make vivado-top TOP_ARGS="fp_unit_vhd 5.600 W_EXP=8 W_MANT=23"
+    make vivado-top TOP_ARGS="jsm_fp_unit_vhd 5.600 W_EXP=8 W_MANT=23"
     make metrics-area      # yosys cell count + ltp per format (baseline JSON)
     make metrics-runtime   # wall-clock of the standard targets
     make metrics-latency   # per-op in_valid -> out_valid cycle table
@@ -110,11 +110,11 @@ projects.
   E4M3 and E7M0. The arithmetic-op laws (`formal/fp_arith_props.sv`:
   add/mul/fma/sqrt identities) are proven at E4M3/E5M2 and the division laws
   (`formal/fp_div_props.sv`) at E4M3/E5M2/binary16. The proofs target the
-  combinational reference datapaths (`fp_add`, `fp_mul`, ...); the pipelined
-  modules that `fp_unit` instantiates are tied to them bit-exactly by the
+  combinational reference datapaths (`jsm_fp_add`, `jsm_fp_mul`, ...); the pipelined
+  modules that `jsm_fp_unit` instantiates are tied to them bit-exactly by the
   exhaustive 8-bit sweep, the soak and the streaming test.
 
-## Interface (`fp_unit`)
+## Interface (`jsm_fp_unit`)
 
     parameter  W_EXP, W_MANT          format
     parameter  DIVSQRT_IMPL = 1       1 SRT pipelines (5.6 ns), 3 SRT 4.0 ns form,
@@ -142,9 +142,9 @@ projects.
   from the `rm` field (see "Semantics").
 - `OPS_EN` leaves datapaths out of the build (a disabled op behaves as
   reserved: `y = 0`, invalid). This saves area when `mode` varies at run
-  time but only some ops are needed: binary16 `fp_unit` is 33,637 Yosys
+  time but only some ops are needed: binary16 `jsm_fp_unit` is 33,637 Yosys
   generic cells (`synth -flatten -noabc`) with every op and 12,214 with only
-  ADD/SUB/MUL/FMA (`OPS_EN = 16'h0027`). `fp_exp_seq` uses it to build only MUL
+  ADD/SUB/MUL/FMA (`OPS_EN = 16'h0027`). `jsm_fp_exp_seq` uses it to build only MUL
   and ADD/SUB; there its constant `mode` already let synthesis prune the
   rest (same Yosys cell count), so the mask only makes that explicit and
   speeds up elaboration (Yosys synth 12.4 s -> 3.1 s).
@@ -176,7 +176,7 @@ stage and a register after the final fold, still one start per cycle) div /
 sqrt take E4M3 7/6, E5M2 7/5, BF16 9/8, binary16 11/9, binary32 17/16,
 binary64 32/30 cycles; everything else is unchanged.
 
-* `fp_add_pipe`: 3 stages. S1 unpacks/classifies and computes the per-operand
+* `jsm_fp_add_pipe`: 3 stages. S1 unpacks/classifies and computes the per-operand
   alignment shift amounts (signed, from the exponent fields; the subnormal
   bit length is scanned on the mantissa bits so the leading-one scan runs in
   parallel with the classification). S2 aligns with a single bidirectional
@@ -187,19 +187,19 @@ binary64 32/30 cycles; everything else is unchanged.
   by (e_max - EMIN) - independent of the leading-one position - and the
   rounding increment, exponent and overflow candidates are computed in
   parallel with the GRS decision (carry-select).
-* `fp_mul_core` + `fp_mul_pipe`: a LUT-only pipelined multiplier (no DSP
+* `jsm_fp_mul_core` + `jsm_fp_mul_pipe`: a LUT-only pipelined multiplier (no DSP
   inference), 2 stages for significand width W_MANT+1 <= 32 and 3 stages above (the final
   carry-propagate level is folded into the last tree stage), followed by the
   placement and round/encode stages; shared by the multiply and FMA
   pipelines. The synthesized design uses **0 DSPs**.
-* `fp_div_srt` / `fp_sqrt_srt`: the generic-format div and sqrt datapaths are
+* `jsm_fp_div_srt` / `jsm_fp_sqrt_srt`: the generic-format div and sqrt datapaths are
   fully unrolled radix-4 SRT pipelines (carry-save remainder, one start per
   cycle, fixed latency). Division: u' = 4u - 4dD, d in {-2..2}, QST via 4
   precomputed thresholds per 1/32 divisor cell. Sqrt: R' = 16R + bits -
   d(8q+d), d in {-4..4}; the non-restoring |R| <= 2q invariant makes the
   digit round(p/(8q)) selectable from the carry-save estimate. Both use
   on-the-fly Q/QM conversion for negative digits and were validated
-  bit-exactly against fp_div/fp_sqrt (verification/srt). The remainder is a
+  bit-exactly against jsm_fp_div/jsm_fp_sqrt (verification/srt). The remainder is a
   **fixed-width** carry-save pair (S and C modulo 2^CSW, CSW = S_W+4 for
   div, 2*NDIG+5 for sqrt, the proven minimum plus at most one bit): the
   recurrence is linear, so S+C stays congruent to the true residual, the
@@ -213,17 +213,17 @@ binary64 32/30 cycles; everything else is unchanged.
   cycle). `DIVSQRT_IMPL = 1` uses div DPS 2 (folded) and sqrt DPS 1
   (unfolded); `DIVSQRT_IMPL = 3` uses DPS 1, no stage fold and FOLD_STG for
   both.
-* `fp_divsqrt_iter` (`DIVSQRT_IMPL = 2`): the radix-4 iterative engine
+* `jsm_fp_divsqrt_iter` (`DIVSQRT_IMPL = 2`): the radix-4 iterative engine
   (latency K+3, one operation in flight); `DIVSQRT_IMPL = 0` selects the
-  legacy combinational `fp_div`/`fp_sqrt`.
-* `fp_fma_pipe`: 7 cycles for W_MANT+1 <= 32 (8 above). The subnormal-candidate
+  legacy combinational `jsm_fp_div`/`jsm_fp_sqrt`.
+* `jsm_fp_fma_pipe`: 7 cycles for W_MANT+1 <= 32 (8 above). The subnormal-candidate
   shift is computed from the pre-normalization accumulator in the normalize
-  stage (the fp_add_pipe placement-ahead trick), so round/encode is a single
+  stage (the jsm_fp_add_pipe placement-ahead trick), so round/encode is a single
   stage; it inherits the shorter shared multiplier core. That shift does not
   depend on the leading-one position, which forced the old two-part
   round/encode (F5a/F5b) split.
-* `fp_roundint_pipe`: 2 stages (prepare/GRS/round fused); `fp_minmax_pipe`/
-  `fp_cmp_pipe`/`fp_totalorder_pipe`: 1 stage (compare/select + register).
+* `jsm_fp_roundint_pipe`: 2 stages (prepare/GRS/round fused); `jsm_fp_minmax_pipe`/
+  `jsm_fp_cmp_pipe`/`jsm_fp_totalorder_pipe`: 1 stage (compare/select + register).
 
 Measured with `make vivado` (`syn/vivado-impl.tcl`: non-project batch,
 `synth_design -mode out_of_context`, opt, place, phys_opt, route, phys_opt;
@@ -298,7 +298,7 @@ every op has a constant latency across normal, subnormal and special vectors.
 - minimum/maximum (9.6): the smaller/larger operand is returned exactly
   (NaN propagates; minimum(-0,+0) = -0, maximum(-0,+0) = +0); no rounding.
 - Quiet comparison (5.11): a 2-bit condition code is output on `cmp`
-  (`fp_pkg::CMP_LT/CMP_EQ/CMP_GT/CMP_UN`); -0 equals +0, NaN is unordered,
+  (`jsm_fp_pkg::CMP_LT/CMP_EQ/CMP_GT/CMP_UN`); -0 equals +0, NaN is unordered,
   and only a signaling NaN signals invalid. The `y` output is 0.
 - roundToIntegral (5.9): x rounded to an integral value per the rounding
   direction; NaN is quieted with its sign and payload preserved, infinity and
@@ -344,11 +344,11 @@ every op has a constant latency across normal, subnormal and special vectors.
 
 ## Helper modules
 
-- `fp32_to_bf16_round`: binary32 -> bfloat16, roundTiesToEven, no flags.
+- `jsm_fp32_to_bf16_round`: binary32 -> bfloat16, roundTiesToEven, no flags.
   +-Inf passes through; a NaN becomes a quiet NaN keeping its sign and top 6
   payload bits (never infinity). Verified over all 2^32 inputs
   (`make bf16`).
-- `fp_exp_seq`: fp32 exp(x) for x clamped to [-16, 16] (|x| > 16, +-Inf and
+- `jsm_fp_exp_seq`: fp32 exp(x) for x clamped to [-16, 16] (|x| > 16, +-Inf and
   NaN clamp to +-16), by x/32, a degree-6 polynomial and five squarings;
   87 cycles. Measured error vs the correctly rounded result: <= ~45 ulp
   (~5e-6 relative) for |x| <= 8, up to ~1.3k ulp (~1.5e-4) near |x| = 16

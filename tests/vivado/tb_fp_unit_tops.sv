@@ -1,5 +1,5 @@
-// Vivado xsim testbench for the Verilog and VHDL tops of fp_unit
-// (rtl/top/fp_unit_top.v, rtl/top/fp_unit_vhd.vhd).
+// Vivado xsim testbench for the Verilog and VHDL tops of jsm_fp_unit
+// (rtl/top/jsm_fp_unit_top.v, rtl/top/jsm_fp_unit_vhd.vhd).
 //
 // Both tops get the same request stream (random gaps, requests held while
 // in_ready is low) with the vector index as the tag. Every result is checked
@@ -41,13 +41,13 @@ module tb_fp_unit_tops #(
   logic [4:0]       f_v, f_h;
   logic [TAG_W-1:0] tag_v, tag_h;
 
-  fp_unit_top #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DIVSQRT_IMPL(DIVSQRT_IMPL),
+  jsm_fp_unit_top #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DIVSQRT_IMPL(DIVSQRT_IMPL),
                 .TAG_W(TAG_W), .OPS_EN(OPS_EN)) u_verilog (
     .clk(clk), .rst_n(rst_n), .in_valid(in_valid), .in_ready(rdy_v),
     .mode(mode), .rm(rm), .a(a), .b(b), .c(c), .in_tag(in_tag),
     .y(y_v), .cmp(cmp_v), .flags(f_v), .out_valid(ov_v), .out_tag(tag_v));
 
-  fp_unit_vhd #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DIVSQRT_IMPL(DIVSQRT_IMPL),
+  jsm_fp_unit_vhd #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DIVSQRT_IMPL(DIVSQRT_IMPL),
                 .TAG_W(TAG_W), .OPS_EN(OPS_EN)) u_vhdl (
     .clk(clk), .rst_n(rst_n), .in_valid(in_valid), .in_ready(rdy_h),
     .mode(mode), .rm(rm), .a(a), .b(b), .c(c), .in_tag(in_tag),

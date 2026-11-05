@@ -14,20 +14,20 @@ expect pass
 smtbmc bitwuzla
 
 [script]
-read_verilog -sv -formal fp_pkg.sv
-read_verilog -sv -formal fp_add.sv
-read_verilog -sv -formal fp_add_pipe.sv
-read_verilog -sv -formal fp_mul.sv
-read_verilog -sv -formal fp_mul_core.sv
-read_verilog -sv -formal fp_mul_pipe.sv
+read_verilog -sv -formal jsm_fp_pkg.sv
+read_verilog -sv -formal jsm_fp_add.sv
+read_verilog -sv -formal jsm_fp_add_pipe.sv
+read_verilog -sv -formal jsm_fp_mul.sv
+read_verilog -sv -formal jsm_fp_mul_core.sv
+read_verilog -sv -formal jsm_fp_mul_pipe.sv
 read_verilog -sv -formal fp_pipe_equiv.sv
 prep -top fp_pipe_equiv_mul_e4m3
 
 [files]
-rtl/fp_pkg.sv
-rtl/fp_add.sv
-rtl/fp_add_pipe.sv
-rtl/fp_mul.sv
-rtl/fp_mul_core.sv
-rtl/fp_mul_pipe.sv
+rtl/jsm_fp_pkg.sv
+rtl/jsm_fp_add.sv
+rtl/jsm_fp_add_pipe.sv
+rtl/jsm_fp_mul.sv
+rtl/jsm_fp_mul_core.sv
+rtl/jsm_fp_mul_pipe.sv
 formal/fp_pipe_equiv.sv

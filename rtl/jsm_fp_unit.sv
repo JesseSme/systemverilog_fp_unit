@@ -1,0 +1,486 @@
+// IEEE 754-2019 floating-point unit top level.
+//
+// Parameterized by the format: W_EXP exponent bits and W_MANT fraction bits
+// (3.3, 3.7 "extendable precision"). Every operation runs on its own
+// pipeline with a fixed, input-independent latency (jsm_fp_pkg::lat_* and the
+// README latency table); the pipelines share one result port.
+//
+// Handshake (valid/ready, AXI-stream style):
+//   * A request is accepted in a cycle with in_valid && in_ready ("fire").
+//     While in_valid && !in_ready the caller must hold mode/rm/a/b/c/in_tag
+//     stable. in_ready depends combinationally on `mode` (and on the
+//     in-flight state), never on in_valid.
+//   * Every accepted request produces exactly one out_valid pulse, with
+//     y/flags/cmp and out_tag = the request's in_tag. Results return in
+//     completion order (an ADD issued after a SQRT may finish first); use
+//     in_tag/out_tag to match them.
+//   * in_ready is low only when the requested op would finish in the same
+//     cycle as an op already in flight (result-port reservation, `resv`
+//     below), or, with DIVSQRT_IMPL = 2, for div/sqrt while the iterative
+//     engine is busy. A caller that issues one op at a time and waits for
+//     out_valid always sees in_ready = 1.
+//
+// Operations (`mode`, jsm_fp_pkg::op_t):
+//   OP_ADD/OP_SUB jsm_fp_add_pipe; OP_MUL jsm_fp_mul_pipe; OP_FMA jsm_fp_fma_pipe (`c`
+//   is the addend); OP_DIV/OP_SQRT jsm_fp_div_srt/jsm_fp_sqrt_srt (or
+//   jsm_fp_divsqrt_iter / jsm_fp_div+jsm_fp_sqrt, see DIVSQRT_IMPL); OP_RNDINT/OP_RNDINTX
+//   jsm_fp_roundint_pipe (RNDINTX = roundToIntegralExact, signals inexact);
+//   OP_MIN/OP_MAX jsm_fp_minmax_pipe; OP_CMP jsm_fp_cmp_pipe; OP_TOTALORDER
+//   jsm_fp_totalorder_pipe; OP_SGNJ/OP_CLASS/OP_NEXT/OP_MINMAXNUM jsm_fp_misc_pipe.
+//   The non-rounding ops OP_SGNJ, OP_NEXT and OP_MINMAXNUM take their
+//   variant from the `rm` field (see jsm_fp_misc_pipe.sv / README).
+// `cmp` carries the 2-bit comparison condition code for OP_CMP
+// (jsm_fp_pkg::CMP_*) and, for OP_TOTALORDER, cmp[0] = totalOrder(a, b); every
+// other op drives cmp = 0.
+//
+// Reserved encodings: rounding modes 5-7 behave as RM_RNE (also as a
+// sub-op selector); an opcode disabled by OPS_EN returns y = 0 with the
+// invalid flag after 1 cycle.
+//
+// W_MANT = 0 selects the dedicated E8M0 datapaths (1 + W_EXP + 0 bits,
+// microscaling shared-exponent format; combinational, registered once here,
+// so every E8M0 op has latency 1): the generic datapaths cannot be
+// elaborated at that width by Verilator 5.020, and the p = 1 tie rules are
+// implemented explicitly in the *_e8m0 modules.
+
+module jsm_fp_unit #(
+  parameter int W_EXP  = 8,
+  parameter int W_MANT = 23,
+  // Division / square-root implementation for the generic formats:
+  //   1 (default): fully pipelined radix-4 SRT datapaths (jsm_fp_div_srt /
+  //     jsm_fp_sqrt_srt), one start per cycle; sets the clock (5.6 ns on
+  //     VU9P-2L, 178.6 MHz).
+  //   2: the shared iterative radix-4 engine jsm_fp_divsqrt_iter, latency
+  //     K+3 (K = floor((W_MANT+3)/2)), ONE div/sqrt in flight at a time
+  //     (in_ready is low for div/sqrt while it is busy); the 250 MHz
+  //     configuration with about half the LUTs.
+  //   3: the SRT pipelines in their 250 MHz form (one radix-4 digit per
+  //     stage, carry-save across the stage boundaries, a register after
+  //     the final fold): one start per cycle like 1, closes 4.0 ns on
+  //     VU9P-2L, more cycles of latency (README table).
+  //   0: the combinational reference datapaths (jsm_fp_div / jsm_fp_sqrt)
+  //     registered once (latency 1, very long critical path; reference and
+  //     formal only).
+  parameter int DIVSQRT_IMPL = 1,
+  // Width of the request tag carried from in_tag to out_tag.
+  parameter int TAG_W = 1,
+  // Operation enable mask, bit i = jsm_fp_pkg::op_t value i. A disabled op's
+  // datapath is not built and the op behaves as reserved (y = 0, invalid).
+  // Shared pipelines are built if any of their ops is enabled (ADD/SUB,
+  // MIN/MAX, RNDINT/RNDINTX, SGNJ/CLASS/NEXT/MINMAXNUM).
+  parameter logic [15:0] OPS_EN = 16'hFFFF
+) (
+  input  logic                    clk,
+  input  logic                    rst_n,
+  input  logic                    in_valid,
+  output logic                    in_ready,
+  input  jsm_fp_pkg::op_t             mode,
+  input  jsm_fp_pkg::rounding_t       rm,
+  input  logic [1+W_EXP+W_MANT-1:0] a,
+  input  logic [1+W_EXP+W_MANT-1:0] b,
+  input  logic [1+W_EXP+W_MANT-1:0] c,
+  input  logic [TAG_W-1:0]        in_tag,
+  output logic [1+W_EXP+W_MANT-1:0] y,
+  output logic [1:0]               cmp,
+  output logic [4:0]               flags,
+  output logic                    out_valid,
+  output logic [TAG_W-1:0]        out_tag
+);
+
+  localparam int W = 1 + W_EXP + W_MANT;
+
+  // With a reduced OPS_EN some inputs feed no datapath (e.g. `c` without
+  // OP_FMA); keep lint quiet about that.
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic unused_inputs;
+  assign unused_inputs = ^{a, b, c};
+  /* verilator lint_on UNUSEDSIGNAL */
+
+  // ------------------------------------------------------------ config
+  localparam bit GENERIC  = (W_MANT > 0);
+  localparam bit EN_ADD   = OPS_EN[jsm_fp_pkg::OP_ADD] || OPS_EN[jsm_fp_pkg::OP_SUB];
+  localparam bit EN_MUL   = OPS_EN[jsm_fp_pkg::OP_MUL];
+  localparam bit EN_FMA   = OPS_EN[jsm_fp_pkg::OP_FMA];
+  localparam bit EN_DIV   = OPS_EN[jsm_fp_pkg::OP_DIV];
+  localparam bit EN_SQRT  = OPS_EN[jsm_fp_pkg::OP_SQRT];
+  localparam bit EN_RND   = OPS_EN[jsm_fp_pkg::OP_RNDINT] || OPS_EN[jsm_fp_pkg::OP_RNDINTX];
+  localparam bit EN_MM    = OPS_EN[jsm_fp_pkg::OP_MIN] || OPS_EN[jsm_fp_pkg::OP_MAX];
+  localparam bit EN_CMP   = OPS_EN[jsm_fp_pkg::OP_CMP];
+  localparam bit EN_TOT   = OPS_EN[jsm_fp_pkg::OP_TOTALORDER];
+  localparam bit EN_MISC  = OPS_EN[jsm_fp_pkg::OP_SGNJ] || OPS_EN[jsm_fp_pkg::OP_CLASS]
+                         || OPS_EN[jsm_fp_pkg::OP_NEXT] || OPS_EN[jsm_fp_pkg::OP_MINMAXNUM];
+
+  localparam bit P_ADD    = GENERIC && EN_ADD;
+  localparam bit P_MUL    = GENERIC && EN_MUL;
+  localparam bit P_FMA    = GENERIC && EN_FMA;
+  localparam bit P_RND    = GENERIC && EN_RND;
+  localparam bit P_SRT    = (DIVSQRT_IMPL == 1) || (DIVSQRT_IMPL == 3);
+  localparam bit P_DIV    = GENERIC && P_SRT && EN_DIV;
+  localparam bit P_SQRT   = GENERIC && P_SRT && EN_SQRT;
+  localparam bit P_ITER   = GENERIC && (DIVSQRT_IMPL == 2) && (EN_DIV || EN_SQRT);
+  localparam bit P_COMBDS = GENERIC && (DIVSQRT_IMPL == 0) && (EN_DIV || EN_SQRT);
+  // SRT configuration: radix-4 digits per stage, and the optional register
+  // after the final carry-save fold (see jsm_fp_div_srt / jsm_fp_sqrt_srt)
+  localparam int DIV_DPS  = (DIVSQRT_IMPL == 3) ? 1 : 2;
+  localparam int SQRT_DPS = 1;
+  localparam int SRT_FOLD_STG = (DIVSQRT_IMPL == 3) ? 1 : 0;
+
+  // ---------------------------------------------- parameter checks
+  // Elaboration-time errors (Vivado, Verilator and Yosys stop with the
+  // message) instead of silently building a wrong datapath.
+  if (DIVSQRT_IMPL != 0 && DIVSQRT_IMPL != 1 && DIVSQRT_IMPL != 2 && DIVSQRT_IMPL != 3) begin : g_chk_divsqrt
+    $error("jsm_fp_unit: DIVSQRT_IMPL = %0d is not 0, 1, 2 or 3", DIVSQRT_IMPL);
+  end
+  if (TAG_W < 1) begin : g_chk_tag
+    $error("jsm_fp_unit: TAG_W = %0d must be at least 1", TAG_W);
+  end
+  if (W_EXP < 1 || W_MANT < 0) begin : g_chk_fmt
+    $error("jsm_fp_unit: W_EXP = %0d must be >= 1 and W_MANT = %0d >= 0", W_EXP, W_MANT);
+  end
+
+  // ---------------------------------------------- reserved encodings
+  jsm_fp_pkg::rounding_t rm_eff;
+  assign rm_eff = (rm > jsm_fp_pkg::RM_RM) ? jsm_fp_pkg::RM_RNE : rm;
+  logic op_reserved;
+  assign op_reserved = !jsm_fp_pkg::op_defined(mode) || !OPS_EN[mode];
+
+  // ------------------------------------------------------------ latencies
+  // Cycles from an accepted request to its out_valid. Ops that are not on a
+  // dedicated pipeline (E8M0, DIVSQRT_IMPL = 0 div/sqrt, reserved opcodes)
+  // go through the 1-cycle output register below.
+  localparam int LAT_ADD  = P_ADD ? jsm_fp_pkg::LAT_ADD : 1;
+  localparam int LAT_MUL  = P_MUL ? jsm_fp_pkg::lat_mul(W_MANT) : 1;
+  localparam int LAT_FMA  = P_FMA ? jsm_fp_pkg::lat_fma(W_MANT) : 1;
+  localparam int LAT_DIV  = P_DIV  ? jsm_fp_pkg::lat_div_srt(W_MANT, DIV_DPS, SRT_FOLD_STG)
+                          : P_ITER ? jsm_fp_pkg::lat_divsqrt_iter(W_MANT) : 1;
+  localparam int LAT_SQRT = P_SQRT ? jsm_fp_pkg::lat_sqrt_srt(W_MANT, SQRT_DPS, SRT_FOLD_STG)
+                          : P_ITER ? jsm_fp_pkg::lat_divsqrt_iter(W_MANT) : 1;
+  localparam int LAT_RND  = P_RND ? jsm_fp_pkg::LAT_RNDINT : 1;
+  localparam int LAT_ONE  = 1;  // min/max/cmp/totalOrder/misc, output register
+  localparam int MAXLAT   = jsm_fp_pkg::max_int(jsm_fp_pkg::max_int(jsm_fp_pkg::max_int(LAT_ADD, LAT_MUL),
+                                                            jsm_fp_pkg::max_int(LAT_FMA, LAT_DIV)),
+                                             jsm_fp_pkg::max_int(LAT_SQRT, LAT_RND));
+
+  int lat_sel;
+  always_comb begin
+    if (op_reserved) lat_sel = LAT_ONE;
+    else begin
+      case (mode)
+        jsm_fp_pkg::OP_ADD, jsm_fp_pkg::OP_SUB:       lat_sel = LAT_ADD;
+        jsm_fp_pkg::OP_MUL:                       lat_sel = LAT_MUL;
+        jsm_fp_pkg::OP_FMA:                       lat_sel = LAT_FMA;
+        jsm_fp_pkg::OP_DIV:                       lat_sel = LAT_DIV;
+        jsm_fp_pkg::OP_SQRT:                      lat_sel = LAT_SQRT;
+        jsm_fp_pkg::OP_RNDINT, jsm_fp_pkg::OP_RNDINTX: lat_sel = LAT_RND;
+        default:                              lat_sel = LAT_ONE;
+      endcase
+    end
+  end
+
+  // ------------------------------------------- result-port reservation
+  // resv[i] = 1 iff an in-flight request asserts out_valid i cycles from
+  // now (i = 0: this cycle, so resv[0] == out_valid). A request with
+  // latency L conflicts iff resv[L]; when accepted it books index L-1 of the
+  // next cycle's (shifted) vector. resv[MAXLAT] is always 0 in the current
+  // cycle; it exists so resv[lat_sel] is always in range.
+  logic [MAXLAT:0] resv;
+  logic            fire;
+  logic            busy_iter;   // DIVSQRT_IMPL = 2: engine occupied
+  logic            is_divsqrt;
+  assign is_divsqrt = (mode == jsm_fp_pkg::OP_DIV) || (mode == jsm_fp_pkg::OP_SQRT);
+  assign in_ready = !resv[lat_sel] && !(P_ITER && is_divsqrt && !op_reserved && busy_iter);
+  assign fire     = in_valid && in_ready;
+
+  always_ff @(posedge clk) begin
+    if (!rst_n) resv <= '0;
+    else        resv <= (resv >> 1) | (fire ? ((MAXLAT+1)'(1) << (lat_sel - 1)) : '0);
+  end
+
+  // Tag slots, shifted exactly like resv; slot 0 belongs to the result that
+  // is on the port this cycle.
+  logic [TAG_W-1:0] tag_q [MAXLAT+1];
+  generate
+    for (genvar gi = 0; gi <= MAXLAT; gi++) begin : g_tag
+      always_ff @(posedge clk) begin
+        if (fire && gi == lat_sel - 1) tag_q[gi] <= in_tag;
+        else if (gi < MAXLAT)          tag_q[gi] <= tag_q[(gi < MAXLAT) ? gi + 1 : gi];
+        else                           tag_q[gi] <= '0;
+      end
+    end
+  endgenerate
+  assign out_tag = tag_q[0];
+
+  // ------------------------------------------------------- start strobes
+  logic go;  // accepted, defined and enabled
+  assign go = fire && !op_reserved;
+  logic start_add, start_mul, start_fma, start_div, start_sqrt, start_iter, start_rnd;
+  logic start_mm, start_cmp, start_tot, start_misc, start_reg;
+  assign start_add  = go && P_ADD  && (mode == jsm_fp_pkg::OP_ADD || mode == jsm_fp_pkg::OP_SUB);
+  assign start_mul  = go && P_MUL  && (mode == jsm_fp_pkg::OP_MUL);
+  assign start_fma  = go && P_FMA  && (mode == jsm_fp_pkg::OP_FMA);
+  assign start_div  = go && P_DIV  && (mode == jsm_fp_pkg::OP_DIV);
+  assign start_sqrt = go && P_SQRT && (mode == jsm_fp_pkg::OP_SQRT);
+  assign start_iter = go && P_ITER && is_divsqrt;
+  assign start_rnd  = go && P_RND  && (mode == jsm_fp_pkg::OP_RNDINT || mode == jsm_fp_pkg::OP_RNDINTX);
+  assign start_mm   = go && EN_MM  && (mode == jsm_fp_pkg::OP_MIN || mode == jsm_fp_pkg::OP_MAX);
+  assign start_cmp  = go && EN_CMP && (mode == jsm_fp_pkg::OP_CMP);
+  assign start_tot  = go && EN_TOT && (mode == jsm_fp_pkg::OP_TOTALORDER);
+  assign start_misc = go && EN_MISC && (mode == jsm_fp_pkg::OP_SGNJ || mode == jsm_fp_pkg::OP_CLASS
+                                     || mode == jsm_fp_pkg::OP_NEXT || mode == jsm_fp_pkg::OP_MINMAXNUM);
+  assign start_reg  = fire && !start_add && !start_mul && !start_fma && !start_div
+                    && !start_sqrt && !start_iter && !start_rnd && !start_mm && !start_cmp
+                    && !start_tot && !start_misc;
+
+  // ---------------------------------------------------------- pipelines
+  logic [W-1:0] y_add_p, y_mul_p, y_fma_p, y_div_p, y_sqrt_p, y_iter_p, y_rnd_p;
+  logic [4:0]   f_add_p, f_mul_p, f_fma_p, f_div_p, f_sqrt_p, f_iter_p, f_rnd_p;
+  logic         v_add, v_mul, v_fma, v_div, v_sqrt, v_iter, v_rnd;
+
+  generate
+    if (P_ADD) begin : g_add
+      jsm_fp_add_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_add_pipe (
+        .a(a), .b(b), .rm(rm_eff), .op(mode),
+        .clk(clk), .rst_n(rst_n), .start(start_add),
+        .y(y_add_p), .flags(f_add_p), .out_valid(v_add)
+      );
+    end else begin : g_no_add
+      assign {y_add_p, f_add_p, v_add} = '0;
+    end
+
+    if (P_MUL) begin : g_mul
+      jsm_fp_mul_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_mul_pipe (
+        .a(a), .b(b), .rm(rm_eff),
+        .clk(clk), .rst_n(rst_n), .start(start_mul),
+        .y(y_mul_p), .flags(f_mul_p), .out_valid(v_mul)
+      );
+    end else begin : g_no_mul
+      assign {y_mul_p, f_mul_p, v_mul} = '0;
+    end
+
+    if (P_FMA) begin : g_fma
+      jsm_fp_fma_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_fma_pipe (
+        .a(a), .b(b), .c(c), .rm(rm_eff),
+        .clk(clk), .rst_n(rst_n), .start(start_fma),
+        .y(y_fma_p), .flags(f_fma_p), .out_valid(v_fma)
+      );
+    end else begin : g_no_fma
+      assign {y_fma_p, f_fma_p, v_fma} = '0;
+    end
+
+    if (P_RND) begin : g_rnd
+      jsm_fp_roundint_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_roundint_pipe (
+        .a(a), .rm(rm_eff), .exact(mode == jsm_fp_pkg::OP_RNDINTX),
+        .clk(clk), .rst_n(rst_n), .start(start_rnd),
+        .y(y_rnd_p), .flags(f_rnd_p), .out_valid(v_rnd)
+      );
+    end else begin : g_no_rnd
+      assign {y_rnd_p, f_rnd_p, v_rnd} = '0;
+    end
+
+    if (P_DIV) begin : g_div_srt
+      jsm_fp_div_srt #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DPS(DIV_DPS),
+                   .FOLD_STG(SRT_FOLD_STG)) u_fp_div_srt (
+        .a(a), .b(b), .rm(rm_eff), .start(start_div),
+        .y(y_div_p), .flags(f_div_p),
+        .clk(clk), .rst_n(rst_n), .out_valid(v_div)
+      );
+    end else begin : g_no_div_srt
+      assign {y_div_p, f_div_p, v_div} = '0;
+    end
+
+    if (P_SQRT) begin : g_sqrt_srt
+      jsm_fp_sqrt_srt #(.W_EXP(W_EXP), .W_MANT(W_MANT), .DPS(SQRT_DPS),
+                    .FOLD_STG(SRT_FOLD_STG)) u_fp_sqrt_srt (
+        .a(a), .rm(rm_eff), .start(start_sqrt),
+        .y(y_sqrt_p), .flags(f_sqrt_p),
+        .clk(clk), .rst_n(rst_n), .out_valid(v_sqrt)
+      );
+    end else begin : g_no_sqrt_srt
+      assign {y_sqrt_p, f_sqrt_p, v_sqrt} = '0;
+    end
+
+    if (P_ITER) begin : g_iter
+      // One div/sqrt at a time; it accepts a new start in its done cycle
+      // (busy is already low then), so back-to-back div/sqrt lose no cycle.
+      jsm_fp_divsqrt_iter #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_divsqrt_iter (
+        .a(a), .b(b), .rm(rm_eff), .is_sqrt(mode == jsm_fp_pkg::OP_SQRT),
+        .start(start_iter), .y(y_iter_p), .flags(f_iter_p),
+        .clk(clk), .rst_n(rst_n), .busy(busy_iter), .done(v_iter)
+      );
+    end else begin : g_no_iter
+      assign {y_iter_p, f_iter_p, v_iter, busy_iter} = '0;
+    end
+  endgenerate
+
+  // Format-generic pipelines (every width, including E8M0).
+  logic [W-1:0] y_mm_p, y_cmp_p, y_misc_p;
+  logic [4:0]   f_mm_p, f_cmp_p, f_misc_p;
+  logic [1:0]   c_cmp_p, c_tot_p;
+  logic         v_mm, v_cmp, v_tot, v_misc;
+  generate
+    if (EN_MM) begin : g_mm
+      jsm_fp_minmax_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_minmax_pipe (
+        .a(a), .b(b), .is_max(mode == jsm_fp_pkg::OP_MAX),
+        .clk(clk), .rst_n(rst_n), .start(start_mm),
+        .y(y_mm_p), .flags(f_mm_p), .out_valid(v_mm)
+      );
+    end else begin : g_no_mm
+      assign {y_mm_p, f_mm_p, v_mm} = '0;
+    end
+
+    if (EN_CMP) begin : g_cmp
+      jsm_fp_cmp_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_cmp_pipe (
+        .a(a), .b(b), .clk(clk), .rst_n(rst_n), .start(start_cmp),
+        .y(y_cmp_p), .cmp(c_cmp_p), .flags(f_cmp_p), .out_valid(v_cmp)
+      );
+    end else begin : g_no_cmp
+      assign {y_cmp_p, c_cmp_p, f_cmp_p, v_cmp} = '0;
+    end
+
+    if (EN_TOT) begin : g_tot
+      /* verilator lint_off UNUSEDSIGNAL */
+      logic [W-1:0] y_tot_p;   // always 0 (totalOrder result is on cmp)
+      logic [4:0]   f_tot_p;   // always 0 (totalOrder never signals)
+      /* verilator lint_on UNUSEDSIGNAL */
+      jsm_fp_totalorder_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_totalorder_pipe (
+        .a(a), .b(b), .clk(clk), .rst_n(rst_n), .start(start_tot),
+        .y(y_tot_p), .cmp(c_tot_p), .flags(f_tot_p), .out_valid(v_tot)
+      );
+    end else begin : g_no_tot
+      assign {c_tot_p, v_tot} = '0;
+    end
+
+    if (EN_MISC) begin : g_misc
+      jsm_fp_misc_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_misc_pipe (
+        .a(a), .b(b), .op(mode), .sub(rm_eff),
+        .clk(clk), .rst_n(rst_n), .start(start_misc),
+        .y(y_misc_p), .flags(f_misc_p), .out_valid(v_misc)
+      );
+    end else begin : g_no_misc
+      assign {y_misc_p, f_misc_p, v_misc} = '0;
+    end
+  endgenerate
+
+  // ---------------------------------- 1-cycle output-register datapaths
+  // E8M0 (all rounding ops), DIVSQRT_IMPL = 0 div/sqrt, reserved opcodes
+  // (y = 0, invalid): combinational datapaths sampled into y_r/flags_r.
+  logic [W-1:0] y_c;
+  logic [4:0]   flags_c;
+
+  generate
+    if (GENERIC) begin : g_generic_comb
+      logic [W-1:0] y_div_c, y_sqrt_c;
+      logic [4:0]   f_div_c, f_sqrt_c;
+      if (P_COMBDS) begin : g_comb_divsqrt
+        jsm_fp_div #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_div (
+          .a(a), .b(b), .rm(rm_eff), .y(y_div_c), .flags(f_div_c)
+        );
+        jsm_fp_sqrt #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fp_sqrt (
+          .a(a), .rm(rm_eff), .y(y_sqrt_c), .flags(f_sqrt_c)
+        );
+      end else begin : g_no_comb_divsqrt
+        assign {y_div_c, f_div_c, y_sqrt_c, f_sqrt_c} = '0;
+      end
+      always_comb begin
+        y_c     = '0;
+        flags_c = 5'd0;
+        case (mode)
+          jsm_fp_pkg::OP_DIV:  begin y_c = y_div_c;  flags_c = f_div_c;  end
+          jsm_fp_pkg::OP_SQRT: begin y_c = y_sqrt_c; flags_c = f_sqrt_c; end
+          default: ;
+        endcase
+      end
+    end else begin : g_e8m0
+      logic [W-1:0] y_add_e, y_mul_e, y_div_e, y_sqrt_e, y_fma_e, y_rnd_e;
+      logic [4:0]   f_add_e, f_mul_e, f_div_e, f_sqrt_e, f_fma_e, f_rnd_e;
+      jsm_fp_add_e8m0 #(.W_EXP(W_EXP)) u_fp_add (
+        .a(a), .b(b), .rm(rm_eff), .op(mode), .y(y_add_e), .flags(f_add_e)
+      );
+      jsm_fp_mul_e8m0 #(.W_EXP(W_EXP)) u_fp_mul (
+        .a(a), .b(b), .rm(rm_eff), .y(y_mul_e), .flags(f_mul_e)
+      );
+      jsm_fp_div_e8m0 #(.W_EXP(W_EXP)) u_fp_div (
+        .a(a), .b(b), .rm(rm_eff), .y(y_div_e), .flags(f_div_e)
+      );
+      jsm_fp_sqrt_e8m0 #(.W_EXP(W_EXP)) u_fp_sqrt (
+        .a(a), .rm(rm_eff), .y(y_sqrt_e), .flags(f_sqrt_e)
+      );
+      jsm_fp_fma_e8m0 #(.W_EXP(W_EXP)) u_fp_fma (
+        .a(a), .b(b), .c(c), .rm(rm_eff), .y(y_fma_e), .flags(f_fma_e)
+      );
+      jsm_fp_roundint_e8m0 #(.W_EXP(W_EXP)) u_fp_roundint (
+        .a(a), .rm(rm_eff), .exact(mode == jsm_fp_pkg::OP_RNDINTX),
+        .y(y_rnd_e), .flags(f_rnd_e)
+      );
+      always_comb begin
+        y_c     = '0;
+        flags_c = 5'd0;
+        case (mode)
+          jsm_fp_pkg::OP_ADD,
+          jsm_fp_pkg::OP_SUB:     begin y_c = y_add_e;  flags_c = f_add_e;  end
+          jsm_fp_pkg::OP_MUL:     begin y_c = y_mul_e;  flags_c = f_mul_e;  end
+          jsm_fp_pkg::OP_DIV:     begin y_c = y_div_e;  flags_c = f_div_e;  end
+          jsm_fp_pkg::OP_SQRT:    begin y_c = y_sqrt_e; flags_c = f_sqrt_e; end
+          jsm_fp_pkg::OP_FMA:     begin y_c = y_fma_e;  flags_c = f_fma_e;  end
+          jsm_fp_pkg::OP_RNDINT,
+          jsm_fp_pkg::OP_RNDINTX: begin y_c = y_rnd_e;  flags_c = f_rnd_e;  end
+          default: ;
+        endcase
+      end
+    end
+  endgenerate
+
+  logic [W-1:0] y_r;
+  logic [4:0]   flags_r;
+  logic         v_reg;
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      y_r     <= '0;
+      flags_r <= 5'd0;
+      v_reg   <= 1'b0;
+    end else begin
+      y_r     <= op_reserved ? '0 : y_c;
+      flags_r <= op_reserved ? (5'd1 << jsm_fp_pkg::FLAG_INVALID) : flags_c;
+      v_reg   <= start_reg;
+    end
+  end
+
+  // ------------------------------------------------------ result port
+  // At most one of the valids is set in any cycle (guaranteed by resv), so
+  // the mux order is irrelevant.
+  always_comb begin
+    y     = y_r;
+    flags = flags_r;
+    cmp   = 2'd0;
+    if (v_mul)  begin y = y_mul_p;  flags = f_mul_p;  end
+    if (v_fma)  begin y = y_fma_p;  flags = f_fma_p;  end
+    if (v_add)  begin y = y_add_p;  flags = f_add_p;  end
+    if (v_rnd)  begin y = y_rnd_p;  flags = f_rnd_p;  end
+    if (v_div)  begin y = y_div_p;  flags = f_div_p;  end
+    if (v_sqrt) begin y = y_sqrt_p; flags = f_sqrt_p; end
+    if (v_iter) begin y = y_iter_p; flags = f_iter_p; end
+    if (v_mm)   begin y = y_mm_p;   flags = f_mm_p;   end
+    if (v_misc) begin y = y_misc_p; flags = f_misc_p; end
+    if (v_cmp)  begin y = y_cmp_p;  flags = f_cmp_p;  cmp = c_cmp_p; end
+    if (v_tot)  begin y = '0;       flags = 5'd0;     cmp = c_tot_p; end
+  end
+  assign out_valid = v_mul | v_fma | v_add | v_rnd | v_div | v_sqrt | v_iter
+                   | v_mm | v_misc | v_cmp | v_tot | v_reg;
+
+`ifndef SYNTHESIS
+  // The reservation vector must predict every result exactly (a wrong
+  // latency constant fires this on the first vector), and the per-pipeline
+  // valids must never collide.
+  always_ff @(posedge clk) begin
+    if (rst_n) begin
+      assert (out_valid == resv[0])
+        else $error("jsm_fp_unit: out_valid=%0b but resv[0]=%0b (latency table mismatch)",
+                    out_valid, resv[0]);
+      assert ($onehot0({v_mul, v_fma, v_add, v_rnd, v_div, v_sqrt, v_iter,
+                        v_mm, v_misc, v_cmp, v_tot, v_reg}))
+        else $error("jsm_fp_unit: result-port collision");
+    end
+  end
+`endif
+
+endmodule

@@ -758,10 +758,10 @@ def _directed_sqrt_vectors(fmt):
             (OP_SQRT, MODE_RP,  m2, 0, 0x3DA9, ine, "sqrt(2) (RP)"),
         ]
 
-    # --- fp_sqrt_srt digit +4 (all eight selection compares true): the 3-bit
+    # --- jsm_fp_sqrt_srt digit +4 (all eight selection compares true): the 3-bit
     # compare counter used to wrap to 0 and select digit -4 instead. Found by
     # the SRT streaming differential (1 in 5M random binary64 / (10,40)
-    # radicands); expected values from the oracle and combinational fp_sqrt.
+    # radicands); expected values from the oracle and combinational jsm_fp_sqrt.
     if fmt.W_EXP == 11 and fmt.W_MANT == 52:
         v += [
             (OP_SQRT, MODE_RNA, 0x00050DBA2071B53C, 0, 0x1FF1FBF51ACCCE3B, ine,

@@ -21,7 +21,7 @@ needs one radix-r step per log2(r) bits of the exponent difference
 binary32.
 
 That breaks the unit's assumption that every op has a fixed latency (the
-result-port reservation vector in `fp_unit`). Options:
+result-port reservation vector in `jsm_fp_unit`). Options:
 
 1. **Fixed-latency partial remainder** (x87 `FPREM1` style): `OP_REMSTEP`
    performs at most K exponent-difference bits (e.g. K = 2 * NSTG of the
@@ -32,12 +32,12 @@ result-port reservation vector in `fp_unit`). Options:
 2. **Iterative engine with its own completion handshake**: like
    `DIVSQRT_IMPL = 2`, one remainder in flight. Because the latency is not
    known at issue time, the result port cannot be reserved when the op is
-   accepted. Instead, when the engine finishes, `fp_unit` blocks new issues
+   accepted. Instead, when the engine finishes, `jsm_fp_unit` blocks new issues
    (`in_ready = 0`) for the cycles in which the result port would collide,
    or the engine waits in a done state until a free slot appears (it
    checks `resv[0]` each cycle and takes a free one). The second variant is
    simpler and keeps the other ops' latencies fixed.
-3. **Separate unit** (`fp_rem`) outside `fp_unit` with its own
+3. **Separate unit** (`fp_rem`) outside `jsm_fp_unit` with its own
    valid/ready handshake.
 
 Recommended: option 2. It gives one interface for software, and the "wait
@@ -48,7 +48,7 @@ results.
 ## Datapath (option 2)
 
 Restoring or SRT radix-4 recurrence on the aligned significands, reusing
-the structure of `fp_divsqrt_iter` (carry-save residual, digit selection on
+the structure of `jsm_fp_divsqrt_iter` (carry-save residual, digit selection on
 the top bits, no quotient register). After the last step, compare the
 remainder with |y|/2 using the last quotient bit for the tie, subtract y
 once if needed, then normalize the result (LZC + left shift) and pack it.
@@ -56,7 +56,7 @@ The exponent difference loads a down-counter (`W_EXP + 1` bits).
 
 ## Cost (binary32)
 
-- About the size of `fp_divsqrt_iter` without the sqrt path (that engine is
+- About the size of `jsm_fp_divsqrt_iter` without the sqrt path (that engine is
   1,294 LUTs / 301 FFs in the binary32 `DIVSQRT_IMPL = 2` build), plus a
   26-bit LZC/normalizer and the exponent counter: about 1,100 LUTs and 250
   FFs (+8 %).

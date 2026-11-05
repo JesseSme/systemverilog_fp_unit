@@ -1,4 +1,4 @@
-# Out-of-context Vivado implementation run of fp_unit (non-project mode).
+# Out-of-context Vivado implementation run of jsm_fp_unit (non-project mode).
 #
 #   vivado -mode batch -source syn/vivado-impl.tcl -tclargs [period_ns] [W_EXP W_MANT] [DIVSQRT_IMPL]
 #

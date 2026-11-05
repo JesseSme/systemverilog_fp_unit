@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Per-operation latency probe for the pipelined fp_unit.
+"""Per-operation latency probe for the pipelined jsm_fp_unit.
 
 Builds one Verilator model per format and drives a small set of boundary /
 special vectors through every op, reporting the in_valid -> out_valid cycle
@@ -76,11 +76,11 @@ def build(wexp: int, wmant: int, impl: int = 1) -> str:
         return binary
     subprocess.check_call([
         "verilator", "--cc", "--exe", "--build", "--timing", "--assert",
-        "--top-module", "fp_unit",
+        "--top-module", "jsm_fp_unit",
         "-CFLAGS", f"-DNUM_OPS={NUM_OPS}",
         f"-GW_EXP={wexp}", f"-GW_MANT={wmant}",
         *([f"-GDIVSQRT_IMPL={impl}"] if impl != 1 else []),
-        "--Mdir", build_dir, "--prefix", "Vfp_unit",
+        "--Mdir", build_dir, "--prefix", "Vjsm_fp_unit",
         "-o", "fp_latency",
         *RTL, HARNESS,
     ], env=_env())
@@ -112,7 +112,7 @@ def main() -> int:
     ap.add_argument("--json", type=str, default=None,
                     help="write the measured table as JSON")
     ap.add_argument("--divsqrt", type=int, choices=(0, 1, 2, 3), default=1,
-                    help="fp_unit DIVSQRT_IMPL (1 SRT default, 2 iterative, 3 SRT 250 MHz, 0 comb)")
+                    help="jsm_fp_unit DIVSQRT_IMPL (1 SRT default, 2 iterative, 3 SRT 250 MHz, 0 comb)")
     ap.add_argument("--jobs", type=int, default=0,
                     help="widths to run concurrently (0 = one per core)")
     args = ap.parse_args()

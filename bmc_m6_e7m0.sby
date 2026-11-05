@@ -16,16 +16,16 @@ expect pass
 smtbmc
 
 [script]
-read_verilog -sv fp_pkg.sv
-read_verilog -sv fp_cmp.sv
-read_verilog -sv fp_totalorder.sv
-read_verilog -sv fp_roundint_e8m0.sv
+read_verilog -sv jsm_fp_pkg.sv
+read_verilog -sv jsm_fp_cmp.sv
+read_verilog -sv jsm_fp_totalorder.sv
+read_verilog -sv jsm_fp_roundint_e8m0.sv
 read_verilog -sv fp_m6_props_e8m0.sv
 prep -top fp_m6_props_e7m0
 
 [files]
-rtl/fp_pkg.sv
-rtl/fp_cmp.sv
-rtl/fp_totalorder.sv
-rtl/fp_roundint_e8m0.sv
+rtl/jsm_fp_pkg.sv
+rtl/jsm_fp_cmp.sv
+rtl/jsm_fp_totalorder.sv
+rtl/jsm_fp_roundint_e8m0.sv
 formal/fp_m6_props_e8m0.sv

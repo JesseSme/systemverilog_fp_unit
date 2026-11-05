@@ -4,7 +4,7 @@
 #
 #   vivado -mode batch -source syn/vivado-top.tcl -tclargs <top> [period_ns] [GEN=VAL ...]
 #
-# <top>: fp_unit_vhd, fp_unit_axilite_vhd, fp_unit_top or fp_unit_axilite_top.
+# <top>: jsm_fp_unit_vhd, jsm_fp_unit_axilite_vhd, jsm_fp_unit_top or jsm_fp_unit_axilite_top.
 # GEN=VAL arguments become -generic overrides (W_EXP=8 W_MANT=23 ...).
 # The design ports are not registered (unlike syn/vivado-impl.tcl), so the
 # timing report covers register-to-register paths only.

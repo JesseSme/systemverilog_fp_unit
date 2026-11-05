@@ -14,12 +14,12 @@ expect pass
 smtbmc
 
 [script]
-read_verilog -sv fp_pkg.sv
-read_verilog -sv fp_div.sv
+read_verilog -sv jsm_fp_pkg.sv
+read_verilog -sv jsm_fp_div.sv
 read_verilog -sv fp_div_props.sv
 prep -top fp_div_props_e4m3
 
 [files]
-rtl/fp_pkg.sv
-rtl/fp_div.sv
+rtl/jsm_fp_pkg.sv
+rtl/jsm_fp_div.sv
 formal/fp_div_props.sv

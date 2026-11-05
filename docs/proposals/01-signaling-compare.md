@@ -10,7 +10,7 @@ must signal invalid when **either operand is any NaN** (5.11, 7.2c). The
 standard requires both families (5.6.1 lists the signaling predicates as
 required operations; C's `<`, `<=`, `>`, `>=` map to them).
 
-Because `fp_unit` returns a condition code (`cmp` = LT/EQ/GT/UN) instead of
+Because `jsm_fp_unit` returns a condition code (`cmp` = LT/EQ/GT/UN) instead of
 one predicate, a single op covers every predicate of one family. The two
 families differ only in the invalid flag.
 
@@ -27,7 +27,7 @@ families differ only in the invalid flag.
 
 ## Implementation
 
-`fp_cmp_pipe`: add an input `signaling` (`mode == OP_CMPS`) and replace
+`jsm_fp_cmp_pipe`: add an input `signaling` (`mode == OP_CMPS`) and replace
 
     invalid = a_snan | b_snan
 
@@ -35,14 +35,14 @@ with
 
     invalid = signaling ? (a_nan | b_nan) : (a_snan | b_snan)
 
-The classification signals exist already. In `fp_unit`, `OP_CMPS` shares the
+The classification signals exist already. In `jsm_fp_unit`, `OP_CMPS` shares the
 `g_cmp` pipeline (enabled when `OPS_EN[OP_CMP] | OPS_EN[OP_CMPS]`), with
-latency 1 like `OP_CMP`. E8M0 uses the same generic `fp_cmp`, whose
+latency 1 like `OP_CMP`. E8M0 uses the same generic `jsm_fp_cmp`, whose
 classification has no NaN when `W_MANT = 0` (0xFF classifies as infinity
 there), so both ops behave identically in E8M0 unless that classification
 is changed too.
 
-Reference model: `ops.fp_cmp(..., signaling=True)` and an entry in the OP
+Reference model: `ops.jsm_fp_cmp(..., signaling=True)` and an entry in the OP
 table; the exhaustive sweep then covers it at every 8-bit format.
 
 ## Cost

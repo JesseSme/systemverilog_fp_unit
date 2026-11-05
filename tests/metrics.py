@@ -118,12 +118,12 @@ def area_once(wexp: int, wmant: int, timeout: int, iter_mode: bool = False) -> d
     script = "; ".join([
         "read_verilog -sv " + " ".join(str(p) for p in RTL),
         f"chparam -set W_EXP {wexp} -set W_MANT {wmant}"
-        + (" -set DIVSQRT_IMPL 2" if iter_mode else "") + " fp_unit",
-        "hierarchy -top fp_unit",
+        + (" -set DIVSQRT_IMPL 2" if iter_mode else "") + " jsm_fp_unit",
+        "hierarchy -top jsm_fp_unit",
         # abc optimization is skipped: it is intractably slow on the
         # combinational divider/square root at binary32 and the pre-abc
         # gate count is a stable, comparable area proxy.
-        "synth -top fp_unit -noabc",
+        "synth -top jsm_fp_unit -noabc",
         "stat",
         "ltp -noff",
     ])

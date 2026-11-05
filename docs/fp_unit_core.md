@@ -1,4 +1,4 @@
-# fp_unit: IEEE 754-2019 floating-point core
+# jsm_fp_unit: IEEE 754-2019 floating-point core
 
 User guide and reference for integrating the core. For the
 microarchitecture, verification history and development notes see
@@ -6,7 +6,7 @@ microarchitecture, verification history and development notes see
 
 ## 1. Overview
 
-`fp_unit` is a parameterized, fully synchronous floating-point unit:
+`jsm_fp_unit` is a parameterized, fully synchronous floating-point unit:
 
 - **Any binary format** `1 sign + W_EXP exponent + W_MANT fraction bits`,
   chosen at build time: binary16/32/64, bfloat16, the 8-bit formats E4M3 and
@@ -26,26 +26,26 @@ Two interfaces are provided, each in SystemVerilog, Verilog-2001 and VHDL:
 
 | interface | SystemVerilog core | Verilog-2001 top | VHDL top |
 |-----------|--------------------|------------------|----------|
-| streaming (valid/ready + tag) | `rtl/fp_unit.sv` | `rtl/top/fp_unit_top.v` | `rtl/top/fp_unit_vhd.vhd` |
-| AXI4-Lite slave (registers) | `rtl/fp_unit_axilite.sv` | `rtl/top/fp_unit_axilite_top.v` | `rtl/top/fp_unit_axilite_vhd.vhd` |
+| streaming (valid/ready + tag) | `rtl/jsm_fp_unit.sv` | `rtl/top/jsm_fp_unit_top.v` | `rtl/top/jsm_fp_unit_vhd.vhd` |
+| AXI4-Lite slave (registers) | `rtl/jsm_fp_unit_axilite.sv` | `rtl/top/jsm_fp_unit_axilite_top.v` | `rtl/top/jsm_fp_unit_axilite_vhd.vhd` |
 
 The Verilog and VHDL tops add no logic. They exist because a Vivado
 block-design module reference, or a VHDL design, needs a Verilog or VHDL top
-with plain ports. `fp_unit`'s `mode`/`rm` ports are SystemVerilog enum types,
-so `rtl/top/fp_unit_flat.sv` first maps them to plain vectors.
+with plain ports. `jsm_fp_unit`'s `mode`/`rm` ports are SystemVerilog enum types,
+so `rtl/top/jsm_fp_unit_flat.sv` first maps them to plain vectors.
 
 ```
-fp_unit_vhd (VHDL) -> fp_unit_top (Verilog-2001) -> fp_unit_flat (SV, casts) -> fp_unit (SV)
-fp_unit_axilite_vhd (VHDL) -> fp_unit_axilite_top (Verilog-2001) -> fp_unit_axilite (SV) -> fp_unit
+jsm_fp_unit_vhd (VHDL) -> jsm_fp_unit_top (Verilog-2001) -> jsm_fp_unit_flat (SV, casts) -> jsm_fp_unit (SV)
+jsm_fp_unit_axilite_vhd (VHDL) -> jsm_fp_unit_axilite_top (Verilog-2001) -> jsm_fp_unit_axilite (SV) -> jsm_fp_unit
 ```
 
 ### Quick start
 
-1. Pick a top: AXI4-Lite (`fp_unit_axilite_vhd` / `fp_unit_axilite_top`)
-   for software access, or streaming (`fp_unit_vhd` / `fp_unit_top`) for a
+1. Pick a top: AXI4-Lite (`jsm_fp_unit_axilite_vhd` / `jsm_fp_unit_axilite_top`)
+   for software access, or streaming (`jsm_fp_unit_vhd` / `jsm_fp_unit_top`) for a
    hardware datapath.
 2. Add the files of section 8.1 (SystemVerilog core, then the Verilog and
-   VHDL tops), with `rtl/fp_pkg.sv` first.
+   VHDL tops), with `rtl/jsm_fp_pkg.sv` first.
 3. Set `W_EXP` / `W_MANT` for the format and `DIVSQRT_IMPL` for the clock
    target: 1 for 5.6 ns, 3 (pipelined) or 2 (smaller) for 4.0 ns, on
    VU9P-2L.
@@ -95,7 +95,7 @@ Verilator and Yosys: `DIVSQRT_IMPL` other than 0-3, `TAG_W < 1`,
 `W_EXP < 1`, `W_MANT < 0`, and an `ADDR_WIDTH` too small for the register
 map.
 
-## 3. Streaming interface (`fp_unit_top` / `fp_unit_vhd`)
+## 3. Streaming interface (`jsm_fp_unit_top` / `jsm_fp_unit_vhd`)
 
 ### 3.1 Ports
 
@@ -158,7 +158,7 @@ the request was accepted.
 Verilog:
 
 ```verilog
-fp_unit_top #(
+jsm_fp_unit_top #(
   .W_EXP(8), .W_MANT(23),      // binary32
   .DIVSQRT_IMPL(1),
   .TAG_W(4),
@@ -176,7 +176,7 @@ fp_unit_top #(
 VHDL:
 
 ```vhdl
-u_fpu : entity work.fp_unit_vhd
+u_fpu : entity work.jsm_fp_unit_vhd
   generic map (W_EXP => 8, W_MANT => 23, DIVSQRT_IMPL => 1, TAG_W => 4, OPS_EN => 65535)
   port map (
     clk => clk, rst_n => rst_n,
@@ -318,9 +318,9 @@ flag. With `W_EXP = 8` this is a 9-bit format, **not** the OCP MX E8M0
 scale format (8 bits, unsigned, 0xFF = NaN). Dedicated datapaths handle this
 format with a latency of 1 for every operation.
 
-## 7. AXI4-Lite interface (`fp_unit_axilite_top` / `fp_unit_axilite_vhd`)
+## 7. AXI4-Lite interface (`jsm_fp_unit_axilite_top` / `jsm_fp_unit_axilite_vhd`)
 
-A memory-mapped wrapper around one `fp_unit`. It processes one operation at
+A memory-mapped wrapper around one `jsm_fp_unit`. It processes one operation at
 a time: write the operands, start, poll, read the result.
 
 ### 7.1 Ports
@@ -398,11 +398,11 @@ uint32_t fpu_op(uintptr_t base, unsigned op, unsigned rm,
 | set | files | type |
 |-----|-------|------|
 | core | every file in `rtl/filelist.f`, in that order | SystemVerilog |
-| AXI wrapper | `rtl/fp_unit_axilite.sv` (in `rtl/filelist_wrappers.f`) | SystemVerilog |
-| Verilog tops | `rtl/top/fp_unit_flat.sv` (SystemVerilog), `rtl/top/fp_unit_top.v`, `rtl/top/fp_unit_axilite_top.v` | Verilog |
-| VHDL tops | `rtl/top/fp_unit_vhd.vhd`, `rtl/top/fp_unit_axilite_vhd.vhd` (`rtl/filelist_vhdl.f`) | VHDL |
+| AXI wrapper | `rtl/jsm_fp_unit_axilite.sv` (in `rtl/filelist_wrappers.f`) | SystemVerilog |
+| Verilog tops | `rtl/top/jsm_fp_unit_flat.sv` (SystemVerilog), `rtl/top/jsm_fp_unit_top.v`, `rtl/top/jsm_fp_unit_axilite_top.v` | Verilog |
+| VHDL tops | `rtl/top/jsm_fp_unit_vhd.vhd`, `rtl/top/jsm_fp_unit_axilite_vhd.vhd` (`rtl/filelist_vhdl.f`) | VHDL |
 
-`rtl/fp_pkg.sv` must be compiled before the modules that use it (first in
+`rtl/jsm_fp_pkg.sv` must be compiled before the modules that use it (first in
 `rtl/filelist.f`). The `.sv` files need the SystemVerilog file type: Vivado
 sets it from the extension when you add them with `add_files`.
 
@@ -418,10 +418,10 @@ proc flist {f} {
   }
   close $fh; return $l
 }
-read_verilog -sv [concat [flist rtl/filelist.f] rtl/fp_unit_axilite.sv rtl/top/fp_unit_flat.sv]
-read_verilog [list rtl/top/fp_unit_top.v rtl/top/fp_unit_axilite_top.v]
+read_verilog -sv [concat [flist rtl/filelist.f] rtl/jsm_fp_unit_axilite.sv rtl/top/jsm_fp_unit_flat.sv]
+read_verilog [list rtl/top/jsm_fp_unit_top.v rtl/top/jsm_fp_unit_axilite_top.v]
 read_vhdl [flist rtl/filelist_vhdl.f]
-synth_design -top fp_unit_vhd -part <part> -generic W_EXP=8 -generic W_MANT=23
+synth_design -top jsm_fp_unit_vhd -part <part> -generic W_EXP=8 -generic W_MANT=23
 ```
 
 `syn/vivado-top.tcl` is a complete script that does this and then places
@@ -431,9 +431,9 @@ and routes (`-tclargs <top> <period> W_EXP=.. W_MANT=..`).
 
 1. Add the files above to the project.
 2. In the block design: right-click > Add Module, and pick
-   `fp_unit_axilite_vhd` or `fp_unit_axilite_top` (AXI), or `fp_unit_vhd` or
-   `fp_unit_top` (streaming). In Tcl:
-   `create_bd_cell -type module -reference fp_unit_axilite_vhd fpu_0`.
+   `jsm_fp_unit_axilite_vhd` or `jsm_fp_unit_axilite_top` (AXI), or `jsm_fp_unit_vhd` or
+   `jsm_fp_unit_top` (streaming). In Tcl:
+   `create_bd_cell -type module -reference jsm_fp_unit_axilite_vhd fpu_0`.
 3. Set the parameters on the cell (CONFIG.W_EXP, CONFIG.W_MANT,
    CONFIG.DIVSQRT_IMPL, ...).
 4. The AXI tops show one AXI4-Lite slave interface `S_AXI`, with
@@ -469,9 +469,9 @@ short.
 
 With the Verilog/VHDL tops as the design top (`syn/vivado-top.tcl`, ports not
 registered; same part, 2026-11-04), all of these meet timing:
-`fp_unit_vhd` binary32 at 5.6 ns (+0.109 ns) and with `DIVSQRT_IMPL = 3` at
-4.0 ns (+0.031 ns), `fp_unit_axilite_vhd` binary32 at 5.6 ns (+0.060 ns), and
-`fp_unit_top` binary16 with `OPS_EN = 0x27` at 5.6 ns (+1.288 ns).
+`jsm_fp_unit_vhd` binary32 at 5.6 ns (+0.109 ns) and with `DIVSQRT_IMPL = 3` at
+4.0 ns (+0.031 ns), `jsm_fp_unit_axilite_vhd` binary32 at 5.6 ns (+0.060 ns), and
+`jsm_fp_unit_top` binary16 with `OPS_EN = 0x27` at 5.6 ns (+1.288 ns).
 
 ## 9. Verification
 
@@ -501,7 +501,7 @@ registered; same part, 2026-11-04), all of these meet timing:
 |------|-----|--------|
 | Vivado 2026.1.1 | synthesis, implementation, xsim (SV core, Verilog and VHDL tops), block-design module references | yes |
 | Verilator 5.020 | lint (-Wall clean), cocotb and C++ simulation | yes |
-| Yosys 0.68 | reads and elaborates the core, the AXI wrapper, both Verilog tops and `fp_exp_seq` (used for area metrics and the formal proofs) | yes |
+| Yosys 0.68 | reads and elaborates the core, the AXI wrapper, both Verilog tops and `jsm_fp_exp_seq` (used for area metrics and the formal proofs) | yes |
 | GHDL (oss-cad-suite) | the VHDL tops analyze as VHDL-93 and VHDL-2008 with `-frelaxed` (the Vivado interface attributes sit in the architecture, where Vivado reads them, not in the entity as the VHDL standard wants); simulation needs a mixed-language simulator, since they instantiate the Verilog tops | analysis only |
 | Questa, VCS, Xcelium, Quartus, Synplify | should work (synthesizable SystemVerilog-2012 subset, no vendor primitives) | not tested |
 
@@ -516,7 +516,7 @@ registered; same part, 2026-11-04), all of these meet timing:
   scaleB/logB, signaling comparisons. Design notes are in `docs/proposals/`.
 - The AXI4-Lite wrapper processes one operation at a time and has no
   interrupt; software polls STATUS.VALID.
-- Module names are generic (`fp_pkg`, `fp_add`, `fp_mul`, `fp_div`, `fp_cmp`,
-  `fp_unit`, ...) and share the global module namespace. If the
+- Module names are generic (`jsm_fp_pkg`, `jsm_fp_add`, `jsm_fp_mul`, `jsm_fp_div`, `jsm_fp_cmp`,
+  `jsm_fp_unit`, ...) and share the global module namespace. If the
   surrounding design already has modules or a package with the same names,
   rename one side.

@@ -29,7 +29,7 @@ Two opcodes, `OP_SCALEB` and `OP_LOGB`.
 ## Datapath
 
 - logB: an LZC over the W_MANT fraction bits (subnormals only) and a
-  subtraction from the biased exponent. **1 cycle.** In the `fp_misc_pipe`
+  subtraction from the biased exponent. **1 cycle.** In the `jsm_fp_misc_pipe`
   style, so it can share that module (`OP_LOGB` as another case).
 - scaleB: unpack (normalize a subnormal x: LZC + left shift), add the
   clamped N to the exponent, then the subnormal right shift + round + pack
@@ -40,9 +40,9 @@ Two opcodes, `OP_SCALEB` and `OP_LOGB`.
 ## Cost (binary32)
 
 - logB: about 40 LUTs (5-bit LZC over 23 bits, 9-bit subtract), added to
-  `fp_misc_pipe` (294 LUTs).
+  `jsm_fp_misc_pipe` (294 LUTs).
 - scaleB: about 350 LUTs (normalize shifter, exponent adder, subnormal
-  shifter, rounding), about 1/3 of `fp_mul_pipe` without the core.
+  shifter, rounding), about 1/3 of `jsm_fp_mul_pipe` without the core.
 - Total about 400 LUTs (+3 %).
 - Tests: the oracle is short (`scaleB` = `round(x * 2^N)` with the existing
   rounding, `logB` = the exponent). The 8-bit sweep is exhaustive if b runs

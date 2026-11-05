@@ -13,7 +13,7 @@ module fp_div_props #(
 ) (
   input logic [1+W_EXP+W_MANT-1:0] a,
   input logic [1+W_EXP+W_MANT-1:0] b,
-  input fp_pkg::rounding_t         rm
+  input jsm_fp_pkg::rounding_t         rm
 );
 
   localparam int W = 1 + W_EXP + W_MANT;
@@ -33,9 +33,9 @@ module fp_div_props #(
 
   logic [W-1:0] y_daa, y_d1;
   logic [4:0]   f_daa, f_d1;
-  fp_div #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_daa (
+  jsm_fp_div #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_daa (
     .a(a), .b(a), .rm(rm), .y(y_daa), .flags(f_daa));
-  fp_div #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_d1 (
+  jsm_fp_div #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_d1 (
     .a(a), .b(ONE), .rm(rm), .y(y_d1), .flags(f_d1));
 
   // a / a == 1.0 (exact, no flags) for finite non-zero a.
@@ -48,21 +48,21 @@ endmodule
 // Concrete top-level wrappers.
 module fp_div_props_e4m3 (
   input logic [7:0] a, b,
-  input fp_pkg::rounding_t rm
+  input jsm_fp_pkg::rounding_t rm
 );
   fp_div_props #(.W_EXP(4), .W_MANT(3)) u (a, b, rm);
 endmodule
 
 module fp_div_props_b16 (
   input logic [15:0] a, b,
-  input fp_pkg::rounding_t rm
+  input jsm_fp_pkg::rounding_t rm
 );
   fp_div_props #(.W_EXP(5), .W_MANT(10)) u (a, b, rm);
 endmodule
 
 module fp_div_props_e5m2 (
   input logic [7:0] a, b,
-  input fp_pkg::rounding_t rm
+  input jsm_fp_pkg::rounding_t rm
 );
   fp_div_props #(.W_EXP(5), .W_MANT(2)) u (a, b, rm);
 endmodule

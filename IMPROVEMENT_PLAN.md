@@ -6,9 +6,9 @@
 > the commit log. Corrections found while implementing:
 > - The iterative engine latency is floor((W_MANT+3)/2) + 3, not ceil
 >   (fixed below and in the RTL header).
-> - Yosys 0.68 cannot parse `return`, so the `fp_pkg` functions assign
+> - Yosys 0.68 cannot parse `return`, so the `jsm_fp_pkg` functions assign
 >   their name instead.
-> - `fp_exp_seq` is far less accurate than its header claimed (T1.4).
+> - `jsm_fp_exp_seq` is far less accurate than its header claimed (T1.4).
 >
 > **Update 2026-11-04:** Vivado 2026.1.1 found on the host
 > (`/media/lfs/2026.1.1`); every build re-measured (README table). Phase
@@ -64,7 +64,7 @@ gate fails, stop and fix it before starting the next task.
    - Do not reset a register from two `always_ff` blocks. Synthesis treats it
      as multi-driven and can silently prune logic.
    - Generic datapaths cannot be elaborated at `W_MANT = 0`. E8M0 needs the
-     `*_e8m0` modules (`generate` split in `fp_unit.sv`).
+     `*_e8m0` modules (`generate` split in `jsm_fp_unit.sv`).
 7. **Commit per task** on a feature branch (`git checkout -b <task-id>`), with
    a message that says what changed and which gates passed. Do not commit to
    `master` unless told to.
@@ -97,12 +97,12 @@ gate fails, stop and fix it before starting the next task.
   `W_MANT` fraction bits. Tested at E4M3, E5M2, BF16, binary16, binary32,
   binary64, the odd formats 6/16 and 10/40, all seven 8-bit formats, and
   E8M0 (`W_MANT = 0`, a microscaling format with no NaN encoding).
-- 11 operations (`fp_pkg::op_t`, 4 bits, codes 0-10): add, sub, mul, div,
+- 11 operations (`jsm_fp_pkg::op_t`, 4 bits, codes 0-10): add, sub, mul, div,
   sqrt, fma, min, max, quiet compare, roundToIntegral, totalOrder. All five
   rounding modes, full subnormal support, all five flags.
 - **Microarchitecture.** Each operation has its own pipeline with a fixed
   latency that does not depend on the input. All pipelines accept a new start
-  every cycle. `fp_unit.sv` decodes `mode`, starts the matching pipeline, and
+  every cycle. `jsm_fp_unit.sv` decodes `mode`, starts the matching pipeline, and
   merges the results with a priority mux onto a single `y/flags/cmp/out_valid`
   output. The interface has no ready/backpressure signal.
 - Latencies in cycles, as measured by the `LAT` gate (see
@@ -125,15 +125,15 @@ gate fails, stop and fix it before starting the next task.
 
 ### 1.2 Module map (`rtl/`)
 
-| Role | Files | Instantiated by `fp_unit` today? |
+| Role | Files | Instantiated by `jsm_fp_unit` today? |
 |---|---|---|
-| Package | `fp_pkg.sv` (rounding/op enums, CMP codes, flag bits) | yes |
-| Pipelined generic datapaths | `fp_add_pipe`, `fp_mul_pipe` + `fp_mul_core` (LUT-only multiplier), `fp_fma_pipe`, `fp_div_srt`, `fp_sqrt_srt`, `fp_roundint_pipe`, `fp_minmax_pipe`, `fp_cmp_pipe`, `fp_totalorder_pipe` | yes |
-| Combinational reference datapaths | `fp_add`, `fp_mul`, `fp_div`, `fp_sqrt`, `fp_fma`, `fp_roundint`, `fp_minmax`, `fp_cmp`, `fp_totalorder` | only `fp_div`/`fp_sqrt`, and only when `ITER_DIVSQRT=0`; formal and differential harnesses use the rest |
-| Iterative div/sqrt engine | `fp_divsqrt_iter.sv` (latency K+3, K=floor((W_MANT+3)/2), one op at a time, `busy`/`done`) | **no** (kept for reference) |
-| E8M0 (`W_MANT=0`) | `fp_{add,mul,div,sqrt,fma,roundint}_e8m0.sv` (combinational, 1 cycle through `fp_unit`'s output register) | yes, when `W_MANT=0` |
-| Top | `fp_unit.sv` | — |
-| Wrappers / users | `fp_unit_axilite.sv` (AXI4-Lite register map, one op at a time), `fp_exp_seq.sv` (fp32 exp, uses two `fp_unit`), `fp32_to_bf16_round.sv` (combinational fp32→bf16 RNE) | — |
+| Package | `jsm_fp_pkg.sv` (rounding/op enums, CMP codes, flag bits) | yes |
+| Pipelined generic datapaths | `jsm_fp_add_pipe`, `jsm_fp_mul_pipe` + `jsm_fp_mul_core` (LUT-only multiplier), `jsm_fp_fma_pipe`, `jsm_fp_div_srt`, `jsm_fp_sqrt_srt`, `jsm_fp_roundint_pipe`, `jsm_fp_minmax_pipe`, `jsm_fp_cmp_pipe`, `jsm_fp_totalorder_pipe` | yes |
+| Combinational reference datapaths | `jsm_fp_add`, `jsm_fp_mul`, `jsm_fp_div`, `jsm_fp_sqrt`, `jsm_fp_fma`, `jsm_fp_roundint`, `jsm_fp_minmax`, `jsm_fp_cmp`, `jsm_fp_totalorder` | only `jsm_fp_div`/`jsm_fp_sqrt`, and only when `ITER_DIVSQRT=0`; formal and differential harnesses use the rest |
+| Iterative div/sqrt engine | `jsm_fp_divsqrt_iter.sv` (latency K+3, K=floor((W_MANT+3)/2), one op at a time, `busy`/`done`) | **no** (kept for reference) |
+| E8M0 (`W_MANT=0`) | `fp_{add,mul,div,sqrt,fma,roundint}_e8m0.sv` (combinational, 1 cycle through `jsm_fp_unit`'s output register) | yes, when `W_MANT=0` |
+| Top | `jsm_fp_unit.sv` | — |
+| Wrappers / users | `jsm_fp_unit_axilite.sv` (AXI4-Lite register map, one op at a time), `jsm_fp_exp_seq.sv` (fp32 exp, uses two `jsm_fp_unit`), `jsm_fp32_to_bf16_round.sv` (combinational fp32→bf16 RNE) | — |
 
 ### 1.3 Verification infrastructure (`tests/`, `verification/`, `formal/`)
 
@@ -148,15 +148,15 @@ gate fails, stop and fix it before starting the next task.
 - `tests/latency.py` + `latency_main.cpp`: latency probe.
 - `tests/test_fp_unit_axilite.py`: AXI-Lite register-map tests.
 - `verification/srt/`: Python SRT models + a **streaming** differential
-  (one start per cycle) of `fp_div_srt`/`fp_sqrt_srt` against
-  `fp_div`/`fp_sqrt`.
+  (one start per cycle) of `jsm_fp_div_srt`/`jsm_fp_sqrt_srt` against
+  `jsm_fp_div`/`jsm_fp_sqrt`.
 - `formal/` + `bmc_*.sby`: SymbiYosys depth-1 BMC property proofs. **They
-  target the combinational modules (`fp_add`, `fp_mul`, `fp_div`, …), not the
-  pipelines that `fp_unit` actually instantiates.**
-- **Important:** every `fp_unit`-level harness (cocotb, exhaustive, soak,
+  target the combinational modules (`jsm_fp_add`, `jsm_fp_mul`, `jsm_fp_div`, …), not the
+  pipelines that `jsm_fp_unit` actually instantiates.**
+- **Important:** every `jsm_fp_unit`-level harness (cocotb, exhaustive, soak,
   latency, AXI) issues **one operation at a time** and waits for
   `out_valid`. Streaming (back-to-back) and mixed-op issue are not tested at
-  the `fp_unit` level.
+  the `jsm_fp_unit` level.
 
 ### 1.4 Baseline re-verified today
 
@@ -181,21 +181,21 @@ reproducibility or verification gap; **P2** stale docs or maintainability;
 
 | # | Sev | Finding | Evidence |
 |---|---|---|---|
-| F1 | **P0** | **Result-bus collision drops results silently.** Every pipeline accepts a start each cycle, but they share one output port, merged by a priority mux. If two in-flight ops finish in the same cycle, the lower-priority result is lost. Example (binary32): issue MUL (4 cycles) at cycle 0 and ADD (3 cycles) at cycle 1. Both finish at cycle 4, only the MUL result appears, and `out_valid` pulses once for two requests. There is no `in_ready`, so the caller cannot avoid this except by issuing one op at a time. | Reproduced with a small Verilator harness during this review: "issued 2 ops (MUL then ADD next cycle), got 1 out_valid pulses". `rtl/fp_unit.sv:356-380` (priority mux + OR of valids). |
-| F2 | P0 | **Results can come back out of order with no tag.** Even without a collision, an ADD issued after a SQRT finishes first. The caller has to know the latency table to match results to requests. | `fp_unit.sv` has no tag/ID ports. |
-| F3 | P0 | **`fp32_to_bf16_round` turns NaNs into infinity.** The NaN/Inf branch returns `x[31:16]`. A NaN whose payload sits only in the low 16 bits (e.g. `0x7F800001`) becomes `0x7F80` = +Inf. Signaling NaNs are not quieted. The module has no test at all. | `rtl/fp32_to_bf16_round.sv:28-29`. No reference in `tests/`. |
-| F4 | P1 | **`fp_exp_seq` is compiled but never tested.** It claims ~1e-6 relative error. No harness checks that claim. | `grep fp_exp_seq tests/` finds it only in the RTL list. |
+| F1 | **P0** | **Result-bus collision drops results silently.** Every pipeline accepts a start each cycle, but they share one output port, merged by a priority mux. If two in-flight ops finish in the same cycle, the lower-priority result is lost. Example (binary32): issue MUL (4 cycles) at cycle 0 and ADD (3 cycles) at cycle 1. Both finish at cycle 4, only the MUL result appears, and `out_valid` pulses once for two requests. There is no `in_ready`, so the caller cannot avoid this except by issuing one op at a time. | Reproduced with a small Verilator harness during this review: "issued 2 ops (MUL then ADD next cycle), got 1 out_valid pulses". `rtl/jsm_fp_unit.sv:356-380` (priority mux + OR of valids). |
+| F2 | P0 | **Results can come back out of order with no tag.** Even without a collision, an ADD issued after a SQRT finishes first. The caller has to know the latency table to match results to requests. | `jsm_fp_unit.sv` has no tag/ID ports. |
+| F3 | P0 | **`jsm_fp32_to_bf16_round` turns NaNs into infinity.** The NaN/Inf branch returns `x[31:16]`. A NaN whose payload sits only in the low 16 bits (e.g. `0x7F800001`) becomes `0x7F80` = +Inf. Signaling NaNs are not quieted. The module has no test at all. | `rtl/jsm_fp32_to_bf16_round.sv:28-29`. No reference in `tests/`. |
+| F4 | P1 | **`jsm_fp_exp_seq` is compiled but never tested.** It claims ~1e-6 relative error. No harness checks that claim. | `grep jsm_fp_exp_seq tests/` finds it only in the RTL list. |
 | F5 | P1 | **The Vivado flow cannot be reproduced.** `metrics/vivado-impl.tcl` reads `/tmp/opencode/timing/fp_unit_timing.sv` (the I/O-registering wrapper) and writes to `/tmp/opencode/vivado`. That directory no longer exists. The FMA streaming differential (`/tmp/opencode/fma_diff`) is lost too. | `ls /tmp/opencode/timing` → no such directory. |
-| F6 | P1 | **Reserved encodings are undefined.** `mode` 11-15 returns `out_valid` after 1 cycle with a stale `y_add` register value and arbitrary flags. `rm` 5-7 behave as RZ for the increment but as RNE for overflow. The behaviour differs per module and is not documented. | `fp_unit.sv` legacy `always_comb` mux (default branch) and `out_valid_r`. `fp_add_pipe.sv:423-449` `default:` arms. |
+| F6 | P1 | **Reserved encodings are undefined.** `mode` 11-15 returns `out_valid` after 1 cycle with a stale `y_add` register value and arbitrary flags. `rm` 5-7 behave as RZ for the increment but as RNE for overflow. The behaviour differs per module and is not documented. | `jsm_fp_unit.sv` legacy `always_comb` mux (default branch) and `out_valid_r`. `jsm_fp_add_pipe.sv:423-449` `default:` arms. |
 | F7 | P1 | **Formal proofs cover the reference modules, not the shipped pipelines.** That is acceptable for 8-bit formats (the exhaustive sweep covers the pipelines), but no proof ties `fp_*_pipe` to `fp_*` at binary16 and above. | `formal/*.sv`, `bmc_*.sby`. |
 | F8 | P1 | **The coverage data is stale.** `coverage.dat`/`coverage_annotate` date from 2026-09-17, before the pipelined and SRT modules landed. | File timestamps. |
-| F9 | P2 | **Stale or contradicting documentation.** README line 3 says "Parametrized combinational FPU". README says the arithmetic formal proofs are "blocked by a yosys write_smt2 bug", but HANDOFF says they were unblocked and proven. README says `in_valid` is "ignored while the same pipeline is busy" (false: every pipeline streams). README cites min/max as clause 5.6.1. In 754-2019, 5.6.1 is the signaling comparisons, and minimum/maximum are 9.6. HANDOFF's SRT section has two conflicting sqrt latency lists ("sqrt 15/29/8/7/5/4" and "sqrt 17 -> 9 (binary32) …"). The real numbers are 15/29/8/7/5/4. The `fp_unit.sv` header calls the unit combinational and describes `ITER_DIVSQRT` as selecting `fp_divsqrt_iter`. The `fp_unit_axilite.sv` comments refer to the "iterative engine" and to "GO → BUSY → 3 cycles". The `fp_div_srt.sv` header says `CSW = S_W+22`, but the code uses `S_W+14`, and the header still points to `/tmp/opencode/srt` (now `verification/srt`). | The files named. |
-| F10 | P2 | **The parameter `ITER_DIVSQRT` is misnamed.** `1` now selects the SRT pipelines, not the iterative engine. The harness flags `--iter`/`FP_ITER_DIVSQRT=1` select the same default build. | `fp_unit.sv:38`, Makefile `*-iter` targets. |
+| F9 | P2 | **Stale or contradicting documentation.** README line 3 says "Parametrized combinational FPU". README says the arithmetic formal proofs are "blocked by a yosys write_smt2 bug", but HANDOFF says they were unblocked and proven. README says `in_valid` is "ignored while the same pipeline is busy" (false: every pipeline streams). README cites min/max as clause 5.6.1. In 754-2019, 5.6.1 is the signaling comparisons, and minimum/maximum are 9.6. HANDOFF's SRT section has two conflicting sqrt latency lists ("sqrt 15/29/8/7/5/4" and "sqrt 17 -> 9 (binary32) …"). The real numbers are 15/29/8/7/5/4. The `jsm_fp_unit.sv` header calls the unit combinational and describes `ITER_DIVSQRT` as selecting `jsm_fp_divsqrt_iter`. The `jsm_fp_unit_axilite.sv` comments refer to the "iterative engine" and to "GO → BUSY → 3 cycles". The `jsm_fp_div_srt.sv` header says `CSW = S_W+22`, but the code uses `S_W+14`, and the header still points to `/tmp/opencode/srt` (now `verification/srt`). | The files named. |
+| F10 | P2 | **The parameter `ITER_DIVSQRT` is misnamed.** `1` now selects the SRT pipelines, not the iterative engine. The harness flags `--iter`/`FP_ITER_DIVSQRT=1` select the same default build. | `jsm_fp_unit.sv:38`, Makefile `*-iter` targets. |
 | F11 | P2 | **Many copies of the same lists.** The RTL file list appears in `tests/run_regression.py`, `exhaustive.py`, `soak.py`, `latency.py`, `metrics.py`, `metrics/vivado-impl.tcl`, and and in 6 of the 11 lint lines of the Makefile. The op count `11` is hard-coded in `exhaustive.py`, `exhaustive_main.cpp` (×3), `soak.py`, `soak_main.cpp`, `latency.py` (×3), `test_fp_unit.py:1271`, and `test_fp_unit_axilite.py:264`. The op → oracle dispatch `if/elif` chain is repeated in several drivers. Adding one op today means editing about 15 places. | grep. |
-| F12 | P2 | **Repository hygiene.** About 6 MB of AI-session transcripts are committed at the root (`ses_00f278…json`, `session-ses_*.md`). `fp_unit.sv` keeps dead state: `cmp_r` is always 0, `cmp_c` is a constant, and several "legacy" comments are stale. | `git ls-files`. |
+| F12 | P2 | **Repository hygiene.** About 6 MB of AI-session transcripts are committed at the root (`ses_00f278…json`, `session-ses_*.md`). `jsm_fp_unit.sv` keeps dead state: `cmp_r` is always 0, `cmp_c` is a constant, and several "legacy" comments are stale. | `git ls-files`. |
 | F13 | P3 | **Clock and throughput trade-off.** The SRT landing moved the whole unit from 250 MHz to 178.6 MHz to make div/sqrt faster in cycles. Every other op is now 1.4× slower in wall-clock time. In ns, sqrt got slightly worse (64 → 84 ns at binary32). No build-time option brings back the 250 MHz configuration. | README "Pipelined latency-optimized core" section. |
-| F14 | P3 | **Required IEEE 754-2019 operations are missing.** Clauses with "shall": 5.3.1 nextUp/nextDown, remainder, roundToIntegralExact; 5.3.3 scaleB/logB; 5.4.1 convertFromInt; 5.8 convertToInteger*; 5.4.2 format conversions; 5.5.1 copy/negate/abs/copySign; 5.6.1 signaling comparisons; 5.7.2 class/isSignMinus/…. 9.6 (recommended) minimumNumber/maximumNumber/minimumMagnitude/…. Only 5 opcodes (11-15) are free. | `fp_pkg.sv`; 754-2019 §5.3.1, 5.5.1, 5.7.2, 9.6. |
-| F15 | P3 | **Area cannot be pruned.** `fp_exp_seq` instantiates two complete `fp_unit`s (all datapaths, ~13k LUTs each) and uses only MUL and ADD. `fp_unit` has no parameter to leave unused ops out. | `rtl/fp_exp_seq.sv:57,74`. |
+| F14 | P3 | **Required IEEE 754-2019 operations are missing.** Clauses with "shall": 5.3.1 nextUp/nextDown, remainder, roundToIntegralExact; 5.3.3 scaleB/logB; 5.4.1 convertFromInt; 5.8 convertToInteger*; 5.4.2 format conversions; 5.5.1 copy/negate/abs/copySign; 5.6.1 signaling comparisons; 5.7.2 class/isSignMinus/…. 9.6 (recommended) minimumNumber/maximumNumber/minimumMagnitude/…. Only 5 opcodes (11-15) are free. | `jsm_fp_pkg.sv`; 754-2019 §5.3.1, 5.5.1, 5.7.2, 9.6. |
+| F15 | P3 | **Area cannot be pruned.** `jsm_fp_exp_seq` instantiates two complete `jsm_fp_unit`s (all datapaths, ~13k LUTs each) and uses only MUL and ADD. `jsm_fp_unit` has no parameter to leave unused ops out. | `rtl/jsm_fp_exp_seq.sv:57,74`. |
 
 ---
 
@@ -213,9 +213,9 @@ Goal: adding a module or an op becomes a one-place change.
 
 Steps:
 1. Create `rtl/filelist.f` with one path per line (relative to the repo root)
-   in the current order: `fp_pkg.sv` first, then every datapath, then
-   `fp_unit.sv`. Keep `fp_unit_axilite.sv`, `fp32_to_bf16_round.sv` and
-   `fp_exp_seq.sv` in a second file, `rtl/filelist_wrappers.f`, because some
+   in the current order: `jsm_fp_pkg.sv` first, then every datapath, then
+   `jsm_fp_unit.sv`. Keep `jsm_fp_unit_axilite.sv`, `jsm_fp32_to_bf16_round.sv` and
+   `jsm_fp_exp_seq.sv` in a second file, `rtl/filelist_wrappers.f`, because some
    harnesses do not compile them.
 2. Create `tests/rtl_files.py` with `def rtl_files(wrappers: bool = False) ->
    list[pathlib.Path]`, which reads those files. Replace the hard-coded `RTL =
@@ -227,7 +227,7 @@ Steps:
    `RTL := $(shell cat rtl/filelist.f)` and
    `WRAP := $(shell cat rtl/filelist_wrappers.f)`, and use `$(RTL)` in every
    lint line. Keep all 11 lint configurations (including `-GITER_DIVSQRT=1`,
-   the `fp_exp_seq` one, the `fp_unit_axilite` ones, and the standalone
+   the `jsm_fp_exp_seq` one, the `jsm_fp_unit_axilite` ones, and the standalone
    `*_e8m0` ones).
 4. In `tests/reference/formats.py`, add the op codes (`OP_ADD = 0` …
    `OP_TOTALORDER = 10`), `NUM_OPS = 11` and `OP_NAMES = (...)`. Import
@@ -270,15 +270,15 @@ Edit only comments and Markdown:
   `/tmp/opencode/...` path with its repo equivalent (or with "lost; see T1.4"
   if none exists). Change the "Missing (future milestones)" section, which
   still says the datapath is combinational.
-- `rtl/fp_unit.sv` header and the `ITER_DIVSQRT` comment: describe the real
+- `rtl/jsm_fp_unit.sv` header and the `ITER_DIVSQRT` comment: describe the real
   selection (`ITER_DIVSQRT != 0` → SRT pipelines; `0` → combinational
-  `fp_div`/`fp_sqrt` with 1-cycle latency). Change the comment above `y_r`
+  `jsm_fp_div`/`jsm_fp_sqrt` with 1-cycle latency). Change the comment above `y_r`
   ("During an iterative div/sqrt transaction …").
-- `rtl/fp_unit_axilite.sv`: fix the operation-flow comment and the
+- `rtl/jsm_fp_unit_axilite.sv`: fix the operation-flow comment and the
   "GO strobe -> BUSY -> 3 cycles -> VALID" banner (latency varies by op; see
   the README table).
-- `rtl/fp_div_srt.sv` header: change `CSW = S_W+22` to the real `S_W+14`
-  (check `fp_sqrt_srt.sv` too: it uses `S_W+18`), and change
+- `rtl/jsm_fp_div_srt.sv` header: change `CSW = S_W+22` to the real `S_W+14`
+  (check `jsm_fp_sqrt_srt.sv` too: it uses `S_W+18`), and change
   `/tmp/opencode/srt` to `verification/srt`.
 
 Gate: `LINT` (comments only, but run it anyway).
@@ -286,8 +286,8 @@ Gate: `LINT` (comments only, but run it anyway).
 #### T0.3 Bring the Vivado flow back into the repo (F5)
 
 1. Create `syn/fp_unit_timing.sv`. Module `fp_unit_timing` with the same
-   parameters as `fp_unit` (default binary32) that registers **every** input
-   (`in_valid, mode, rm, a, b, c`) once, feeds them to `fp_unit`, and
+   parameters as `jsm_fp_unit` (default binary32) that registers **every** input
+   (`in_valid, mode, rm, a, b, c`) once, feeds them to `jsm_fp_unit`, and
    registers every output once. With this, input and output ports are not
    timed as unconstrained combinational paths in OOC mode. Keep `rst_n`
    synchronous, passed straight through.
@@ -313,7 +313,7 @@ Gate: `LINT`. The new wrapper must also pass
 - **Ask the owner before doing this.** Remove the committed session
   transcripts from the index (`git rm --cached ses_*.json session-ses_*.md`)
   and add `ses_*.json` and `session-*.md` to `.gitignore`. They stay on disk.
-- Remove the dead `cmp_r`/`cmp_c` path in `fp_unit.sv`: `cmp` is `cmp_cmp_pipe`
+- Remove the dead `cmp_r`/`cmp_c` path in `jsm_fp_unit.sv`: `cmp` is `cmp_cmp_pipe`
   or `cmp_tot_pipe` when those are valid, and `2'd0` otherwise. Gate: `EXH`.
 
 ### Phase 1: correctness of the top-level interface (P0)
@@ -328,13 +328,13 @@ op starts only on a cycle where `in_valid && in_ready` (call that `fire`).
 A caller that issues one op at a time always sees `in_ready = 1`, so every
 existing harness keeps working unchanged.
 
-**Latency table.** Add these functions to `fp_pkg.sv`. They reproduce the
+**Latency table.** Add these functions to `jsm_fp_pkg.sv`. They reproduce the
 pipelines' formulas exactly. Verify each function against the `LAT` table in
 §1.1 before you use it.
 
 ```systemverilog
   // Cycle counts from `fire` to `out_valid` (generic formats, W_MANT > 0).
-  function automatic int lat_mul(input int w_mant);   // fp_mul_core TWO_STAGE = (S_W <= 32)
+  function automatic int lat_mul(input int w_mant);   // jsm_fp_mul_core TWO_STAGE = (S_W <= 32)
     return (w_mant + 1 <= 32) ? 4 : 5;
   endfunction
   function automatic int lat_fma(input int w_mant);
@@ -363,7 +363,7 @@ Expected values: `lat_div_srt(23,2)=9`, `lat_div_srt(52,2)=17`,
 `lat_div_srt(2,2)=4`; `lat_sqrt_srt(23,1)=15`, `(52,1)=29`, `(10,1)=8`,
 `(7,1)=7`, `(3,1)=5`, `(2,1)=4`; `lat_divsqrt_iter(23)=16`, `(52)=30`.
 
-In `fp_unit.sv`, define `localparam int LAT_ADD, LAT_MUL, LAT_FMA, LAT_DIV,
+In `jsm_fp_unit.sv`, define `localparam int LAT_ADD, LAT_MUL, LAT_FMA, LAT_DIV,
 LAT_SQRT, LAT_RND, LAT_MM = 1, LAT_LEGACY = 1`, and `MAXLAT` as their
 maximum. For `W_MANT == 0` every op is 1 cycle except min/max/cmp/totalOrder,
 which also take 1. For `ITER_DIVSQRT == 0`, div/sqrt go through `out_valid_r`
@@ -409,11 +409,11 @@ and `latency.py` (cocotb builds: add it to `build_args` in
 `run_regression.py`) so the assertions actually run.
 
 **Callers.**
-- `fp_unit_axilite.sv`: connect `in_ready`. Hold `fpu_in_valid` until
+- `jsm_fp_unit_axilite.sv`: connect `in_ready`. Hold `fpu_in_valid` until
   `fpu_in_ready` (with one op at a time it is always ready, but write it
   correctly). Connect the tag ports to `'0` and leave `out_tag` unused,
   inside a `lint_off PINCONNECTEMPTY` region if needed.
-- `fp_exp_seq.sv`: the same. It issues one op at a time.
+- `jsm_fp_exp_seq.sv`: the same. It issues one op at a time.
 - The C++ harnesses do not need changes. The new input ports default to 0.
 
 Gate: `LINT`, `SMOKE`, `REGRESS_ALL`, `AXI`, `EXH`, `SOAK`, `LAT` (the
@@ -425,7 +425,7 @@ Pitfalls:
   paper first, then prove it with the `out_valid == resv[0]` assertion.
 - `in_ready` depends combinationally on `mode`. That is allowed: like AXI,
   the master must keep `mode` and operands stable while `in_valid` is high and
-  `in_ready` is low. Document this in the `fp_unit` header.
+  `in_ready` is low. Document this in the `jsm_fp_unit` header.
 - Do not change any datapath module in this task.
 
 #### T1.2 Streaming and mixed-issue soak harness (verifies T1.1; also covers F5's lost FMA streaming test)
@@ -453,7 +453,7 @@ Gate: `make stream` 0 mismatches, 0 lost results, same-op issue rate 1.0 for
 all 11 ops. **Run this test against `master` too, without T1.1. It must FAIL
 in `--mixed` mode. That proves the test can catch F1.**
 
-#### T1.3 Fix `fp32_to_bf16_round` and test it (F3)
+#### T1.3 Fix `jsm_fp32_to_bf16_round` and test it (F3)
 
 1. NaN input (`x[30:23] == 8'hFF && x[22:0] != 0`): return
    `{x[31], 8'hFF, 1'b1, x[21:16]}`. That quiets the NaN and keeps the sign
@@ -479,10 +479,10 @@ in `--mixed` mode. That proves the test can catch F1.**
 
 Gate: new harness PASS, `LINT`.
 
-#### T1.4 Test `fp_exp_seq` (F4)
+#### T1.4 Test `jsm_fp_exp_seq` (F4)
 
 Add a cocotb test (`tests/test_fp_exp_seq.py`, run with
-`--top fp_exp_seq --tests test_fp_exp_seq`, the way the AXI test is run) that:
+`--top jsm_fp_exp_seq --tests test_fp_exp_seq`, the way the AXI test is run) that:
 - drives 2 000 random `x` in [-16, 16] plus the edge cases ±0, ±16, ±16.5
   (clamped), tiny values, NaN, ±Inf;
 - checks `y` against `math.exp(clamp(x))` rounded to fp32 within a stated
@@ -501,7 +501,7 @@ Recommended semantics. **Confirm them with the owner first.** These are API
 decisions.
 - `mode` 11-15 (before Phase 3 uses any of them): `y = 0`,
   `flags = 1 << FLAG_INVALID`, `cmp = 0`, latency 1 (through `out_valid_r`).
-- `rm` 5-7: map to RNE at the `fp_unit` input
+- `rm` 5-7: map to RNE at the `jsm_fp_unit` input
   (`rm_eff = (rm > RM_RM) ? RM_RNE : rm`), so every datapath sees a defined
   mode.
 Add both rules to the oracle (`dispatch` from T0.1), to README "Semantics",
@@ -514,21 +514,21 @@ Gate: `SMOKE`, `EXH`, `AXI`.
 #### T2.1 Choose the div/sqrt implementation at build time (gets the 250 MHz build back) (F13)
 
 Replace `ITER_DIVSQRT` with
-`parameter int DIVSQRT_IMPL = 1   // 0 = combinational fp_div/fp_sqrt, 1 = SRT pipelines (178 MHz), 2 = iterative fp_divsqrt_iter (250 MHz)`.
+`parameter int DIVSQRT_IMPL = 1   // 0 = combinational jsm_fp_div/jsm_fp_sqrt, 1 = SRT pipelines (178 MHz), 2 = iterative jsm_fp_divsqrt_iter (250 MHz)`.
 Keep `ITER_DIVSQRT` as a deprecated alias for one release: if a user sets
 `ITER_DIVSQRT=0`, `DIVSQRT_IMPL` becomes 0. Or just rename it everywhere
 (Makefile `-GITER_DIVSQRT=1`, `FP_ITER_DIVSQRT`, the `--iter` flags,
-`fp_unit_axilite`). Choose the rename and update every reference.
+`jsm_fp_unit_axilite`). Choose the rename and update every reference.
 `grep -rn ITER_DIVSQRT` lists them.
 
 For `DIVSQRT_IMPL == 2`:
-- Wire `fp_divsqrt_iter` exactly as commit `3323487` did
-  (`git show 3323487:rtl/fp_unit.sv` is a working reference), but gate its
+- Wire `jsm_fp_divsqrt_iter` exactly as commit `3323487` did
+  (`git show 3323487:rtl/jsm_fp_unit.sv` is a working reference), but gate its
   start with `fire`. It serves one op at a time, so **div/sqrt must not be
   ready while the engine is busy**:
   `in_ready = !resv[lat_sel] && !(is_divsqrt(mode) && busy_iter)`. The
   engine accepts a new start in its `done` cycle (see the comment at
-  `fp_divsqrt_iter.sv:601`), so use `busy_iter` exactly as 3323487 did.
+  `jsm_fp_divsqrt_iter.sv:601`), so use `busy_iter` exactly as 3323487 did.
 - `LAT_DIV = LAT_SQRT = lat_divsqrt_iter(W_MANT)`.
 - In T1.2's `--same-op` streaming test the expected issue rate for div/sqrt
   becomes `1/LAT`, not 1.0. Make the test accept a per-op expected rate.
@@ -549,13 +549,13 @@ otherwise, and leave those ops out of `start_*`. A disabled opcode behaves as
 reserved (T1.5: invalid, 1 cycle). `OP_MIN`/`OP_MAX` share one pipeline:
 enable it if either bit is set. `OP_ADD`/`OP_SUB` likewise.
 
-Use it in `fp_exp_seq`: `u_mul` gets `OPS_EN = 1 << OP_MUL` and `u_add`
+Use it in `jsm_fp_exp_seq`: `u_mul` gets `OPS_EN = 1 << OP_MUL` and `u_add`
 gets `(1 << OP_ADD) | (1 << OP_SUB)`.
 
 Gate: `LINT`; `EXH` with the default mask; a cocotb or latency test with a
 reduced mask showing that a disabled op returns the reserved-op result; T1.4
-still passes. If Vivado or Yosys is available, report the `fp_exp_seq` cell
-count before and after (`tests/metrics.py` uses Yosys; add an `fp_exp_seq`
+still passes. If Vivado or Yosys is available, report the `jsm_fp_exp_seq` cell
+count before and after (`tests/metrics.py` uses Yosys; add an `jsm_fp_exp_seq`
 entry).
 
 ### Phase 3: IEEE 754-2019 operations (P3) (F14)
@@ -582,7 +582,7 @@ The E8M0 caveat: there are no NaN encodings. `class` never returns 0 or 1,
 and `nextUp(maxfinite)` is +Inf (check what `formats.py` does for E8M0
 Inf/NaN before you write the oracle). Every op must also work at
 `W_MANT = 0` (these ops are simple bit manipulation, so one format-generic
-module usually works for both branches, as `fp_minmax` does). If Verilator
+module usually works for both branches, as `jsm_fp_minmax` does). If Verilator
 5.020 crashes at `W_MANT=0` (bug 8 in HANDOFF), write a separate `*_e8m0`
 module.
 
@@ -602,13 +602,13 @@ That is roughly increasing difficulty. Do one op per branch/commit.
    and for two-operand ops the mixed pairs. Run the oracle over the list
    and fix the oracle until it agrees.
 4. **RTL.** Write `rtl/fp_<op>_pipe.sv` with the same port shape as
-   `fp_minmax_pipe.sv` (`clk, rst_n, start, a, b, rm → y, flags, [cmp],
+   `jsm_fp_minmax_pipe.sv` (`clk, rst_n, start, a, b, rm → y, flags, [cmp],
    out_valid`). One register stage, i.e. latency 1, is right for all five
    ops above. Use the existing `localparam` header block (`BIAS`, `EMAX`,
    `EXP_ALL`, `QUIET`, …) copied from a sibling module.
-5. **`fp_pkg.sv`.** Add the enum value. Keep `tests/reference/formats.py` in
+5. **`jsm_fp_pkg.sv`.** Add the enum value. Keep `tests/reference/formats.py` in
    sync.
-6. **`fp_unit.sv`.** Instantiate, add `start_<op> = fire && mode == OP_<op>`,
+6. **`jsm_fp_unit.sv`.** Instantiate, add `start_<op> = fire && mode == OP_<op>`,
    add the latency (`lat_sel` case), add the result to the `y`/`flags`/`cmp`
    output mux and the `out_valid` OR, and exclude `start_<op>` from
    `out_valid_r`. If T2.2 landed, also gate the instance with `OPS_EN`.
@@ -621,7 +621,7 @@ That is roughly increasing difficulty. Do one op per branch/commit.
 9. **Latency probe.** Add the op name to `latency.py`'s `OPS`. Add the
    expected latency to the README table.
 10. **Docs.** README op list, latency table, semantics section, AXI opcode
-    table comment in `fp_unit_axilite.sv`. Add a HANDOFF changelog row.
+    table comment in `jsm_fp_unit_axilite.sv`. Add a HANDOFF changelog row.
 11. **Gates.** `LINT`, `REGRESS_ALL`, `AXI`, `EXH`, `SOAK`, `LAT`,
     `make stream`.
 
@@ -634,15 +634,15 @@ That is roughly increasing difficulty. Do one op per branch/commit.
   W ≥ 8, but add an elaboration-time check
   (`if (W < 4) $error("OP_CLASS needs W >= 4");` inside a generate) for
   safety. Use the existing classification already in
-  `fp_cmp.sv` and `fp_minmax.sv` (exponent all-ones / zero, mantissa zero,
+  `jsm_fp_cmp.sv` and `jsm_fp_minmax.sv` (exponent all-ones / zero, mantissa zero,
   quiet bit `a[W_MANT-1]`).
-- **OP_RNDINTX.** Reuse `fp_roundint_pipe`. Add an `exact` input port and
+- **OP_RNDINTX.** Reuse `jsm_fp_roundint_pipe`. Add an `exact` input port and
   raise `FLAG_INEXACT` when a finite non-integral input was rounded. Simplest
   test: the result bits differ from the input bits and the input is finite
   and non-NaN. Do **not** use that shortcut for NaN or Inf: those return
   unchanged (or quieted) and are never inexact. An sNaN input raises invalid,
   as `OP_RNDINT` already does (check the oracle).
-- **OP_MINMAXNUM.** Compute it from `fp_minmax`'s ordering. The NaN rule
+- **OP_MINMAXNUM.** Compute it from `jsm_fp_minmax`'s ordering. The NaN rule
   differs from `OP_MIN`/`OP_MAX`: return the number when exactly one operand
   is NaN; return a quiet NaN (payload of the first NaN, per the unit's 6.2.3
   convention) when both are NaN; raise invalid iff either is sNaN. For the
@@ -690,7 +690,7 @@ attempted".
   add. The HANDOFF notes say the S3 normalize/round stage is the obstacle.
 - **P4.3 Formal equivalence of the pipelines against the combinational
   references** at binary16 (F7): a SymbiYosys config with depth = latency +
-  1, the same `a`/`b`/`rm` driven into `fp_add_pipe` and `fp_add`,
+  1, the same `a`/`b`/`rm` driven into `jsm_fp_add_pipe` and `jsm_fp_add`,
   asserting equal outputs when `out_valid`. Start with add and mul. Expect
   the solver to struggle at fma.
 - **P4.4 Refresh coverage (F8).** Run `make coverage` after Phases 0-3 and
@@ -709,16 +709,16 @@ attempted".
       runnable from a clean checkout.
 - [ ] F6: reserved encodings defined, documented and tested.
 - [ ] F9-F11: docs agree with the code; adding an op touches the RTL module,
-      `fp_pkg.sv`, `fp_unit.sv`, `filelist.f`, `formats.py`, `ops.py`, the
+      `jsm_fp_pkg.sv`, `jsm_fp_unit.sv`, `filelist.f`, `formats.py`, `ops.py`, the
       tests and the docs only.
 - [ ] T2.1: a 250 MHz build option exists (`DIVSQRT_IMPL=2`) and is
-      verified. T2.2: `fp_exp_seq` no longer builds full units.
+      verified. T2.2: `jsm_fp_exp_seq` no longer builds full units.
 - [ ] Phase 3 ops merged one by one, each with every gate green.
 - [ ] README latency table regenerated from `make metrics-latency`.
 
 ---
 
-## Appendix A: `fp_unit` port list after Phase 1
+## Appendix A: `jsm_fp_unit` port list after Phase 1
 
 ```
 input  clk, rst_n (synchronous, active low)
@@ -742,14 +742,14 @@ them.
 
 `tests/test_fp_unit.py:69` (`check()`), `tests/soak_main.cpp:76-104`,
 `tests/exhaustive_main.cpp`, `tests/latency_main.cpp`,
-`rtl/fp_unit_axilite.sv` (S_IDLE/S_WAIT FSM), `rtl/fp_exp_seq.sv` (sequencer).
+`rtl/jsm_fp_unit_axilite.sv` (S_IDLE/S_WAIT FSM), `rtl/jsm_fp_exp_seq.sv` (sequencer).
 None of them needs to change for T1.1, but none of them would catch a
 regression in streaming. That is why T1.2 exists.
 
 ## Appendix C: useful history
 
 - `54a661a` last 250 MHz master (iterative div/sqrt, 7 255 LUTs, WNS +0.014 ns).
-- `3323487` reference wiring of `fp_divsqrt_iter` with the `busy` handshake.
+- `3323487` reference wiring of `jsm_fp_divsqrt_iter` with the `busy` handshake.
 - `0fca7b6`, `5aa4ae5` the FMA and MUL context-alignment fixes for
   back-to-back starts. They show the bug class that T1.2 guards against.
 - HANDOFF.md "Bugs found and fixed" (25+ entries) is required reading
@@ -758,7 +758,7 @@ regression in streaming. That is why T1.2 exists.
 ## Appendix D: baseline log
 
 Collision reproduction used for F1 (binary32, Verilator C++ against
-`fp_unit`; build it with the same file list as `tests/latency.py`):
+`jsm_fp_unit`; build it with the same file list as `tests/latency.py`):
 
 ```cpp
 // cycle 0: MUL 2.0*3.0 (4 cycles); cycle 1: ADD 1.0+1.0 (3 cycles)

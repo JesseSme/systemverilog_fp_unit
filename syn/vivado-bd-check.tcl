@@ -30,10 +30,10 @@ update_compile_order -fileset sources_1
 create_bd_design fpu_bd
 set errors 0
 foreach {cell ref cfg} {
-  u_axi_vhd fp_unit_axilite_vhd {CONFIG.W_EXP 5 CONFIG.W_MANT 10}
-  u_axi_v   fp_unit_axilite_top {CONFIG.W_EXP 8 CONFIG.W_MANT 23 CONFIG.DIVSQRT_IMPL 3}
-  u_fpu_vhd fp_unit_vhd         {CONFIG.W_EXP 11 CONFIG.W_MANT 52 CONFIG.TAG_W 4}
-  u_fpu_v   fp_unit_top         {CONFIG.W_EXP 8 CONFIG.W_MANT 7 CONFIG.OPS_EN 39}
+  u_axi_vhd jsm_fp_unit_axilite_vhd {CONFIG.W_EXP 5 CONFIG.W_MANT 10}
+  u_axi_v   jsm_fp_unit_axilite_top {CONFIG.W_EXP 8 CONFIG.W_MANT 23 CONFIG.DIVSQRT_IMPL 3}
+  u_fpu_vhd jsm_fp_unit_vhd         {CONFIG.W_EXP 11 CONFIG.W_MANT 52 CONFIG.TAG_W 4}
+  u_fpu_v   jsm_fp_unit_top         {CONFIG.W_EXP 8 CONFIG.W_MANT 7 CONFIG.OPS_EN 39}
 } {
   create_bd_cell -type module -reference $ref $cell
   set_property -dict $cfg [get_bd_cells $cell]

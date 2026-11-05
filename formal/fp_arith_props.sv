@@ -30,7 +30,7 @@ module fp_arith_props #(
   input logic [1+W_EXP+W_MANT-1:0] a,
   input logic [1+W_EXP+W_MANT-1:0] b,
   input logic [1+W_EXP+W_MANT-1:0] c,
-  input fp_pkg::rounding_t         rm
+  input jsm_fp_pkg::rounding_t         rm
 );
 
   localparam int W = 1 + W_EXP + W_MANT;
@@ -64,20 +64,20 @@ module fp_arith_props #(
   // ----------------------------------------------------- addition (5.4.1)
   logic [W-1:0] y_ab, y_ba, y0, yc, y_sub, y_nb, y_ac;
   logic [4:0]   f_ab, f_ba, f0, fc, f_sub, f_nb, f_ac;
-  fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_ab (
-    .a(a), .b(b), .rm(rm), .op(fp_pkg::OP_ADD), .y(y_ab), .flags(f_ab));
-  fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_ba (
-    .a(b), .b(a), .rm(rm), .op(fp_pkg::OP_ADD), .y(y_ba), .flags(f_ba));
-  fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_a0 (
-    .a(a), .b(ZERO), .rm(rm), .op(fp_pkg::OP_ADD), .y(y0), .flags(f0));
-  fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_an (
-    .a(a), .b(a ^ SIGN), .rm(rm), .op(fp_pkg::OP_ADD), .y(yc), .flags(fc));
-  fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_sub (
-    .a(a), .b(b), .rm(rm), .op(fp_pkg::OP_SUB), .y(y_sub), .flags(f_sub));
-  fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_nb (
-    .a(a), .b(b ^ SIGN), .rm(rm), .op(fp_pkg::OP_ADD), .y(y_nb), .flags(f_nb));
-  fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_ac (
-    .a(a), .b(c), .rm(rm), .op(fp_pkg::OP_ADD), .y(y_ac), .flags(f_ac));
+  jsm_fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_ab (
+    .a(a), .b(b), .rm(rm), .op(jsm_fp_pkg::OP_ADD), .y(y_ab), .flags(f_ab));
+  jsm_fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_ba (
+    .a(b), .b(a), .rm(rm), .op(jsm_fp_pkg::OP_ADD), .y(y_ba), .flags(f_ba));
+  jsm_fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_a0 (
+    .a(a), .b(ZERO), .rm(rm), .op(jsm_fp_pkg::OP_ADD), .y(y0), .flags(f0));
+  jsm_fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_an (
+    .a(a), .b(a ^ SIGN), .rm(rm), .op(jsm_fp_pkg::OP_ADD), .y(yc), .flags(fc));
+  jsm_fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_sub (
+    .a(a), .b(b), .rm(rm), .op(jsm_fp_pkg::OP_SUB), .y(y_sub), .flags(f_sub));
+  jsm_fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_nb (
+    .a(a), .b(b ^ SIGN), .rm(rm), .op(jsm_fp_pkg::OP_ADD), .y(y_nb), .flags(f_nb));
+  jsm_fp_add #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_ac (
+    .a(a), .b(c), .rm(rm), .op(jsm_fp_pkg::OP_ADD), .y(y_ac), .flags(f_ac));
 
   // Commutative (exactly, including flags), except when both operands are
   // NaN: the result carries the first NaN operand's payload, so a != b order
@@ -88,20 +88,20 @@ module fp_arith_props #(
   assert property (a_nan || a_zero || (y0 == a && f0 == 5'd0));
   // a + (-a) == +-0 per roundTowardNegative (6.3) for finite a.
   assert property ((a_nan || a_inf) ||
-                   (yc == ((rm == fp_pkg::RM_RM) ? NZERO : ZERO) && fc == 5'd0));
+                   (yc == ((rm == jsm_fp_pkg::RM_RM) ? NZERO : ZERO) && fc == 5'd0));
   // OP_SUB is OP_ADD with b's effective sign flipped.
   assert property (y_sub == y_nb && f_sub == f_nb);
 
   // ------------------------------------------------- multiplication (5.4.1)
   logic [W-1:0] y_mab, y_mba, y_m1, y_m0;
   logic [4:0]   f_mab, f_mba, f_m1, f_m0;
-  fp_mul #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_mab (
+  jsm_fp_mul #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_mab (
     .a(a), .b(b), .rm(rm), .y(y_mab), .flags(f_mab));
-  fp_mul #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_mba (
+  jsm_fp_mul #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_mba (
     .a(b), .b(a), .rm(rm), .y(y_mba), .flags(f_mba));
-  fp_mul #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_m1 (
+  jsm_fp_mul #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_m1 (
     .a(a), .b(ONE), .rm(rm), .y(y_m1), .flags(f_m1));
-  fp_mul #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_m0 (
+  jsm_fp_mul #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_m0 (
     .a(a), .b(ZERO), .rm(rm), .y(y_m0), .flags(f_m0));
 
   // Commutative (exactly, including flags), except when both are NaN.
@@ -115,13 +115,13 @@ module fp_arith_props #(
   // --------------------------------------------- fused multiply-add (5.4.1)
   logic [W-1:0] y_f0, y_f1, y_fab, y_fba;
   logic [4:0]   f_f0, f_f1, f_fab, f_fba;
-  fp_fma #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_f0 (
+  jsm_fp_fma #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_f0 (
     .a(a), .b(b), .c(ZERO), .rm(rm), .y(y_f0), .flags(f_f0));
-  fp_fma #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_f1 (
+  jsm_fp_fma #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_f1 (
     .a(a), .b(ONE), .c(c), .rm(rm), .y(y_f1), .flags(f_f1));
-  fp_fma #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fab (
+  jsm_fp_fma #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fab (
     .a(a), .b(b), .c(c), .rm(rm), .y(y_fab), .flags(f_fab));
-  fp_fma #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fba (
+  jsm_fp_fma #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_fba (
     .a(b), .b(a), .c(c), .rm(rm), .y(y_fba), .flags(f_fba));
 
   // fma(a, b, +0) == mul(a, b) for finite nonzero a, b: the product is then a
@@ -138,7 +138,7 @@ module fp_arith_props #(
   // ----------------------------------------------------- square root (5.4.1)
   logic [W-1:0] y_s;
   logic [4:0]   f_s;
-  fp_sqrt #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_sqrt (
+  jsm_fp_sqrt #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_sqrt (
     .a(a), .rm(rm), .y(y_s), .flags(f_s));
 
   // sqrt never yields a negative result, except sqrt(-0) == -0 (6.3).
@@ -149,21 +149,21 @@ endmodule
 // Concrete top-level wrappers (sby runs each separately).
 module fp_arith_props_b16 (
   input logic [15:0] a, b, c,
-  input fp_pkg::rounding_t rm
+  input jsm_fp_pkg::rounding_t rm
 );
   fp_arith_props #(.W_EXP(5), .W_MANT(10)) u (a, b, c, rm);
 endmodule
 
 module fp_arith_props_e4m3 (
   input logic [7:0] a, b, c,
-  input fp_pkg::rounding_t rm
+  input jsm_fp_pkg::rounding_t rm
 );
   fp_arith_props #(.W_EXP(4), .W_MANT(3)) u (a, b, c, rm);
 endmodule
 
 module fp_arith_props_e5m2 (
   input logic [7:0] a, b, c,
-  input fp_pkg::rounding_t rm
+  input jsm_fp_pkg::rounding_t rm
 );
   fp_arith_props #(.W_EXP(5), .W_MANT(2)) u (a, b, c, rm);
 endmodule

@@ -17,12 +17,12 @@ W_MANT) and a second format G = (G_EXP, G_MANT):
   bfloat16) are a narrowing in precision and a widening in range, so they
   use the narrowing datapath.
 
-`rtl/fp32_to_bf16_round.sv` (RNE only, no flags) is a special case of this
+`rtl/jsm_fp32_to_bf16_round.sv` (RNE only, no flags) is a special case of this
 operation and could be replaced by it.
 
 ## Interface
 
-`fp_unit` has one format, so G must be a build parameter: `G_EXP`,
+`jsm_fp_unit` has one format, so G must be a build parameter: `G_EXP`,
 `G_MANT` (`G_EXP = 0` disables the conversion ops). Two opcodes:
 
 - `OP_CVT_FG` (F to G): `a` holds an F value, `y` returns a G value.
@@ -40,7 +40,7 @@ would be needed; not recommended in a first version).
 ## Datapath
 
 The rounding back end already exists in parameterized form in
-`fp_add_pipe` (stage S3: normalize, round, overflow and subnormal handling)
+`jsm_fp_add_pipe` (stage S3: normalize, round, overflow and subnormal handling)
 and is duplicated in every pipe. Factor it into a shared `fp_round_pack`
 module (significand + guard/round/sticky + exponent in, encoded result and
 flags out), use it in the conversion and, later, in the existing pipes.
@@ -49,7 +49,7 @@ flags out), use it in the conversion and, later, in the existing pipes.
   exponent rebias, NaN quieting: no rounding. **1 cycle.**
 - Narrowing: unpack, rebias, then `fp_round_pack` with a right shift for
   subnormal results. **2 cycles** (unpack + shift | round + pack), like
-  `fp_roundint_pipe`.
+  `jsm_fp_roundint_pipe`.
 - Latency is fixed per opcode (1 or 2 depending on which direction narrows),
   so it fits the result-port reservation scheme unchanged.
 
@@ -57,7 +57,7 @@ flags out), use it in the conversion and, later, in the existing pipes.
 
 - Widening path: about 150 LUTs (LZC of 11 bits, shift, rebias).
 - Narrowing path: about 400 LUTs (a 26-bit right shifter for the subnormal
-  range, rounding, packing), similar to `fp_roundint_pipe` (442).
+  range, rounding, packing), similar to `jsm_fp_roundint_pipe` (442).
 - Total about 550 LUTs (+4 %). With G = bfloat16 the narrowing shifter is
   shorter (bfloat16 has binary32's range): about 300 LUTs.
 - Tests: the oracle's `round_to_format` does the narrowing directly. With F

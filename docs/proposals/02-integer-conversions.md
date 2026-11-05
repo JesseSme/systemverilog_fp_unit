@@ -32,7 +32,7 @@ The integer width and signedness are new parameters of the operation:
   leaves in `y`. That works only if `INT_W <= W` (binary32 with int32,
   binary64 with int64). For narrower formats (binary16 with int32, the
   8-bit formats) `a`/`y` would need widening to `DATA_W = max(W, INT_W)`,
-  which changes every port of `fp_unit` and the AXI register widths.
+  which changes every port of `jsm_fp_unit` and the AXI register widths.
   Recommended: support `INT_W <= W` only in a first version, and assert it
   at elaboration; AXI-Lite already accesses wide operands as several
   32-bit words, so a later `DATA_W` change is contained there.
@@ -41,21 +41,21 @@ The integer width and signedness are new parameters of the operation:
 
 - fp to int: unpack, right shift by `(W_MANT - e)` (barrel shifter of
   `max(S_W, INT_W) + 2` bits, guard/round/sticky out), round with the
-  `fp_roundint_pipe` rounding logic, negate for negative values, range
-  check and saturate. Same structure as `fp_roundint_pipe`, with a wider
+  `jsm_fp_roundint_pipe` rounding logic, negate for negative values, range
+  check and saturate. Same structure as `jsm_fp_roundint_pipe`, with a wider
   shifter and the negation: **2 cycles** (shift | round+negate+saturate).
 - int to fp: absolute value, leading-zero count of `INT_W` bits, left
-  shift, round to `S_W` bits (the rounding back end of `fp_add_pipe` S3),
+  shift, round to `S_W` bits (the rounding back end of `jsm_fp_add_pipe` S3),
   exponent = `INT_W - 1 - lzc + BIAS`, overflow check: **2 cycles** (abs+lzc
   | shift+round). An LZC plus normalize shift at 32 bits fits one 5.6 ns
   stage. At 4.0 ns, use 3 cycles (lzc | shift | round).
 
 ## Cost (binary32, int32)
 
-- fp to int: about 1.2 x `fp_roundint_pipe` = 550 LUTs, 150 FFs.
-- int to fp: about 0.6 x `fp_add_pipe` (one shifter, LZC and rounding;
+- fp to int: about 1.2 x `jsm_fp_roundint_pipe` = 550 LUTs, 150 FFs.
+- int to fp: about 0.6 x `jsm_fp_add_pipe` (one shifter, LZC and rounding;
   no alignment shifter, no adder) = 650 LUTs, 150 FFs.
-- Total about 1,200 LUTs (+9 % of `fp_unit`), latency 2 for every variant.
+- Total about 1,200 LUTs (+9 % of `jsm_fp_unit`), latency 2 for every variant.
 - Tests: the oracle needs `convert_from_int` / `convert_to_int` (exact with
   Python ints and the existing `round_*` helpers). The exhaustive sweep is
   impossible over 32-bit ints; use the 8-bit formats with `INT_W = 8`

@@ -1,6 +1,6 @@
 # SRT div/sqrt verification
 
-Two layers protect the `fp_div_srt` / `fp_sqrt_srt` pipelines:
+Two layers protect the `jsm_fp_div_srt` / `jsm_fp_sqrt_srt` pipelines:
 
 1. **Reference models** (pure Python, bit-level recurrence + selection):
    * `div_model.py`  — radix-4 SRT division: QST derivation/validation,
@@ -22,9 +22,9 @@ Two layers protect the `fp_div_srt` / `fp_sqrt_srt` pipelines:
    compare ranges the RTL relies on.
 
 2. **Streaming RTL differential** (`run_diff.py` + the `*_diff_top.sv` /
-   `*_diff_main.cpp` harnesses): drives `fp_div_srt` / `fp_sqrt_srt` with one
+   `*_diff_main.cpp` harnesses): drives `jsm_fp_div_srt` / `jsm_fp_sqrt_srt` with one
    start per cycle and compares each result against the combinational
-   `fp_div` / `fp_sqrt` on the operands that started it (FIFO-tracked).
+   `jsm_fp_div` / `jsm_fp_sqrt` on the operands that started it (FIFO-tracked).
    This is the check that found the multi-driven reset, the unsigned-cast
    and the radicand-slice bugs.
    Run: `uv run python verification/srt/run_diff.py`
@@ -34,9 +34,9 @@ Two layers protect the `fp_div_srt` / `fp_sqrt_srt` pipelines:
    boundary, FOLD_STG register after the final fold). At DPS=2 and 5M
    vectors this found the sqrt digit-select counter overflow (digit +4
    returned as -4). The directed binary64 vectors from that run pass on
-   the old fp_unit (sqrt at DPS=1 with a fold before every digit, so the
-   estimate there was exact), so the bug was not observed through fp_unit.
+   the old jsm_fp_unit (sqrt at DPS=1 with a fold before every digit, so the
+   estimate there was exact), so the bug was not observed through jsm_fp_unit.
 
 These are development/verification harnesses; the canonical regression is
 still `make regress` / `make exhaustive-iter` / `make soak-iter` through
-`fp_unit`.
+`jsm_fp_unit`.

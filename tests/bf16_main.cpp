@@ -1,4 +1,4 @@
-// Standalone Verilator C++ harness for rtl/fp32_to_bf16_round.sv.
+// Standalone Verilator C++ harness for rtl/jsm_fp32_to_bf16_round.sv.
 //
 // Phase 1: replay oracle records written by tests/bf16.py (uint32 x,
 //          uint16 y; the bit-exact Python reference f32_to_bf16_rne) and
@@ -8,7 +8,7 @@
 //
 // Usage: fp_bf16 <oracle.bin> [stride]   (stride > 1 samples the sweep)
 
-#include "Vfp32_to_bf16_round.h"
+#include "Vjsm_fp32_to_bf16_round.h"
 #include "verilated.h"
 #include <cstdint>
 #include <cstdio>
@@ -29,7 +29,7 @@ int main(int argc, char** argv) {
     if (argc < 2) { fprintf(stderr, "usage: %s <oracle.bin> [stride]\n", argv[0]); return 2; }
     const uint64_t stride = (argc > 2) ? strtoull(argv[2], nullptr, 0) : 1;
     Verilated::commandArgs(argc, argv);
-    Vfp32_to_bf16_round* top = new Vfp32_to_bf16_round;
+    Vjsm_fp32_to_bf16_round* top = new Vjsm_fp32_to_bf16_round;
     uint64_t errors = 0, n_oracle = 0;
 
     FILE* f = fopen(argv[1], "rb");

@@ -1,9 +1,9 @@
-// Standalone Verilator C++ harness: streaming / mixed-issue test of fp_unit.
+// Standalone Verilator C++ harness: streaming / mixed-issue test of jsm_fp_unit.
 //
-// Replays the soak vector file (tests/soak.py record layout) through fp_unit
+// Replays the soak vector file (tests/soak.py record layout) through jsm_fp_unit
 // with a new request offered EVERY cycle (in_valid held high; a request is
 // accepted when in_ready is high at the clock edge). Each request carries
-// its record index as the tag (fp_unit built with TAG_W = 32); every
+// its record index as the tag (jsm_fp_unit built with TAG_W = 32); every
 // out_valid is matched to its request through out_tag and compared against
 // the oracle record. At the end every accepted request must have completed
 // exactly once (no lost, duplicated or unknown results).
@@ -23,7 +23,7 @@
 // Output: one "STREAM op=<i> issued=<n> stalls=<s> cycles=<c>" line per op
 // (same mode) and a final status line; exit status 0 iff PASS.
 
-#include "Vfp_unit.h"
+#include "Vjsm_fp_unit.h"
 #include "verilated.h"
 #ifndef NUM_OPS
 #error "NUM_OPS must be defined by the driver (-CFLAGS -DNUM_OPS=<n>)"
@@ -93,7 +93,7 @@ int main(int argc, char** argv) {
     group_start.push_back(order.size());
 
     Verilated::commandArgs(argc, argv);
-    Vfp_unit* top = new Vfp_unit;
+    Vjsm_fp_unit* top = new Vjsm_fp_unit;
     auto tick = [&]() {
         top->clk = 1; top->eval();
         top->clk = 0; top->eval();

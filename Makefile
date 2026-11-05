@@ -20,16 +20,16 @@ regress-all:
 smoke:
 	FP_ITERS=20 uv run python tests/run_regression.py --width 5 10
 
-# AXI-Lite wrapper regression (fp_unit_axilite) across the width matrix.
+# AXI-Lite wrapper regression (jsm_fp_unit_axilite) across the width matrix.
 regress-axilite:
-	uv run python tests/run_regression.py --top fp_unit_axilite --tests test_fp_unit_axilite
+	uv run python tests/run_regression.py --top jsm_fp_unit_axilite --tests test_fp_unit_axilite
 
-# fp_exp_seq (fp32 exp sequencer on two fp_unit instances): accuracy vs
+# jsm_fp_exp_seq (fp32 exp sequencer on two jsm_fp_unit instances): accuracy vs
 # math.exp within a measured ULP bound, clamp/special behaviour.
 regress-exp:
-	uv run python tests/run_regression.py --top fp_exp_seq --tests test_fp_exp_seq --width 8 23 --timeout 600
+	uv run python tests/run_regression.py --top jsm_fp_exp_seq --tests test_fp_exp_seq --width 8 23 --timeout 600
 
-# fp32_to_bf16_round: oracle records + exhaustive 2^32 sweep (~1.5 min).
+# jsm_fp32_to_bf16_round: oracle records + exhaustive 2^32 sweep (~1.5 min).
 bf16:
 	uv run python tests/bf16.py
 
@@ -40,7 +40,7 @@ stream:
 	uv run python tests/stream.py
 	uv run python tests/stream.py --width 8 23 --width 8 0 --ops-en 0x8a24 --vectors 50000
 
-# Iterative div/sqrt engine (fp_unit DIVSQRT_IMPL=2, the 250 MHz build):
+# Iterative div/sqrt engine (jsm_fp_unit DIVSQRT_IMPL=2, the 250 MHz build):
 # exhaustive 8-bit sweep, medium-width soak, streaming test and the AXI-Lite
 # handshake. (DIVSQRT_IMPL=1, the SRT pipelines, is the default everywhere.)
 exhaustive-iter:
@@ -53,9 +53,9 @@ stream-iter:
 	uv run python tests/stream.py --param DIVSQRT_IMPL=2 --allow-stall div sqrt
 
 regress-axilite-iter:
-	FP_DIVSQRT_IMPL=2 uv run python tests/run_regression.py --top fp_unit_axilite --tests test_fp_unit_axilite
+	FP_DIVSQRT_IMPL=2 uv run python tests/run_regression.py --top jsm_fp_unit_axilite --tests test_fp_unit_axilite
 
-# SRT pipelines in their 4.0 ns form (fp_unit DIVSQRT_IMPL=3): full cocotb
+# SRT pipelines in their 4.0 ns form (jsm_fp_unit DIVSQRT_IMPL=3): full cocotb
 # matrix, exhaustive 8-bit sweep, soak, streaming test, plus the SRT
 # module differential in that configuration.
 check-ds3:
@@ -63,7 +63,7 @@ check-ds3:
 	uv run python tests/exhaustive.py --divsqrt 3
 	uv run python tests/soak.py --divsqrt 3
 	uv run python tests/stream.py --param DIVSQRT_IMPL=3
-	FP_DIVSQRT_IMPL=3 uv run python tests/run_regression.py --top fp_unit_axilite --tests test_fp_unit_axilite
+	FP_DIVSQRT_IMPL=3 uv run python tests/run_regression.py --top jsm_fp_unit_axilite --tests test_fp_unit_axilite
 	uv run python verification/srt/run_diff.py --param DPS=1 --param FOLD_STG=1
 
 # Cross-width randomized soak (binary16, BF16, E4M3 by default; tens of
@@ -95,7 +95,7 @@ formal:
 	  echo "=== $$f ==="; sby -f $$f || exit 1; done
 
 # Formal equivalence of the add/mul pipelines against the combinational
-# fp_add / fp_mul (formal/fp_pipe_equiv.sv; plan P4.3): every operand pair
+# jsm_fp_add / jsm_fp_mul (formal/fp_pipe_equiv.sv; plan P4.3): every operand pair
 # and rounding mode, any in-flight history. E4M3, bfloat16 and binary16 add
 # close in seconds; binary16 mul (two different 11x11 multiplier
 # structures) takes ~13 min with bitwuzla.
@@ -120,8 +120,8 @@ metrics-latency:
 metrics-compare:
 	uv run python tests/metrics.py --compare $(BEFORE) $(AFTER)
 
-# RTL file lists: rtl/filelist.f (fp_unit + datapaths) and
-# rtl/filelist_wrappers.f (fp_unit_axilite, fp32_to_bf16_round, fp_exp_seq,
+# RTL file lists: rtl/filelist.f (jsm_fp_unit + datapaths) and
+# rtl/filelist_wrappers.f (jsm_fp_unit_axilite, jsm_fp32_to_bf16_round, jsm_fp_exp_seq,
 # and the Verilog tops in rtl/top/); rtl/filelist_vhdl.f has the VHDL tops.
 RTL  := $(shell grep -v '^\#' rtl/filelist.f)
 WRAP := $(shell grep -v '^\#' rtl/filelist_wrappers.f)
@@ -140,11 +140,11 @@ vivado:
 #   xsim-tops         Verilog + VHDL tops side by side in Vivado xsim vs the oracle
 #   vivado-bd-check   block-design module references of all four tops
 #   vivado-top        OOC implementation with a top, e.g.
-#                     make vivado-top TOP_ARGS="fp_unit_vhd 5.600 W_EXP=8 W_MANT=23"
-TOP_ARGS ?= fp_unit_vhd 5.600 W_EXP=8 W_MANT=23
+#                     make vivado-top TOP_ARGS="jsm_fp_unit_vhd 5.600 W_EXP=8 W_MANT=23"
+TOP_ARGS ?= jsm_fp_unit_vhd 5.600 W_EXP=8 W_MANT=23
 regress-tops:
-	uv run python tests/run_regression.py --all --top fp_unit_top
-	uv run python tests/run_regression.py --all --top fp_unit_axilite_top --tests test_fp_unit_axilite
+	uv run python tests/run_regression.py --all --top jsm_fp_unit_top
+	uv run python tests/run_regression.py --all --top jsm_fp_unit_axilite_top --tests test_fp_unit_axilite
 
 xsim-tops:
 	uv run python tests/vivado/run_xsim.py
@@ -155,32 +155,32 @@ vivado-bd-check:
 vivado-top:
 	vivado -mode batch -nojournal -nolog -source syn/vivado-top.tcl -tclargs $(TOP_ARGS)
 
-# (fp_exp_seq line: Verilator 5.020 reports a false VARHIDDEN, its port `x`
-# "hidden" by function arguments named x inside the pruned fp_unit
+# (jsm_fp_exp_seq line: Verilator 5.020 reports a false VARHIDDEN, its port `x`
+# "hidden" by function arguments named x inside the pruned jsm_fp_unit
 # pipelines, which are different modules.)
 lint:
-	$(VLINT) --top-module fp_unit $(RTL)
-	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=0 $(RTL)
-	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=2 $(RTL)
-	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=2 -GW_EXP=11 -GW_MANT=52 $(RTL)
-	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=3 $(RTL)
-	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=3 -GW_EXP=11 -GW_MANT=52 $(RTL)
-	$(VLINT) --top-module fp_unit -GDIVSQRT_IMPL=3 -GW_EXP=4 -GW_MANT=3 $(RTL)
-	$(VLINT) --top-module fp_unit -GW_EXP=11 -GW_MANT=52 $(RTL)
-	$(VLINT) --top-module fp_unit -GW_EXP=8 -GW_MANT=0 $(RTL)
-	$(VLINT) --top-module fp_unit_axilite $(RTL) rtl/fp_unit_axilite.sv
-	$(VLINT) --top-module fp_unit_top $(RTL) $(WRAP)
-	$(VLINT) --top-module fp_unit_top -GW_EXP=11 -GW_MANT=52 -GTAG_W=4 -GOPS_EN=39 -GDIVSQRT_IMPL=3 $(RTL) $(WRAP)
-	$(VLINT) --top-module fp_unit_axilite_top $(RTL) $(WRAP)
-	$(VLINT) -Wno-VARHIDDEN --top-module fp_exp_seq $(RTL) rtl/fp_exp_seq.sv
+	$(VLINT) --top-module jsm_fp_unit $(RTL)
+	$(VLINT) --top-module jsm_fp_unit -GDIVSQRT_IMPL=0 $(RTL)
+	$(VLINT) --top-module jsm_fp_unit -GDIVSQRT_IMPL=2 $(RTL)
+	$(VLINT) --top-module jsm_fp_unit -GDIVSQRT_IMPL=2 -GW_EXP=11 -GW_MANT=52 $(RTL)
+	$(VLINT) --top-module jsm_fp_unit -GDIVSQRT_IMPL=3 $(RTL)
+	$(VLINT) --top-module jsm_fp_unit -GDIVSQRT_IMPL=3 -GW_EXP=11 -GW_MANT=52 $(RTL)
+	$(VLINT) --top-module jsm_fp_unit -GDIVSQRT_IMPL=3 -GW_EXP=4 -GW_MANT=3 $(RTL)
+	$(VLINT) --top-module jsm_fp_unit -GW_EXP=11 -GW_MANT=52 $(RTL)
+	$(VLINT) --top-module jsm_fp_unit -GW_EXP=8 -GW_MANT=0 $(RTL)
+	$(VLINT) --top-module jsm_fp_unit_axilite $(RTL) rtl/jsm_fp_unit_axilite.sv
+	$(VLINT) --top-module jsm_fp_unit_top $(RTL) $(WRAP)
+	$(VLINT) --top-module jsm_fp_unit_top -GW_EXP=11 -GW_MANT=52 -GTAG_W=4 -GOPS_EN=39 -GDIVSQRT_IMPL=3 $(RTL) $(WRAP)
+	$(VLINT) --top-module jsm_fp_unit_axilite_top $(RTL) $(WRAP)
+	$(VLINT) -Wno-VARHIDDEN --top-module jsm_fp_exp_seq $(RTL) rtl/jsm_fp_exp_seq.sv
 	$(VLINT) --top-module fp_unit_timing $(RTL) syn/fp_unit_timing.sv
-	$(VLINT) rtl/fp32_to_bf16_round.sv
-	$(VLINT) rtl/fp_pkg.sv rtl/fp_add_e8m0.sv
-	$(VLINT) rtl/fp_pkg.sv rtl/fp_mul_e8m0.sv
-	$(VLINT) rtl/fp_pkg.sv rtl/fp_div_e8m0.sv
-	$(VLINT) rtl/fp_pkg.sv rtl/fp_sqrt_e8m0.sv
-	$(VLINT) rtl/fp_pkg.sv rtl/fp_fma_e8m0.sv
-	$(VLINT) rtl/fp_pkg.sv rtl/fp_roundint_e8m0.sv
+	$(VLINT) rtl/jsm_fp32_to_bf16_round.sv
+	$(VLINT) rtl/jsm_fp_pkg.sv rtl/jsm_fp_add_e8m0.sv
+	$(VLINT) rtl/jsm_fp_pkg.sv rtl/jsm_fp_mul_e8m0.sv
+	$(VLINT) rtl/jsm_fp_pkg.sv rtl/jsm_fp_div_e8m0.sv
+	$(VLINT) rtl/jsm_fp_pkg.sv rtl/jsm_fp_sqrt_e8m0.sv
+	$(VLINT) rtl/jsm_fp_pkg.sv rtl/jsm_fp_fma_e8m0.sv
+	$(VLINT) rtl/jsm_fp_pkg.sv rtl/jsm_fp_roundint_e8m0.sv
 
 clean:
 	rm -rf sim_build
