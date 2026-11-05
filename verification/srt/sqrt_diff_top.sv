@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Differential wrapper: pipelined jsm_fp_sqrt_srt (streaming) vs jsm_fp_sqrt.
 module sqrt_srt_diff_top #(
   parameter int W_EXP  = 8,

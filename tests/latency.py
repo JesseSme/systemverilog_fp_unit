@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 """Per-operation latency probe for the pipelined jsm_fp_unit.
 
 Builds one Verilator model per format and drives a small set of boundary /
@@ -12,8 +14,8 @@ Usage:
     uv run python tests/latency.py --json out.json    # machine-readable
 
 The cycle counts are clock cycles (the operating clock is set by the
-implementation run; see README);
-the printed table is the canonical per-op latency reference (README/HANDOFF).
+implementation run; see docs/user_guide.md);
+the printed table is the canonical per-op latency reference (docs/user_guide.md).
 """
 
 import argparse

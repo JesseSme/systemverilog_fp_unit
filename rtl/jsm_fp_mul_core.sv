@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Pipelined unsigned W x W multiplier, LUT-only (no DSP inference).
 //
 // Partial products (one row per multiplier bit) are reduced by a pairwise

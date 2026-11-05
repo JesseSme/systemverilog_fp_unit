@@ -1,3 +1,6 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 """Operation reference models (clause 5): exact semantics per IEEE 754-2019.
 
 Each op decodes its operands, resolves special cases (NaNs 6.1/6.2, infinities,

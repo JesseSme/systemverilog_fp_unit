@@ -38,5 +38,5 @@ Two layers protect the `jsm_fp_div_srt` / `jsm_fp_sqrt_srt` pipelines:
    estimate there was exact), so the bug was not observed through jsm_fp_unit.
 
 These are development/verification harnesses; the canonical regression is
-still `make regress` / `make exhaustive-iter` / `make soak-iter` through
+still `make regress` / `make exhaustive` / `make check-iter` through
 `jsm_fp_unit`.

@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Streaming differential: jsm_fp_div_srt vs combinational jsm_fp_div.
 // One start per cycle; each pipelined result is compared against the
 // combinational divider evaluated on the operands that started it (FIFO).

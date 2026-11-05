@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Pipelined IEEE 754-2019 roundToIntegral (2 stages).
 //
 // Same semantics as jsm_fp_roundint.sv. Stages:

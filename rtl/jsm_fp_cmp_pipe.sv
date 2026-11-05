@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Pipelined IEEE 754-2019 quiet comparison (1 stage).
 //
 // Same semantics as jsm_fp_cmp.sv: 2-bit condition code on `cmp`, y driven to 0.

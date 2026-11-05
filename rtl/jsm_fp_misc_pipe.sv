@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Pipelined IEEE 754-2019 non-rounding operations (1 stage, format-generic).
 //
 // One registered stage serves four opcodes; the 3-bit `sub` input (the

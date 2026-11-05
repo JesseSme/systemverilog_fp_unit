@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Out-of-context timing wrapper for jsm_fp_unit (Vivado implementation runs).
 //
 // Registers every jsm_fp_unit input once and every output once, so the timed

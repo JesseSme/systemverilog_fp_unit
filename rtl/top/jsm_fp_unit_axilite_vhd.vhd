@@ -1,3 +1,6 @@
+-- Copyright 2026 Jesse Smedberg
+-- SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 -- VHDL top-level wrapper of the AXI4-Lite floating-point unit
 -- (jsm_fp_unit_axilite).
 --
@@ -10,7 +13,7 @@
 -- shows one AXI4-Lite slave.
 --
 -- Register map and generics: see jsm_fp_unit_axilite_top.v and
--- docs/fp_unit_core.md.
+-- docs/user_guide.md.
 
 library ieee;
 use ieee.std_logic_1164.all;

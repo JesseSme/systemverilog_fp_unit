@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Pipelined IEEE 754-2019 minimum / maximum (1 stage).
 //
 // Same semantics as jsm_fp_minmax.sv. The ordering keys, comparisons, NaN/special

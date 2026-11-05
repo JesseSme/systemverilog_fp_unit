@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Formal property checks for the arithmetic datapaths: addition/subtraction
 // (5.4.1), multiplication (5.4.1), fused multiply-add (5.4.1) and square
 // root (5.4.1), at a parameterized width.

@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Formal property checks for the division datapath (5.4.1).
 //
 // STATUS: PROVEN with SymbiYosys (sby) BMC, depth 1 over free a/b/rm inputs,

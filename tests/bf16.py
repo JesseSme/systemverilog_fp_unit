@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 """Exhaustive check of rtl/jsm_fp32_to_bf16_round.sv (binary32 -> bfloat16 RNE).
 
 Writes oracle records (tests/reference/ops.py:f32_to_bf16_rne) for every

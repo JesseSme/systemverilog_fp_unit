@@ -1,5 +1,8 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 # SymbiYosys BMC: pipelined datapath == combinational reference (add_bf16).
-# See formal/fp_pipe_equiv.sv. Run via:  sby -f bmc_equiv_add_bf16.sby
+# See formal/fp_pipe_equiv.sv. Run in formal/:  sby -f bmc_equiv_add_bf16.sby
 
 [tasks]
 bmc
@@ -20,7 +23,7 @@ read_verilog -sv -formal fp_pipe_equiv.sv
 prep -top fp_pipe_equiv_add_bf16
 
 [files]
-rtl/jsm_fp_pkg.sv
-rtl/jsm_fp_add.sv
-rtl/jsm_fp_add_pipe.sv
-formal/fp_pipe_equiv.sv
+../rtl/jsm_fp_pkg.sv
+../rtl/jsm_fp_add.sv
+../rtl/jsm_fp_add_pipe.sv
+fp_pipe_equiv.sv

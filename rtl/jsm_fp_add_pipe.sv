@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Pipelined IEEE 754-2019 addition / subtraction (3 stages).
 //
 // Semantics are bit-identical to jsm_fp_add.sv (same special cases, alignment,

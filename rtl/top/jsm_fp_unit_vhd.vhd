@@ -1,3 +1,6 @@
+-- Copyright 2026 Jesse Smedberg
+-- SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 -- VHDL top-level wrapper of the floating-point unit (jsm_fp_unit).
 --
 -- VHDL-93, std_logic ports and integer generics. It instantiates the
@@ -7,7 +10,7 @@
 -- jsm_fp_unit_flat.sv, jsm_fp_unit_top.v and this file); Vivado synthesis and xsim
 -- handle the language mix.
 --
--- Interface and generics: see jsm_fp_unit_top.v and docs/fp_unit_core.md.
+-- Interface and generics: see jsm_fp_unit_top.v and docs/user_guide.md.
 --   * A request is accepted on a rising clk edge with in_valid = '1' and
 --     in_ready = '1'; hold mode/rm/a/b/c/in_tag stable while in_valid = '1'
 --     and in_ready = '0'.

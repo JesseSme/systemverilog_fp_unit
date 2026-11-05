@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 """Quantitative optimization metrics for the FPU (area/timing proxy + runtime).
 
 Area and timing are proxied with Yosys `synth; stat; ltp -noff` on the
@@ -10,9 +12,9 @@ Runtime metrics time the standard make/test targets so verification-flow
 optimizations can be measured against a baseline.
 
 Usage:
-    uv run python tests/metrics.py --area --out metrics/area-baseline.json
+    uv run python tests/metrics.py --area --out metrics/area.json
     uv run python tests/metrics.py --runtime --targets lint smoke
-    uv run python tests/metrics.py --compare metrics/area-baseline.json metrics/area-after.json
+    uv run python tests/metrics.py --compare metrics/area-before.json metrics/area.json
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import re
 import subprocess
 import sys
@@ -33,9 +36,10 @@ from rtl_files import rtl_files  # noqa: E402
 
 RTL = rtl_files()
 
-OSS = Path(os.environ.get(
-    "OSS", "/home/jesse/Documents/oss-cad-suite-linux-x64-20260813/oss-cad-suite"))
-YOSYS = os.environ.get("YOSYS", str(OSS / "bin" / "yosys"))
+# yosys: $YOSYS, else $OSS/bin/yosys (oss-cad-suite root), else yosys on PATH
+OSS = os.environ.get("OSS", "")
+YOSYS = os.environ.get("YOSYS") or (str(Path(OSS) / "bin" / "yosys") if OSS
+                                    else (shutil.which("yosys") or "yosys"))
 
 # Standard width matrix (binary16, binary32, E4M3, BF16, E8M0).
 DEFAULT_FORMATS = [(5, 10), (8, 23), (4, 3), (8, 7), (8, 0)]

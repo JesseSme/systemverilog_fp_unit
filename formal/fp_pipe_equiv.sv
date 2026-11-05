@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Formal equivalence of a pipelined datapath against its combinational
 // reference (plan P4.3): the same a/b/rm/op stream drives jsm_fp_add_pipe (or
 // jsm_fp_mul_pipe) and jsm_fp_add (jsm_fp_mul); the reference result is delayed by the

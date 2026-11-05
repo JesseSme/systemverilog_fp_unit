@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Formal property checks for the M6 datapaths: quiet comparison (5.11),
 // totalOrder (5.10) and roundToIntegral (5.9), cross-checked against the
 // 5.6.1 minimum/maximum ordering.

@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Formal property checks for the E8M0 (W_MANT = 0) M6 datapaths: the
 // dedicated roundToIntegral (5.9) plus the format-generic quiet comparison
 // (5.11) and totalOrder (5.10) at a microscaling width. E7M0 is used here.

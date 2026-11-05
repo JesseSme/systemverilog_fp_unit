@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 """Streaming / mixed-issue test of jsm_fp_unit (back-to-back requests).
 
 Every other jsm_fp_unit-level harness issues one operation and waits for its

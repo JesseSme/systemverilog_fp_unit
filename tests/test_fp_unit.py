@@ -1,3 +1,6 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 """Cocotb tests for the IEEE 754-2019 FPU (add/sub milestone).
 
 Run via tests/run_regression.py, which instantiates the DUT at several
@@ -1409,7 +1412,7 @@ async def test_boundary_stress(dut):
 @cocotb.test()
 async def test_reserved_encodings(dut):
     """Reserved rounding modes 5-7 behave as RNE for every op; opcodes
-    NUM_OPS..15 return y = 0 with the invalid flag (README "Semantics")."""
+    NUM_OPS..15 return y = 0 with the invalid flag (docs/user_guide.md, section 7)."""
     rng = random.Random(SEED ^ 0x5E5)
     for i in range(max(ITERS // 4, 20)):
         a, b = gen.pair_stream(rng, FMT, 1)[0]

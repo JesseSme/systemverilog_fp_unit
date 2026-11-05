@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Round a binary32 value to bfloat16 (roundTiesToEven, 4.3.1).
 //
 // Used after fp32 jsm_fp_unit operations to produce the single bf16 rounding that

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 """Radix-4 SRT sqrt model (RTL-shaped, carry-save, redundant digits {-4..4}).
 
 Integer recurrence:

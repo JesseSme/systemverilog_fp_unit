@@ -1,8 +1,11 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 # SymbiYosys BMC property check of the E8M0 M6 datapaths at E7M0 (7,0).
 #
 # The dedicated roundToIntegral module plus the format-generic quiet
 # comparison and totalOrder at a microscaling (W_MANT = 0) width.
-# Run via:  sby -f bmc_m6_e7m0.sby
+# Run in formal/:  sby -f bmc_m6_e7m0.sby
 
 [tasks]
 bmc
@@ -24,8 +27,8 @@ read_verilog -sv fp_m6_props_e8m0.sv
 prep -top fp_m6_props_e7m0
 
 [files]
-rtl/jsm_fp_pkg.sv
-rtl/jsm_fp_cmp.sv
-rtl/jsm_fp_totalorder.sv
-rtl/jsm_fp_roundint_e8m0.sv
-formal/fp_m6_props_e8m0.sv
+../rtl/jsm_fp_pkg.sv
+../rtl/jsm_fp_cmp.sv
+../rtl/jsm_fp_totalorder.sv
+../rtl/jsm_fp_roundint_e8m0.sv
+fp_m6_props_e8m0.sv

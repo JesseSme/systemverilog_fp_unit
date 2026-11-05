@@ -1,3 +1,6 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 """Single source of truth for the RTL file lists used by every harness.
 
 The lists live in rtl/filelist.f (jsm_fp_unit and its datapaths, in compile

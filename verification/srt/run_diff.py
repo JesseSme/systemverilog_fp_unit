@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 """Streaming differential for the SRT div/sqrt pipelines.
 
 Builds one Verilator model per format (`jsm_fp_div_srt` vs combinational

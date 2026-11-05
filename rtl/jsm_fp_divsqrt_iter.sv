@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Iterative (multi-cycle) IEEE 754-2019 division / square root datapath.
 //
 // This is the area/Fmax alternative to the fully combinational jsm_fp_div and

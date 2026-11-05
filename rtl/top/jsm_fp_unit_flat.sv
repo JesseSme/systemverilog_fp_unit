@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // jsm_fp_unit with a plain-vector interface (no SystemVerilog types on the
 // ports or parameters), for instantiation from Verilog-2001 and, through
 // jsm_fp_unit_top.v, from VHDL.

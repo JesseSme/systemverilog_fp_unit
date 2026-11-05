@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // IEEE 754-2019 minimum / maximum (5.6.1).
 //
 // Combinational, parameterized by the format: W_EXP exponent bits and W_MANT

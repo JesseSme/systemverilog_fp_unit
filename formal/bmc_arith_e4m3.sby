@@ -1,8 +1,11 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 # SymbiYosys BMC property check of the arithmetic datapaths (add/mul/fma/sqrt)
 # at F8 E4M3 (4,3). Depth-1 BMC over free a/b/c/rm inputs proves every
 # algebraic law for all 2^16 operand pairs.
 #
-# Run via:  sby -f bmc_arith_e4m3.sby
+# Run in formal/:  sby -f bmc_arith_e4m3.sby
 
 [tasks]
 bmc
@@ -25,9 +28,9 @@ read_verilog -sv fp_arith_props.sv
 prep -top fp_arith_props_e4m3
 
 [files]
-rtl/jsm_fp_pkg.sv
-rtl/jsm_fp_add.sv
-rtl/jsm_fp_mul.sv
-rtl/jsm_fp_fma.sv
-rtl/jsm_fp_sqrt.sv
-formal/fp_arith_props.sv
+../rtl/jsm_fp_pkg.sv
+../rtl/jsm_fp_add.sv
+../rtl/jsm_fp_mul.sv
+../rtl/jsm_fp_fma.sv
+../rtl/jsm_fp_sqrt.sv
+fp_arith_props.sv

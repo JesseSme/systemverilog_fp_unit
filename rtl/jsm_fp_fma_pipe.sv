@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Pipelined IEEE 754-2019 fused multiply-add: (a x b) + c, single rounding.
 //
 // Same semantics as jsm_fp_fma.sv (special cases, exact-sum accumulator, single

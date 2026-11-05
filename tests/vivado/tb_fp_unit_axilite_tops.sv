@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Vivado xsim testbench for the AXI4-Lite tops (rtl/top/jsm_fp_unit_axilite_top.v
 // and rtl/top/jsm_fp_unit_axilite_vhd.vhd), formats up to 64 bits wide.
 //

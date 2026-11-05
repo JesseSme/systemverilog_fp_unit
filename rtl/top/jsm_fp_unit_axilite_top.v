@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Verilog-2001 top-level wrapper of the AXI4-Lite floating-point unit
 // (jsm_fp_unit_axilite).
 //
@@ -10,7 +13,7 @@
 // the project as well.
 //
 // Register map (32-bit registers, offsets for formats up to 32 bits wide;
-// docs/fp_unit_core.md gives the general layout for wider formats):
+// docs/user_guide.md gives the general layout for wider formats):
 //   0x00 CTRL     [0] GO (rising edge starts), [1] CLR (holds VALID clear)
 //   0x04 OPCODE   [3:0] opcode, [6:4] rounding mode
 //   0x08 DATA_A   0x0C DATA_B   0x10 DATA_C (FMA addend)

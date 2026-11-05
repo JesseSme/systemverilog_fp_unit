@@ -1,10 +1,13 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 """cocotb tests for rtl/jsm_fp_exp_seq.sv (sequential fp32 exp).
 
 jsm_fp_exp_seq computes y = exp(clamp(x, -16, 16)) by range reduction x/32, a
 degree-6 Horner polynomial and five squarings on two jsm_fp_unit instances (RNE).
 The reference is math.exp in double precision rounded to binary32; the
 result must lie within the per-|x|-band ULP bound ULP_BOUNDS (measured, see
-README).
+docs/user_guide.md).
 
 Run: uv run python tests/run_regression.py --top jsm_fp_exp_seq --tests test_fp_exp_seq --width 8 23
 """

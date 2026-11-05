@@ -1,3 +1,6 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 """Cocotb tests for the AXI-Lite FPU wrapper (jsm_fp_unit_axilite).
 
 Run via tests/run_regression.py --top jsm_fp_unit_axilite --tests test_fp_unit_axilite,

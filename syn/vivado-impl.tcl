@@ -1,3 +1,6 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 # Out-of-context Vivado implementation run of jsm_fp_unit (non-project mode).
 #
 #   vivado -mode batch -source syn/vivado-impl.tcl -tclargs [period_ns] [W_EXP W_MANT] [DIVSQRT_IMPL]

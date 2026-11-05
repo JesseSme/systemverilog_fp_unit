@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // IEEE 754-2019 fused multiply-add (5.4.1): (a x b) + c with a single
 // rounding.
 //

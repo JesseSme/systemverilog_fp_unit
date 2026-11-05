@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 """Final validated radix-4 SRT divider model (RTL-shaped).
 
 ND=5 divisor cells (1/32), estimate k = floor(64R) (1/16), one-sided +1

@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Sequential accurate fp32 exp: y = exp(x), x clamped to [-16, 16].
 //
 // Used by the SSM unit for A = -exp(A_log) and the per-step decay

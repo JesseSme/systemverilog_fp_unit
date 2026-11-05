@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Pipelined IEEE 754-2019 totalOrder predicate (1 stage).
 //
 // Same semantics as jsm_fp_totalorder.sv: cmp[0] = a precedes-or-equals b,

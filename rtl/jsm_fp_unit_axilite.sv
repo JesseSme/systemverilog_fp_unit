@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // AXI-Lite register interface for the IEEE 754-2019 FPU (jsm_fp_unit).
 //
 // The AXI data path is fixed at 32 bits. The internal operand/result
@@ -34,7 +37,7 @@
 // registers, asserts STATUS.BUSY, and publishes the result in
 // RESULT/RES_CMP and STATUS.flags with STATUS.VALID = 1 and STATUS.BUSY = 0
 // when the FPU's out_valid pulses (after the operation's fixed pipeline
-// latency; see the README latency table). Reads/writes outside the register map are answered with
+// latency; see the docs/user_guide.md latency table). Reads/writes outside the register map are answered with
 // DECERR; writes to read-only registers are ignored (OKAY).
 
 module jsm_fp_unit_axilite #(
@@ -215,7 +218,7 @@ module jsm_fp_unit_axilite #(
   // Start request for the FPU, issued from the first S_WAIT cycle (the
   // operands latched on the S_IDLE -> S_WAIT edge are already stable) and
   // held until jsm_fp_unit's in_ready accepts it. The result arrives on
-  // out_valid after the op's fixed latency (README latency table).
+  // out_valid after the op's fixed latency (docs/user_guide.md latency table).
   assign fpu_in_valid = (cstate == S_WAIT) && start_req;
 
   always_ff @(posedge s_axi_aclk) begin

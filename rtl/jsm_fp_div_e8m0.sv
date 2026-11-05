@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // IEEE 754-2025 E8M0 (microscaling shared-exponent format) division.
 // Format: 1 sign bit + W_EXP exponent bits and NO significand bits, so every
 // finite value is an exact power of two; there are no subnormals and no NaN
