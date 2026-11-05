@@ -3,22 +3,42 @@
 
 // Pipelined IEEE 754-2019 fused multiply-add: (a x b) + c, single rounding.
 //
-// Same semantics as jsm_fp_fma.sv (special cases, exact-sum accumulator, single
-// GRS rounding, subnormal/overflow rules). The exact significand product
-// comes from the LUT-only jsm_fp_mul_core (latency 3), then the wide exact sum
-// and normalization are pipelined:
+// Same semantics as jsm_fp_fma.sv (special cases, exact sum, single GRS
+// rounding, subnormal/overflow rules). The exact significand product comes
+// from the LUT-only jsm_fp_mul_core. The addend is aligned while the core
+// runs and added to the core's two carry-save rows in place of the core's
+// own final carry-propagate add, so the FMA takes as many cycles as a
+// multiply (jsm_fp_mul_pipe):
 //
-//   cycle 0        unpack/classify/special; core start with s_a, s_b
-//   cycles 1-3     core reduction tree (2 cycles for W <= 32)
-//   stage F1 (reg after the core)  E, top, shift amounts
-//   stage F2                       place product and c in the accumulator
-//   stage F3                       3p+6-bit sign-magnitude add/sub
-//   stage F4                       normalize (leading-one + shift) and the
-//                                  subnormal-candidate shift, both computed
-//                                  from the pre-normalization accumulator
-//   stage F5                       GRS round, overflow/subnormal, encode
+//   C0   unpack/classify/special; core stage A; alignment of c from the
+//        exponent fields alone (no bit-length scan: a significand's LSB
+//        weight is max(exp, 1) - BIAS - W_MANT, subnormal or not)
+//   B    the core's last stage, down to two rows X + Y = P; c shifted into
+//        place in parallel (a stage of its own with the three-stage core,
+//        W_MANT + 1 > 32); then the sign-magnitude add, two ternary adders
+//        X + Y + C' with carry-in 0 / 1, selected by the sign of P - C
+//   N    normalize (leading one + shift) and the subnormal-candidate shift,
+//        both from the accumulator
+//   R    GRS round, overflow/subnormal, encode
 //
-// Fixed latency: 7 cycles (W <= 32) / 8 (binary64) from `start` to `out_valid`.
+// Fixed latency: 4 cycles (W_MANT + 1 <= 32) / 5 from `start` to `out_valid`
+// (jsm_fp_pkg::lat_fma), equal to jsm_fp_pkg::lat_mul.
+//
+// Accumulator (ACC_W = L + 3p + 2 bits, p = W_MANT + 1): the product P (2p
+// bits) is fixed at bits [L, L + 2p); c (p bits) is placed with its LSB at
+// L + d, d = (LSB weight of c) - (LSB weight of P). Out of range:
+//   d >= D_HI = 2p + 2   c is placed at L + D_HI and P only contributes a
+//                        sticky (P < 2^(L+2p) is below a quarter ulp of c)
+//   L + d < 0            the bits of c below acc bit 0 become a sticky
+// The sticky operand is always the smaller one, so the sum is represented
+// as acc + f with f in (0, 1) (acc = larger - smaller - 1, sticky set), and
+// every acc bit is a bit of the exact sum. When c is partly below bit 0, P
+// has a normal factor (two subnormal factors and a nonzero c put c far above
+// P), so P >= 2^(L+p-1) and c < 2^(p-1): the sum's leading one is at
+// >= L + p - 2 and its guard bit at >= L - 2. L = 2 is therefore the
+// minimum: the round bit can fall below bit 0, but the sticky is then set,
+// and with the sticky set no rounding mode depends on the round bit.
+// tests/fma_equiv.py checks this (L = 1 fails it).
 
 /* verilator lint_off WIDTHEXPAND */
 /* verilator lint_off WIDTHTRUNC */
@@ -48,15 +68,21 @@ module jsm_fp_fma_pipe #(
   localparam int TARGET  = S_W + 2;
   localparam int FW      = S_W + 3;
   localparam int P_W     = 2 * S_W;
-  localparam int ACC_W   = 3 * S_W + 6;
-  localparam int PTOP    = ACC_W - 1;
+  localparam int L       = 2;                   // accumulator bits below P
+  localparam int D_HI    = 2 * S_W + 2;         // c alignment saturation
+  localparam int ACC_W   = L + 3 * S_W + 2;
+  localparam int CF_W    = ACC_W + S_W;         // c frame: S_W sticky bits below acc bit 0
+  localparam int K_SAT   = L + D_HI + S_W;      // largest c frame shift
+  localparam int K_W     = $clog2(K_SAT + 1);
+  // signed exponent width: covers every BE, e_res and shift value below
+  localparam int XW      = $clog2(4 * S_W + 16 + (1 << (W_EXP + 2))) + 1;
   localparam int EXP_ALL = (1 << W_EXP) - 1;
   localparam int EXP_MAXF = (1 << W_EXP) - 2;
   localparam logic [MANT_W-1:0] QUIET = (MANT_W)'(1) << (MANT_W - 1);
-  localparam logic signed [W_EXP+4:0] EMAX_S = (W_EXP+4)'(EMAX);
-  localparam logic signed [W_EXP+4:0] EMIN_S = (W_EXP+4)'(EMIN);
-  localparam int BL_W = $clog2(S_W + 1);
-  localparam int SH_W = W_EXP + 6;  // signed shift-amount width (covers the full exponent range)
+  localparam logic signed [XW-1:0] EMAX_S = XW'(EMAX);
+  localparam logic signed [XW-1:0] EMIN_S = XW'(EMIN);
+  localparam bit CORE_TWO_STAGE = (S_W <= 32);
+
 
   // ============================================================ cycle 0
   logic              a_sign, b_sign, c_sign;
@@ -143,55 +169,53 @@ module jsm_fp_fma_pipe #(
   assign s_b = b_sub ? {1'b0, b_mant} : ((S_W)'(1'b1) << W_MANT) | {1'b0, b_mant};
   assign s_c = c_sub ? {1'b0, c_mant} : ((S_W)'(1'b1) << W_MANT) | {1'b0, c_mant};
 
-  function automatic int unsigned bitlen(input logic [S_W-1:0] x);
-    bitlen = 0;
-    for (int i = 0; i < S_W; i++)
-      if (x[i]) bitlen = i + 1;
-  endfunction
-
-  logic signed [W_EXP+2:0] e_a, e_b, e_c;
-  always_comb begin
-    int bl_a, bl_b, bl_c;
-    bl_a = int'(bitlen(s_a));
-    bl_b = int'(bitlen(s_b));
-    bl_c = int'(bitlen(s_c));
-    e_a = (W_EXP+3)'(a_exp - BIAS);
-    if (a_sub) e_a = (W_EXP+3)'((1 - BIAS) - W_MANT + $signed(bl_a) - 1);
-    e_b = (W_EXP+3)'(b_exp - BIAS);
-    if (b_sub) e_b = (W_EXP+3)'((1 - BIAS) - W_MANT + $signed(bl_b) - 1);
-    e_c = (W_EXP+3)'(c_exp - BIAS);
-    if (c_sub) e_c = (W_EXP+3)'((1 - BIAS) - W_MANT + $signed(bl_c) - 1);
-  end
-
-  logic [P_W-1:0] P;
-  logic           core_valid;
+  // the product in carry-save form (cs0 + cs1), in the core's last stage
+  logic [P_W-1:0] cs0, cs1;
+  logic           cs_valid;
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic [P_W-1:0] p_nc;  // the core's registered product: not used here
+  logic           pv_nc;
+  /* verilator lint_on UNUSEDSIGNAL */
   jsm_fp_mul_core #(.W(S_W)) u_core (
     .clk(clk), .rst_n(rst_n), .start(start),
-    .a(s_a), .b(s_b), .p(P), .out_valid(core_valid)
+    .a(s_a), .b(s_b), .p(p_nc), .out_valid(pv_nc),
+    .cs0(cs0), .cs1(cs1), .cs_valid(cs_valid)
   );
 
-  // Context registers (valid from cycle 1; consumed from stage F1 on).
-  // The product is valid in cycle 2 (two-stage core, W <= 32) or cycle 3
-  // (three-stage core), so F1 must consume the context shifted by the same
-  // number of cycles. With only s1 a back-to-back start stream combines each
-  // product with the following transaction's context - the same misalignment
-  // fixed in jsm_fp_mul_pipe; the one-transaction-at-a-time harness never
-  // exercised it. s2/s3 keep the context aligned and CORE_TWO_STAGE picks the
-  // stage that matches the product.
-  localparam bit CORE_TWO_STAGE = (S_W <= 32);
+  // Alignment. With the effective exponent ef = max(exp, 1), the LSB weight
+  // of a significand is ef - BIAS - W_MANT, so
+  //   d  = LSB(c) - LSB(P) = ec - ea - eb + BIAS + W_MANT
+  //   k  = L + d + S_W     shift of c in the frame (clamped to [0, K_SAT])
+  //   BE = weight of acc bit 0: LSB(P) - L, or LSB(c) - L - D_HI saturated
+  // c = 0 is placed as 0 (s_c_s1 cleared) and never saturates.
+  logic [W_EXP-1:0]       ea, eb, ec;
+  logic [K_W-1:0]         k_c0;
+  logic                   sat_c0;
+  logic signed [XW-1:0]   ben_c0, bes_c0;
+  assign ea = (a_exp == '0) ? (W_EXP)'(1) : a_exp;
+  assign eb = (b_exp == '0) ? (W_EXP)'(1) : b_exp;
+  assign ec = (c_exp == '0) ? (W_EXP)'(1) : c_exp;
+  always_comb begin
+    int dd, kk;
+    dd = int'(ec) - int'(ea) - int'(eb) + BIAS + W_MANT;
+    kk = dd + L + S_W;
+    sat_c0 = !c_zero && (dd >= D_HI);
+    if (kk >= K_SAT)  k_c0 = (K_W)'(K_SAT);
+    else if (kk <= 0) k_c0 = '0;
+    else              k_c0 = (K_W)'(kk);
+    // both BE candidates; the choice by sat waits until stage B
+    bes_c0 = (XW)'(int'(ec) - BIAS - W_MANT - L - D_HI);
+    ben_c0 = (XW)'(int'(ea) + int'(eb) - 2 * BIAS - 2 * W_MANT - L);
+  end
 
-  logic [W-1:0]   y_special_s1, y_special_s2, y_special_s3;
-  logic [4:0]     flags_special_s1, flags_special_s2, flags_special_s3;
-  logic           special_s1, special_s2, special_s3;
-  logic           prod_sign_s1, prod_sign_s2, prod_sign_s3;
-  logic           c_sign_s1, c_sign_s2, c_sign_s3;
-  logic           c_zero_s1, c_zero_s2, c_zero_s3;
-  logic [S_W-1:0] s_c_s1, s_c_s2, s_c_s3;
-  logic signed [W_EXP+2:0] e_a_s1, e_b_s1, e_c_s1;
-  logic signed [W_EXP+2:0] e_a_s2, e_b_s2, e_c_s2, e_a_s3, e_b_s3, e_c_s3;
-  logic [BL_W-1:0] bl_a_s1, bl_b_s1, bl_c_s1;
-  logic [BL_W-1:0] bl_a_s2, bl_b_s2, bl_c_s2, bl_a_s3, bl_b_s3, bl_c_s3;
-  logic [2:0]     rm_s1, rm_s2, rm_s3;
+  // ------------------------------------------------ C0 -> B registers
+  logic [W-1:0]         y_special_s1;
+  logic [4:0]           flags_special_s1;
+  logic                 special_s1, prod_sign_s1, c_sign_s1, sat_s1;
+  logic [S_W-1:0]       s_c_s1;
+  logic [K_W-1:0]       k_s1;
+  logic signed [XW-1:0] ben_s1, bes_s1;
+  logic [2:0]           rm_s1;
 
   always_ff @(posedge clk) begin
     if (!rst_n) begin
@@ -200,396 +224,240 @@ module jsm_fp_fma_pipe #(
       special_s1       <= 1'b0;
       prod_sign_s1     <= 1'b0;
       c_sign_s1        <= 1'b0;
-      c_zero_s1        <= 1'b0;
+      sat_s1           <= 1'b0;
       s_c_s1           <= '0;
-      e_a_s1           <= '0;
-      e_b_s1           <= '0;
-      e_c_s1           <= '0;
-      bl_a_s1          <= '0;
-      bl_b_s1          <= '0;
-      bl_c_s1          <= '0;
+      k_s1             <= '0;
+      ben_s1           <= '0;
+      bes_s1           <= '0;
       rm_s1            <= 3'd0;
-      y_special_s2     <= '0;
-      flags_special_s2 <= 5'd0;
-      special_s2       <= 1'b0;
-      prod_sign_s2     <= 1'b0;
-      c_sign_s2        <= 1'b0;
-      c_zero_s2        <= 1'b0;
-      s_c_s2           <= '0;
-      e_a_s2           <= '0;
-      e_b_s2           <= '0;
-      e_c_s2           <= '0;
-      bl_a_s2          <= '0;
-      bl_b_s2          <= '0;
-      bl_c_s2          <= '0;
-      rm_s2            <= 3'd0;
-      y_special_s3     <= '0;
-      flags_special_s3 <= 5'd0;
-      special_s3       <= 1'b0;
-      prod_sign_s3     <= 1'b0;
-      c_sign_s3        <= 1'b0;
-      c_zero_s3        <= 1'b0;
-      s_c_s3           <= '0;
-      e_a_s3           <= '0;
-      e_b_s3           <= '0;
-      e_c_s3           <= '0;
-      bl_a_s3          <= '0;
-      bl_b_s3          <= '0;
-      bl_c_s3          <= '0;
-      rm_s3            <= 3'd0;
     end else begin
       y_special_s1     <= y_special;
       flags_special_s1 <= flags_special;
       special_s1       <= special_case;
       prod_sign_s1     <= prod_sign;
       c_sign_s1        <= c_sign;
-      c_zero_s1        <= c_zero;
-      s_c_s1           <= s_c;
-      e_a_s1           <= e_a;
-      e_b_s1           <= e_b;
-      e_c_s1           <= e_c;
-      bl_a_s1          <= BL_W'(bitlen(s_a));
-      bl_b_s1          <= BL_W'(bitlen(s_b));
-      bl_c_s1          <= BL_W'(bitlen(s_c));
+      sat_s1           <= sat_c0;
+      s_c_s1           <= c_zero ? '0 : s_c;  // (s_c has the hidden bit set for 0)
+      k_s1             <= k_c0;
+      ben_s1           <= ben_c0;
+      bes_s1           <= bes_c0;
       rm_s1            <= rm;
-      y_special_s2     <= y_special_s1;
-      flags_special_s2 <= flags_special_s1;
-      special_s2       <= special_s1;
-      prod_sign_s2     <= prod_sign_s1;
-      c_sign_s2        <= c_sign_s1;
-      c_zero_s2        <= c_zero_s1;
-      s_c_s2           <= s_c_s1;
-      e_a_s2           <= e_a_s1;
-      e_b_s2           <= e_b_s1;
-      e_c_s2           <= e_c_s1;
-      bl_a_s2          <= bl_a_s1;
-      bl_b_s2          <= bl_b_s1;
-      bl_c_s2          <= bl_c_s1;
-      rm_s2            <= rm_s1;
-      y_special_s3     <= y_special_s2;
-      flags_special_s3 <= flags_special_s2;
-      special_s3       <= special_s2;
-      prod_sign_s3     <= prod_sign_s2;
-      c_sign_s3        <= c_sign_s2;
-      c_zero_s3        <= c_zero_s2;
-      s_c_s3           <= s_c_s2;
-      e_a_s3           <= e_a_s2;
-      e_b_s3           <= e_b_s2;
-      e_c_s3           <= e_c_s2;
-      bl_a_s3          <= bl_a_s2;
-      bl_b_s3          <= bl_b_s2;
-      bl_c_s3          <= bl_c_s2;
-      rm_s3            <= rm_s2;
     end
   end
 
-  // F1-side context, aligned with the core latency.
-  logic [W-1:0]   y_special_f1c;
-  logic [4:0]     flags_special_f1c;
-  logic           special_f1c, prod_sign_f1c, c_sign_f1c, c_zero_f1c;
-  logic [S_W-1:0] s_c_f1c;
-  logic signed [W_EXP+2:0] e_a_f1c, e_b_f1c, e_c_f1c;
-  logic [BL_W-1:0] bl_a_f1c, bl_b_f1c, bl_c_f1c;
-  logic [2:0]     rm_f1c;
+  // ------------------------------------------------ place c
+  // c in a frame whose low S_W bits lie below acc bit 0 (they form the
+  // alignment sticky), shifted left by k. With the two-stage core this runs
+  // in the core's last stage, in parallel with its reduction levels; with
+  // the three-stage core it gets a stage of its own (g_ctx3 registers).
+  logic [ACC_W-1:0] pc_c1;
+  logic             stc_c1;
   always_comb begin
-    if (CORE_TWO_STAGE) begin
-      y_special_f1c     = y_special_s2;
-      flags_special_f1c = flags_special_s2;
-      special_f1c       = special_s2;
-      prod_sign_f1c     = prod_sign_s2;
-      c_sign_f1c        = c_sign_s2;
-      c_zero_f1c        = c_zero_s2;
-      s_c_f1c           = s_c_s2;
-      e_a_f1c           = e_a_s2;
-      e_b_f1c           = e_b_s2;
-      e_c_f1c           = e_c_s2;
-      bl_a_f1c          = bl_a_s2;
-      bl_b_f1c          = bl_b_s2;
-      bl_c_f1c          = bl_c_s2;
-      rm_f1c            = rm_s2;
-    end else begin
-      y_special_f1c     = y_special_s3;
-      flags_special_f1c = flags_special_s3;
-      special_f1c       = special_s3;
-      prod_sign_f1c     = prod_sign_s3;
-      c_sign_f1c        = c_sign_s3;
-      c_zero_f1c        = c_zero_s3;
-      s_c_f1c           = s_c_s3;
-      e_a_f1c           = e_a_s3;
-      e_b_f1c           = e_b_s3;
-      e_c_f1c           = e_c_s3;
-      bl_a_f1c          = bl_a_s3;
-      bl_b_f1c          = bl_b_s3;
-      bl_c_f1c          = bl_c_s3;
-      rm_f1c            = rm_s3;
-    end
+    logic [CF_W-1:0] fr;
+    fr     = (CF_W)'(s_c_s1) << k_s1;
+    pc_c1  = fr[CF_W-1:S_W];
+    stc_c1 = |fr[S_W-1:0];
   end
 
-  // ============================================================ stage F1
-  function automatic int unsigned pbitlen(input logic [P_W-1:0] x);
-    pbitlen = 0;
-    for (int i = 0; i < P_W; i++)
-      if (x[i]) pbitlen = i + 1;
-  endfunction
+  logic signed [XW-1:0] be_c1;
+  assign be_c1 = sat_s1 ? bes_s1 : ben_s1;
 
-  logic signed [W_EXP+3:0] E_f1, top_f1;
-  logic signed [SH_W-1:0]  shift_p_f1, shift_c_f1;
+  // Context of the add stage, aligned with the core's carry-save rows.
+  logic [W-1:0]         y_special_x;
+  logic [4:0]           flags_special_x;
+  logic                 special_x, prod_sign_x, c_sign_x, sat_x, stc_x;
+  logic [ACC_W-1:0]     pc_x;
+  logic signed [XW-1:0] be_x;
+  logic [2:0]           rm_x;
+
+  generate
+    if (CORE_TWO_STAGE) begin : g_ctx2
+      assign y_special_x     = y_special_s1;
+      assign flags_special_x = flags_special_s1;
+      assign special_x       = special_s1;
+      assign prod_sign_x     = prod_sign_s1;
+      assign c_sign_x        = c_sign_s1;
+      assign sat_x           = sat_s1;
+      assign stc_x           = stc_c1;
+      assign pc_x            = pc_c1;
+      assign be_x            = be_c1;
+      assign rm_x            = rm_s1;
+    end else begin : g_ctx3
+      always_ff @(posedge clk) begin
+        if (!rst_n) begin
+          y_special_x     <= '0;
+          flags_special_x <= 5'd0;
+          special_x       <= 1'b0;
+          prod_sign_x     <= 1'b0;
+          c_sign_x        <= 1'b0;
+          sat_x           <= 1'b0;
+          stc_x           <= 1'b0;
+          pc_x            <= '0;
+          be_x            <= '0;
+          rm_x            <= 3'd0;
+        end else begin
+          y_special_x     <= y_special_s1;
+          flags_special_x <= flags_special_s1;
+          special_x       <= special_s1;
+          prod_sign_x     <= prod_sign_s1;
+          c_sign_x        <= c_sign_s1;
+          sat_x           <= sat_s1;
+          stc_x           <= stc_c1;
+          pc_x            <= pc_c1;
+          be_x            <= be_c1;
+          rm_x            <= rm_s1;
+        end
+      end
+    end
+  endgenerate
+
+  // ============================================================ add (last core stage)
+  // The product is P = X + Y (the core's two carry-save rows, at bits
+  // [L, L + 2p)), or 0 with a sticky when c saturated. At most one of the
+  // stickies is set, and it belongs to the smaller operand, so
+  //   larger - smaller - sticky = acc, true value acc + f, f in (0, 1).
+  // Two ternary adders on X + Y + C' (C' = C, or ~C for a difference) with
+  // carry-in 0 and 1 give every case (T1 adds X | 1 = X + 1, bit 0 of X
+  // being 0, so it is a parallel adder, not an incrementer after T0):
+  //   P + C            = T0                      (same signs)
+  //   P - C - stc      = stc ? T0 : T1           (selected if >= 0)
+  //   C - P - stp      = ~(stp ? T1 : T0)        (otherwise; ~z = -z - 1)
+  // with stp = sat. Exact cancellation (acc = 0) is detected in stage N.
+  logic [ACC_W:0] xr_a, yr_a, cx_a, t0_a, t1_a, dpc_a, acc_a;
+  logic           same_a, rsign_a;
+  assign same_a = (prod_sign_x == c_sign_x);
+  assign xr_a   = sat_x ? '0 : ((ACC_W+1)'(cs0) << L);
+  assign yr_a   = sat_x ? '0 : ((ACC_W+1)'(cs1) << L);
+  assign cx_a   = same_a ? {1'b0, pc_x} : ~{1'b0, pc_x};
+  assign t0_a   = xr_a + yr_a + cx_a;
+  assign t1_a   = (xr_a | (ACC_W+1)'(1)) + yr_a + cx_a;
+  assign dpc_a  = stc_x ? t0_a : t1_a;
   always_comb begin
-    logic signed [W_EXP+3:0] prod_top;
-    E_f1 = (W_EXP+4)'(e_a_f1c) + (W_EXP+4)'(e_b_f1c)
-         - (W_EXP+4)'(bl_a_f1c) - (W_EXP+4)'(bl_b_f1c)
-         + (W_EXP+4)'(2);
-    prod_top = E_f1 + (W_EXP+4)'($signed(pbitlen(P))) - (W_EXP+4)'(1);
-    top_f1 = (c_zero_f1c || prod_top >= (W_EXP+4)'(e_c_f1c)) ? prod_top
-                                                             : (W_EXP+4)'(e_c_f1c);
-    shift_p_f1 = SH_W'(int'(PTOP) - int'(top_f1) + int'(E_f1));
-    shift_c_f1 = SH_W'(int'(PTOP) - int'(top_f1) + int'(e_c_f1c)
-                        - int'(bl_c_f1c) + 1);
-  end
-
-  logic [P_W-1:0]          P_f1;
-  logic signed [W_EXP+3:0] top_f1r;
-  logic signed [SH_W-1:0]  shift_p_f1r, shift_c_f1r;
-  logic [S_W-1:0]          s_c_f1;
-  logic                    prod_sign_f1, c_sign_f1, c_zero_f1;
-  logic [2:0]              rm_f1;
-  logic [W-1:0]            y_special_f1;
-  logic [4:0]              flags_special_f1;
-  logic                    special_f1;
-  logic                    f1_valid;
-
-  always_ff @(posedge clk) begin
-    if (!rst_n) begin
-      P_f1             <= '0;
-      top_f1r          <= '0;
-      shift_p_f1r      <= '0;
-      shift_c_f1r      <= '0;
-      s_c_f1           <= '0;
-      prod_sign_f1     <= 1'b0;
-      c_sign_f1        <= 1'b0;
-      c_zero_f1        <= 1'b0;
-      rm_f1            <= 3'd0;
-      y_special_f1     <= '0;
-      flags_special_f1 <= 5'd0;
-      special_f1       <= 1'b0;
-      f1_valid         <= 1'b0;
+    if (same_a) begin
+      acc_a   = t0_a;
+      rsign_a = prod_sign_x;
+    end else if (dpc_a[ACC_W]) begin
+      acc_a   = ~(sat_x ? t1_a : t0_a);
+      rsign_a = c_sign_x;
     end else begin
-      P_f1             <= P;
-      top_f1r          <= top_f1;
-      shift_p_f1r      <= shift_p_f1;
-      shift_c_f1r      <= shift_c_f1;
-      s_c_f1           <= s_c_f1c;
-      prod_sign_f1     <= prod_sign_f1c;
-      c_sign_f1        <= c_sign_f1c;
-      c_zero_f1        <= c_zero_f1c;
-      rm_f1            <= rm_f1c;
-      y_special_f1     <= y_special_f1c;
-      flags_special_f1 <= flags_special_f1c;
-      special_f1       <= special_f1c;
-      f1_valid         <= core_valid;
+      acc_a   = dpc_a;
+      rsign_a = prod_sign_x;
     end
   end
 
-  // ============================================================ stage F2
-  logic [ACC_W-1:0] placed_p_f2, placed_c_f2;
-  logic             sticky_p_f2, sticky_c_f2;
-  always_comb begin
-    int sp, sc;
-    sp = int'(shift_p_f1r);
-    sc = int'(shift_c_f1r);
-    // product
-    if (sp >= 0) begin
-      placed_p_f2 = (sp >= ACC_W) ? '0 : (ACC_W)'(P_f1) << sp;
-      sticky_p_f2 = 1'b0;
-    end else begin
-      placed_p_f2 = (sp <= -P_W) ? '0 : (ACC_W)'(P_f1 >> (-sp));
-      sticky_p_f2 = (sp <= -P_W) ? (|P_f1)
-                                 : |(P_f1 & (((P_W)'(1) << (-sp)) - 1));
-    end
-    // c addend
-    if (c_zero_f1) begin
-      placed_c_f2 = '0;
-      sticky_c_f2 = 1'b0;
-    end else if (sc >= 0) begin
-      placed_c_f2 = (sc >= ACC_W) ? '0 : (ACC_W)'(s_c_f1) << sc;
-      sticky_c_f2 = 1'b0;
-    end else begin
-      placed_c_f2 = (sc <= -S_W) ? '0 : (ACC_W)'(s_c_f1 >> (-sc));
-      sticky_c_f2 = (sc <= -S_W) ? (|s_c_f1)
-                                 : |(s_c_f1 & (((S_W)'(1) << (-sc)) - 1));
-    end
-  end
-
-  logic [ACC_W-1:0] placed_p_f2r, placed_c_f2r;
-  logic             sticky_p_f2r, sticky_c_f2r;
-  logic signed [W_EXP+3:0] top_f2;
-  logic             prod_sign_f2, c_sign_f2;
-  logic [2:0]       rm_f2;
-  logic [W-1:0]     y_special_f2;
-  logic [4:0]       flags_special_f2;
-  logic             special_f2;
-  logic             f2_valid;
-
-  always_ff @(posedge clk) begin
-    if (!rst_n) begin
-      placed_p_f2r     <= '0;
-      placed_c_f2r     <= '0;
-      sticky_p_f2r     <= 1'b0;
-      sticky_c_f2r     <= 1'b0;
-      top_f2           <= '0;
-      prod_sign_f2     <= 1'b0;
-      c_sign_f2        <= 1'b0;
-      rm_f2            <= 3'd0;
-      y_special_f2     <= '0;
-      flags_special_f2 <= 5'd0;
-      special_f2       <= 1'b0;
-      f2_valid         <= 1'b0;
-    end else begin
-      placed_p_f2r     <= placed_p_f2;
-      placed_c_f2r     <= placed_c_f2;
-      sticky_p_f2r     <= sticky_p_f2;
-      sticky_c_f2r     <= sticky_c_f2;
-      top_f2           <= top_f1r;
-      prod_sign_f2     <= prod_sign_f1;
-      c_sign_f2        <= c_sign_f1;
-      rm_f2            <= rm_f1;
-      y_special_f2     <= y_special_f1;
-      flags_special_f2 <= flags_special_f1;
-      special_f2       <= special_f1;
-      f2_valid         <= f1_valid;
-    end
-  end
-
-  // ============================================================ stage F3
-  logic         same_sign_f3;
-  logic [ACC_W:0] acc_f3;
-  logic         rsign_f3, cancel_f3;
-  assign same_sign_f3 = (prod_sign_f2 == c_sign_f2);
-  always_comb begin
-    if (same_sign_f3) begin
-      acc_f3    = {1'b0, placed_p_f2r} + {1'b0, placed_c_f2r};
-      rsign_f3  = prod_sign_f2;
-      cancel_f3 = 1'b0;
-    end else if (placed_p_f2r >= placed_c_f2r) begin
-      acc_f3    = {1'b0, placed_p_f2r} - {1'b0, placed_c_f2r};
-      rsign_f3  = prod_sign_f2;
-      cancel_f3 = (acc_f3 == '0);
-      if (sticky_p_f2r | sticky_c_f2r) acc_f3 = acc_f3 - 1;
-    end else begin
-      acc_f3    = {1'b0, placed_c_f2r} - {1'b0, placed_p_f2r};
-      rsign_f3  = c_sign_f2;
-      cancel_f3 = (acc_f3 == '0);
-      if (sticky_p_f2r | sticky_c_f2r) acc_f3 = acc_f3 - 1;
-    end
-  end
-
-  logic [ACC_W:0] acc_f3r;
-  logic           rsign_f3r, cancel_f3r;
-  logic             sticky_p_f3r, sticky_c_f3r;
-  logic signed [W_EXP+3:0] top_f3;
-  logic [2:0]       rm_f3;
-  logic [W-1:0]     y_special_f3;
-  logic [4:0]       flags_special_f3;
-  logic             special_f3;
-  logic             f3_valid;
-
-  always_ff @(posedge clk) begin
-    if (!rst_n) begin
-      acc_f3r          <= '0;
-      rsign_f3r        <= 1'b0;
-      cancel_f3r       <= 1'b0;
-      sticky_p_f3r     <= 1'b0;
-      sticky_c_f3r     <= 1'b0;
-      top_f3           <= '0;
-      rm_f3            <= 3'd0;
-      y_special_f3     <= '0;
-      flags_special_f3 <= 5'd0;
-      special_f3       <= 1'b0;
-      f3_valid         <= 1'b0;
-    end else begin
-      acc_f3r          <= acc_f3;
-      rsign_f3r        <= rsign_f3;
-      cancel_f3r       <= cancel_f3;
-      sticky_p_f3r     <= sticky_p_f2r;
-      sticky_c_f3r     <= sticky_c_f2r;
-      top_f3           <= top_f2;
-      rm_f3            <= rm_f2;
-      y_special_f3     <= y_special_f2;
-      flags_special_f3 <= flags_special_f2;
-      special_f3       <= special_f2;
-      f3_valid         <= f2_valid;
-    end
-  end
-
-  // ============================================================ stage F4
-  int                  p0_f4;
-  logic [FW-1:0]       norm_f4;
-  logic                norm_sticky_f4;
-  logic signed [W_EXP+3:0] e_res_f4;
-  always_comb begin
-    p0_f4 = 0;
-    norm_sticky_f4 = 1'b0;
-    for (int i = 0; i <= ACC_W; i++)
-      if (acc_f3r[i]) p0_f4 = i;
-    if (p0_f4 > TARGET) begin
-      norm_f4 = acc_f3r >> (p0_f4 - TARGET);
-      norm_sticky_f4 = sticky_p_f3r | sticky_c_f3r
-                     | |(acc_f3r & (((ACC_W+1)'(1) << (p0_f4 - TARGET)) - 1));
-    end else if (p0_f4 < TARGET) begin
-      norm_f4 = acc_f3r << (TARGET - p0_f4);
-      norm_sticky_f4 = sticky_p_f3r | sticky_c_f3r;
-    end else begin
-      norm_f4 = acc_f3r;
-      norm_sticky_f4 = sticky_p_f3r | sticky_c_f3r;
-    end
-    e_res_f4 = top_f3 + (W_EXP+4)'($signed(p0_f4) - PTOP);
-  end
-
-  // Subnormal-candidate shift, computed from the pre-normalization accumulator
-  // and registered at the F3->F4 boundary (the same placement-ahead trick as
-  // jsm_fp_add_pipe). The accumulator is anchored so value = acc * 2^(top_f3-PTOP);
-  // the shift down to the subnormal grid is therefore
-  //   sh = W_MANT + 3 + top_f3 - PTOP - EMIN
-  // and does not depend on the leading-one position p0 - which is what kept the
-  // old F5 version (shift = EMIN - e_res_f4r) on the critical path. shifted_sub
-  // is 8 * value / ulp_sub with the guard/round/sticky bits at [2:0].
-  //
-  // The placement stickies (bits of the product / c shifted below acc bit 0)
-  // are not represented in acc_f3r, so they feed the sticky directly; the old
-  // F5 path picked them up through norm_sticky_f4r.
-  logic [FW-1:0] shifted_sub_f4;
-  logic          sub_sticky_f4;
+  // Subnormal-candidate shift sh = BE - (EMIN - W_MANT) + 3 and, for
+  // sh < 0, the mask of the accumulator bits it drops (for stage N).
+  logic signed [XW-1:0] shs_a;
+  logic [ACC_W:0]       smask_a;
   always_comb begin
     int sh;
-    sh = W_MANT + 3 + int'(top_f3) - PTOP - EMIN;
-    shifted_sub_f4 = '0;
-    sub_sticky_f4  = sticky_p_f3r | sticky_c_f3r;
-    if (sh >= 0) begin
-      // Left shift: exact (no dropped bits); out of the selected subnormal
-      // range the value is unused and the truncation is harmless.
-      if (sh < FW) shifted_sub_f4 = (FW)'(acc_f3r << sh);
-    end else if (-sh >= ACC_W + 1) begin
-      // Shifted below the accumulator LSB: saturates to zero plus sticky.
-      sub_sticky_f4 = sub_sticky_f4 | (|acc_f3r);
-    end else begin
-      shifted_sub_f4 = (FW)'(acc_f3r >> (-sh));
-      sub_sticky_f4  = sub_sticky_f4
-                     | (|(acc_f3r & (((ACC_W + 1)'(1) << (-sh)) - 1)));
+    sh = int'(be_x) + W_MANT + 3 - EMIN;
+    shs_a = (XW)'(sh);
+    smask_a = '0;
+    if (sh < 0) begin
+      if (-sh >= ACC_W + 1) smask_a = '1;
+      else                  smask_a = ((ACC_W+1)'(1) << (-sh)) - 1;
     end
   end
 
-  logic [FW-1:0]   norm_f4r;
-  logic            norm_sticky_f4r;
-  logic [FW-1:0]   shifted_sub_r;
-  logic            sub_sticky_r;
-  logic signed [W_EXP+3:0] e_res_f4r;
-  logic            rsign_f4;
-  logic            cancel_f4;
-  logic            special_f4;
-  logic [W-1:0]    y_special_f4;
-  logic [4:0]      flags_special_f4;
-  logic [2:0]      rm_f4;
-  logic            f4_valid;
+  logic [ACC_W:0]       acc_r, smask_r;
+  logic                 rsign_r, sticky_r;
+  logic signed [XW-1:0] be_r, shs_r;
+  logic [2:0]           rm_r;
+  logic [W-1:0]         y_special_r;
+  logic [4:0]           flags_special_r;
+  logic                 special_r;
+  logic                 a_valid;
+
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      acc_r           <= '0;
+      smask_r         <= '0;
+      rsign_r         <= 1'b0;
+      sticky_r        <= 1'b0;
+      be_r            <= '0;
+      shs_r           <= '0;
+      rm_r            <= 3'd0;
+      y_special_r     <= '0;
+      flags_special_r <= 5'd0;
+      special_r       <= 1'b0;
+      a_valid         <= 1'b0;
+    end else begin
+      acc_r           <= acc_a;
+      smask_r         <= smask_a;
+      rsign_r         <= rsign_a;
+      sticky_r        <= stc_x | sat_x;
+      be_r            <= be_x;
+      shs_r           <= shs_a;
+      rm_r            <= rm_x;
+      y_special_r     <= y_special_x;
+      flags_special_r <= flags_special_x;
+      special_r       <= special_x;
+      a_valid         <= cs_valid;
+    end
+  end
+
+  // The sum is never 0 except by exact cancellation: P != 0 outside the
+  // special cases, and a sticky difference is >= 1.
+  logic cancel_n;
+  assign cancel_n = (acc_r == '0);
+
+  // ============================================================ stage N
+  // Leading one p0 of the accumulator: result exponent BE + p0.
+  int                   p0_n;
+  logic [FW-1:0]        norm_n;
+  logic                 norm_sticky_n;
+  logic signed [XW-1:0] e_res_n;
+  always_comb begin
+    p0_n = 0;
+    norm_sticky_n = 1'b0;
+    for (int i = 0; i <= ACC_W; i++)
+      if (acc_r[i]) p0_n = i;
+    if (p0_n > TARGET) begin
+      norm_n = acc_r >> (p0_n - TARGET);
+      norm_sticky_n = sticky_r
+                    | |(acc_r & (((ACC_W+1)'(1) << (p0_n - TARGET)) - 1));
+    end else if (p0_n < TARGET) begin
+      norm_n = acc_r << (TARGET - p0_n);
+      norm_sticky_n = sticky_r;
+    end else begin
+      norm_n = acc_r;
+      norm_sticky_n = sticky_r;
+    end
+    e_res_n = be_r + (XW)'(p0_n);
+  end
+
+  // Subnormal candidate, from the accumulator directly (independent of p0):
+  // value = acc * 2^BE, so the shift onto the subnormal grid (with the guard,
+  // round and sticky positions at [2:0]) is sh = BE - (EMIN - W_MANT) + 3;
+  // sh and the mask of the bits a right shift drops come registered.
+  logic [FW-1:0] shifted_sub_n;
+  logic          sub_sticky_n;
+  always_comb begin
+    int sh;
+    sh = int'(shs_r);
+    shifted_sub_n = '0;
+    sub_sticky_n  = sticky_r | (|(acc_r & smask_r));
+    if (sh >= 0) begin
+      // left shift: exact; out of the subnormal range the value is unused
+      if (sh < FW) shifted_sub_n = (FW)'(acc_r << sh);
+    end else if (-sh < ACC_W + 1) begin
+      shifted_sub_n = (FW)'(acc_r >> (-sh));
+    end
+  end
+
+  logic [FW-1:0]        norm_f4r;
+  logic                 norm_sticky_f4r;
+  logic [FW-1:0]        shifted_sub_r;
+  logic                 sub_sticky_r;
+  logic signed [XW-1:0] e_res_f4r;
+  logic                 rsign_f4;
+  logic                 cancel_f4;
+  logic                 special_f4;
+  logic [W-1:0]         y_special_f4;
+  logic [4:0]           flags_special_f4;
+  logic [2:0]           rm_f4;
+  logic                 f4_valid;
 
   always_ff @(posedge clk) begin
     if (!rst_n) begin
@@ -606,28 +474,28 @@ module jsm_fp_fma_pipe #(
       rm_f4            <= 3'd0;
       f4_valid         <= 1'b0;
     end else begin
-      norm_f4r         <= norm_f4;
-      norm_sticky_f4r  <= norm_sticky_f4;
-      shifted_sub_r    <= shifted_sub_f4;
-      sub_sticky_r     <= sub_sticky_f4;
-      e_res_f4r        <= e_res_f4;
-      rsign_f4         <= rsign_f3r;
-      cancel_f4        <= cancel_f3r;
-      special_f4       <= special_f3;
-      y_special_f4     <= y_special_f3;
-      flags_special_f4 <= flags_special_f3;
-      rm_f4            <= rm_f3;
-      f4_valid         <= f3_valid;
+      norm_f4r         <= norm_n;
+      norm_sticky_f4r  <= norm_sticky_n;
+      shifted_sub_r    <= shifted_sub_n;
+      sub_sticky_r     <= sub_sticky_n;
+      e_res_f4r        <= e_res_n;
+      rsign_f4         <= rsign_r;
+      cancel_f4        <= cancel_n;
+      special_f4       <= special_r;
+      y_special_f4     <= y_special_r;
+      flags_special_f4 <= flags_special_r;
+      rm_f4            <= rm_r;
+      f4_valid         <= a_valid;
     end
   end
 
-  // ============================================================ stage F5
+  // ============================================================ stage R
   logic [S_W-1:0] sig;
   logic           g, r, s_bit, lsb, inexact, round_up, carry;
   /* verilator lint_off UNUSEDSIGNAL */
   logic [S_W-1:0] sig_rnd;
   /* verilator lint_on UNUSEDSIGNAL */
-  logic signed [W_EXP+3:0] e_rnd;
+  logic signed [XW-1:0] e_rnd;
   logic [W-1:0]   y_normal;
   logic [4:0]     flags_normal;
   logic [2:0]     rm_f5;
@@ -685,8 +553,8 @@ module jsm_fp_fma_pipe #(
         logic               gs, rs, ss, inexact_s, up_s;
         logic [S_W-1:0]     sig_s2;
         // The shift to the subnormal grid was computed from the
-        // pre-normalization accumulator and registered in F4
-        // (shifted_sub_r / sub_sticky_r), so this path no longer waits on the
+        // accumulator and registered in stage N
+        // (shifted_sub_r / sub_sticky_r); it does not wait on the
         // leading-one position or e_res_f4r.
         shifted = shifted_sub_r;
         sig_s  = shifted[TARGET -: S_W];
@@ -743,9 +611,7 @@ module jsm_fp_fma_pipe #(
   logic [W-1:0] y_cancel;
   assign y_cancel = {(rm_f5 == jsm_fp_pkg::RM_RM), {W_EXP{1'b0}}, {W_MANT{1'b0}}};
 
-  // Round/encode is a single stage (was F5a candidates + F5b mux): with the
-  // subnormal shift precomputed in F4 the round/mux path is short enough to
-  // register directly, and `out_valid` rides f4_valid.
+  // Stage R: result select and output register (the *_f4 registers are stage N's).
   always_ff @(posedge clk) begin
     if (!rst_n) begin
       y         <= '0;

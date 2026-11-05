@@ -14,6 +14,7 @@
 //
 //   OP_SEL = 0: jsm_fp_add_pipe vs jsm_fp_add (ADD and SUB through `op`)
 //   OP_SEL = 1: jsm_fp_mul_pipe vs jsm_fp_mul
+//   (fp_fma_pipe_equiv below: jsm_fp_fma_pipe vs jsm_fp_fma, with c)
 
 module fp_pipe_equiv #(
   parameter int W_EXP  = 5,
@@ -120,4 +121,82 @@ endmodule
 module fp_pipe_equiv_mul_bf16 (input logic clk, rst_n, start, sub,
                                input logic [15:0] a, b, input jsm_fp_pkg::rounding_t rm);
   fp_pipe_equiv #(.W_EXP(8), .W_MANT(7), .OP_SEL(1)) u (.*);
+endmodule
+
+// jsm_fp_fma_pipe vs jsm_fp_fma: as fp_pipe_equiv, with the addend c.
+module fp_fma_pipe_equiv #(
+  parameter int W_EXP  = 4,
+  parameter int W_MANT = 3
+) (
+  input logic                      clk,
+  input logic                      rst_n,
+  input logic                      start,
+  input logic [1+W_EXP+W_MANT-1:0] a,
+  input logic [1+W_EXP+W_MANT-1:0] b,
+  input logic [1+W_EXP+W_MANT-1:0] c,
+  input jsm_fp_pkg::rounding_t         rm
+);
+
+  localparam int W   = 1 + W_EXP + W_MANT;
+  localparam int LAT = jsm_fp_pkg::lat_fma(W_MANT);
+
+  always_comb assume (rm <= jsm_fp_pkg::RM_RM);
+
+  logic init = 1'b1;
+  always_ff @(posedge clk) init <= 1'b0;
+  always_comb if (init) assume (!rst_n);
+
+  logic [W-1:0] y_p, y_c;
+  logic [4:0]   f_p, f_c;
+  logic         v_p;
+
+  jsm_fp_fma_pipe #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_pipe (
+    .a(a), .b(b), .c(c), .rm(rm), .clk(clk), .rst_n(rst_n), .start(start),
+    .y(y_p), .flags(f_p), .out_valid(v_p));
+  jsm_fp_fma #(.W_EXP(W_EXP), .W_MANT(W_MANT)) u_ref (
+    .a(a), .b(b), .c(c), .rm(rm), .y(y_c), .flags(f_c));
+
+  logic [W-1:0] y_d [0:LAT-1];
+  logic [4:0]   f_d [0:LAT-1];
+  logic         v_d [0:LAT-1];
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      for (int i = 0; i < LAT; i++) v_d[i] <= 1'b0;
+    end else begin
+      v_d[0] <= start;
+      for (int i = 1; i < LAT; i++) v_d[i] <= v_d[i-1];
+    end
+    y_d[0] <= y_c;
+    f_d[0] <= f_c;
+    for (int i = 1; i < LAT; i++) begin
+      y_d[i] <= y_d[i-1];
+      f_d[i] <= f_d[i-1];
+    end
+  end
+
+  always_comb begin
+    if (!init) begin
+      assert (v_p == v_d[LAT-1]);
+      if (v_p) begin
+        assert (y_p == y_d[LAT-1]);
+        assert (f_p == f_d[LAT-1]);
+      end
+    end
+  end
+
+endmodule
+
+module fp_pipe_equiv_fma_e4m3 (input logic clk, rst_n, start,
+                               input logic [7:0] a, b, c, input jsm_fp_pkg::rounding_t rm);
+  fp_fma_pipe_equiv #(.W_EXP(4), .W_MANT(3)) u (.*);
+endmodule
+
+module fp_pipe_equiv_fma_e5m2 (input logic clk, rst_n, start,
+                               input logic [7:0] a, b, c, input jsm_fp_pkg::rounding_t rm);
+  fp_fma_pipe_equiv #(.W_EXP(5), .W_MANT(2)) u (.*);
+endmodule
+
+module fp_pipe_equiv_fma_bf16 (input logic clk, rst_n, start,
+                               input logic [15:0] a, b, c, input jsm_fp_pkg::rounding_t rm);
+  fp_fma_pipe_equiv #(.W_EXP(8), .W_MANT(7)) u (.*);
 endmodule

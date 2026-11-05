@@ -1,0 +1,39 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
+# SymbiYosys BMC: pipelined datapath == combinational reference (fma_e5m2).
+# See formal/fp_pipe_equiv.sv. Run in formal/:  sby -f bmc_equiv_fma_e5m2.sby
+
+[tasks]
+bmc
+
+[options]
+mode bmc
+depth 6
+expect pass
+
+[engines]
+smtbmc bitwuzla
+
+[script]
+read_verilog -sv -formal jsm_fp_pkg.sv
+read_verilog -sv -formal jsm_fp_add.sv
+read_verilog -sv -formal jsm_fp_add_pipe.sv
+read_verilog -sv -formal jsm_fp_mul.sv
+read_verilog -sv -formal jsm_fp_mul_core.sv
+read_verilog -sv -formal jsm_fp_mul_pipe.sv
+read_verilog -sv -formal jsm_fp_fma.sv
+read_verilog -sv -formal jsm_fp_fma_pipe.sv
+read_verilog -sv -formal fp_pipe_equiv.sv
+prep -top fp_pipe_equiv_fma_e5m2
+
+[files]
+../rtl/jsm_fp_pkg.sv
+../rtl/jsm_fp_add.sv
+../rtl/jsm_fp_add_pipe.sv
+../rtl/jsm_fp_mul.sv
+../rtl/jsm_fp_mul_core.sv
+../rtl/jsm_fp_mul_pipe.sv
+../rtl/jsm_fp_fma.sv
+../rtl/jsm_fp_fma_pipe.sv
+fp_pipe_equiv.sv

@@ -55,7 +55,7 @@ datapaths, `DIVSQRT_IMPL = 0` div/sqrt, and reserved or disabled opcodes.
 |----------|------------|--------------------|
 | `jsm_fp_add_pipe` | ADD, SUB | 3 |
 | `jsm_fp_mul_pipe` (+ `jsm_fp_mul_core`) | MUL | 4 (5 for W_MANT + 1 > 32) |
-| `jsm_fp_fma_pipe` (+ `jsm_fp_mul_core`) | FMA | 7 (8) |
+| `jsm_fp_fma_pipe` (+ `jsm_fp_mul_core`) | FMA | 4 (5) |
 | `jsm_fp_div_srt` / `jsm_fp_sqrt_srt` | DIV / SQRT, `DIVSQRT_IMPL` 1 or 3 | 9 / 15 (17 / 16) |
 | `jsm_fp_divsqrt_iter` | DIV and SQRT, `DIVSQRT_IMPL` 2 | 16 |
 | `jsm_fp_roundint_pipe` | RNDINT, RNDINTX | 2 |
@@ -99,10 +99,37 @@ in the unit verifies it covers `MAXLAT`.
   different structure (section 9).
 - **Multiplier core**: LUT-only partial-product tree (no DSP inference),
   2 pipeline stages for W_MANT + 1 <= 32, else 3; shared by MUL and FMA.
-- **FMA**: exact sum in a 3p+6-bit accumulator anchored at the larger
-  exponent, single rounding. The subnormal candidate is computed from the
-  pre-normalization accumulator (as in add), so round and encode take one
-  stage.
+  Besides the registered product it exposes the two rows in front of its
+  final carry-propagate add (`cs0`, `cs1`, unregistered, with `cs_valid`).
+- **FMA** (as many cycles as MUL): the product sits at a fixed position
+  (bits [L, L + 2p), L = 2) of a 3p + 4-bit accumulator and only the
+  addend c is shifted.
+  - Alignment needs the exponent fields alone. A significand's LSB weight
+    is max(exp, 1) - BIAS - W_MANT, subnormal or not, so there is no
+    bit-length scan, and the shift amount is ready in cycle 0. c is
+    shifted while the core's last stage reduces the partial products.
+  - The add replaces the core's final carry-propagate add: two ternary
+    adders X + Y + C' (X, Y the core rows, C' = C or ~C), with carry-in 0
+    (T0) and 1 (T1, as X | 1, so synthesis cannot rebuild it as T0 + 1).
+    Then P + C = T0, P - C - stc = stc ? T0 : T1, and
+    C - P - stp = ~(stp ? T1 : T0), selected by the sign of P - C.
+  - Then N (normalize, and the subnormal candidate with its shift and mask
+    precomputed in the add stage) and R (round and encode).
+  - Saturation: d = LSB(c) - LSB(P) >= 2p + 2 places c at L + 2p + 2 and
+    turns P into a sticky (below a quarter ulp of c). c bits below acc
+    bit 0 form a sticky. The sticky operand is always the smaller one, so
+    the accumulator holds the floor of the exact sum (exact cancellation:
+    acc = 0, detected in N).
+  - Why L = 2 is enough: c can only be partly below bit 0 when P has a
+    normal factor, so the sum's guard bit is at acc bit >= L - 2. The
+    round bit can fall below bit 0, but the sticky is then set, and with
+    the sticky set no rounding mode reads the round bit. L = 1 fails
+    `tests/fma_equiv.py` and the FMA proof; D_HI = 2p + 1 fails
+    `tests/fma_equiv.py`.
+  - History: the first pipeline (7 cycles) anchored the accumulator at the
+    larger exponent. That needed the product's bit length (one stage), a
+    shift of both operands (another) and a separate add stage after the
+    core.
 - **SRT division / square root**: fully unrolled radix-4 digit
   recurrences, one start per cycle.
   - Division: u' = 4u - 4dD, d in {-2..2}, digit selection from 4
@@ -161,12 +188,13 @@ in the unit verifies it covers `MAXLAT`.
 | cocotb `test_fp_unit_axilite.py`, `test_fp_unit_axis.py` | wrapper protocols (incl. READY before VALID, output stalls, throughput, latency), random ops | `make regress-axilite`, `make regress-axis` |
 | same suites through the Verilog tops | | `make regress-tops` |
 | `tests/exhaustive.py` | every operand pair x 5 rm x 16 ops, all 8-bit formats (C++ driver) | `make exhaustive` |
+| `tests/fma_equiv.py` | `jsm_fp_fma_pipe` vs `jsm_fp_fma`: every (rm, a, b, c) of four 8-bit formats, back to back; biased random (cancellation, alignment saturation, subnormal factors) up to binary64 | `make fma-equiv` |
 | `tests/soak.py` | millions of boundary-biased random vectors, medium formats and binary64 | `make soak` |
 | `tests/stream.py` | a request every cycle, backpressure, out-of-order tags, `OPS_EN` subset | `make stream` |
 | `tests/latency.py` | per-op latency table, constant across operand classes | `make metrics-latency` |
 | `verification/srt/run_diff.py` | SRT modules vs combinational div/sqrt, streaming, any `DPS`/`FOLD_STG`/`STAGE_FOLD` | `make srt-diff` |
 | `tests/bf16.py`, `test_fp_exp_seq.py` | the helper modules | `make bf16`, `make regress-exp` |
-| `formal/` | properties of the combinational datapaths; add/mul pipelines equal to their references (all inputs, E4M3/bfloat16/binary16) | `make formal`, `make formal-equiv` |
+| `formal/` | properties of the combinational datapaths; add/mul pipelines equal to their references (all inputs, E4M3/bfloat16/binary16), the FMA pipeline (E4M3/E5M2/bfloat16) | `make formal`, `make formal-equiv` |
 | `tests/vivado/run_xsim.py` | Verilog and VHDL tops of all three interfaces side by side in xsim vs the oracle | `make xsim-tops` |
 | `syn/` scripts | implementation, tops as design top, block-design references, packaged IP | `make vivado`, `vivado-top`, `vivado-bd-check`, `ip-check` |
 
@@ -176,9 +204,9 @@ the model and the harness (`FORCE_REBUILD=1` overrides).
 
 ### 4.2 Gates before a change is merged
 
-`make check-all` (lint, the cocotb suites, exhaustive, soak, stream, SRT
-differential), `make check-iter` and `make check-ds3` (the other div/sqrt
-builds), `make formal formal-equiv` when a datapath changed, and
+`make check-all` (lint, the cocotb suites, exhaustive, FMA equivalence,
+soak, stream, SRT differential), `make check-iter` and `make check-ds3`
+(the other div/sqrt builds), `make formal formal-equiv` when a datapath changed, and
 `make xsim-tops ip-check vivado` when a wrapper, a top or timing changed.
 Line coverage (`make coverage`) was 91 % at the last refresh; the gaps are
 constant-generate branches a given build does not select.
@@ -188,7 +216,8 @@ constant-generate branches a given build does not select.
 Every new harness was checked against a deliberately broken RTL or
 property: formal against a one-bit output mutant (sby passes vacuously at
 depth 0); the AXI4-Stream tests against a reorder buffer without its full
-check; the directed sqrt vectors against the old 3-bit digit counter.
+check; the directed sqrt vectors against the old 3-bit digit counter;
+`fma_equiv` against L = 1 and D_HI = 2p + 1, the FMA proof against L = 1.
 Keep doing this for new tests.
 
 ## 5. Coding rules (tool compatibility)
@@ -277,7 +306,10 @@ the original combinational design reached 17.6 ns. Pipelining every
 operation closed 4.0 ns with an iterative div/sqrt engine. The SRT
 pipelines raised throughput but needed 5.6 ns until the fixed-width
 carry-save change brought a fully pipelined 4.0 ns build back
-(`DIVSQRT_IMPL = 3`).
+(`DIVSQRT_IMPL = 3`). The FMA went from 7 to 4 cycles (binary32; 8 to 5 at
+binary64) with a fixed product position, exponent-only alignment and the
+add folded into the multiplier's last stage; in the default build its
+LUTs fell from 2,838 to 2,141 and its registers from 924 to 610.
 
 ## 9. Future work
 
@@ -306,3 +338,8 @@ carry-save change brought a fully pipelined 4.0 ns build back
   delivering keeps the other latencies fixed.
 - **2-cycle add**: needs a dual-path (near/far) adder with leading-zero
   anticipation, since every current stage is near the clock.
+- **Shorter MUL/FMA**: both now end with normalize + round after the
+  multiplier core. One cycle less would need leading-zero anticipation in
+  the add stage (to start the normalizing shift right after it) or a
+  faster core; at 4.0 ns the core's last stage plus the FMA add has about
+  0.4 ns of margin.
