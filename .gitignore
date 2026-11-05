@@ -13,6 +13,7 @@ wheels/
 sim_build/
 obj_dir/
 exhaustive_build/
+fma_equiv_build/
 soak_build/
 latency_build/
 stream_build/

@@ -142,9 +142,14 @@ module jsm_fp_mul_pipe #(
   // exact product from the LUT-only pipelined core (latency 3)
   logic [P_W-1:0] P;
   logic           core_valid;
+  /* verilator lint_off UNUSEDSIGNAL */
+  logic [P_W-1:0] cs0_nc, cs1_nc;  // carry-save rows: used by jsm_fp_fma_pipe only
+  logic           csv_nc;
+  /* verilator lint_on UNUSEDSIGNAL */
   jsm_fp_mul_core #(.W(S_W)) u_core (
     .clk(clk), .rst_n(rst_n), .start(start),
-    .a(s_a), .b(s_b), .p(P), .out_valid(core_valid)
+    .a(s_a), .b(s_b), .p(P), .out_valid(core_valid),
+    .cs0(cs0_nc), .cs1(cs1_nc), .cs_valid(csv_nc)
   );
 
   // Context pipeline. The product P of the transaction started in cycle 0 is

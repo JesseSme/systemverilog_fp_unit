@@ -19,6 +19,12 @@
 //   stage A   levels 1+2 register                (ceil(W/4) rows)
 //   stage B   levels 3+4 (+5/6 when two-stage)
 //
+// cs0/cs1 (unregistered) are the two rows in front of the final
+// carry-propagate add of the last stage: p = cs0 + cs1 one register later,
+// cs_valid marks them. jsm_fp_fma_pipe adds the aligned addend to them in
+// the same cycle instead of waiting for p (the rows are l4 for W <= 32, l5
+// otherwise; a tree that is already down to one row there gives cs1 = 0).
+//
 // Rows beyond the live count are held at zero, which keeps the tree uniform
 // for any W (no generate-time shape changes beyond the loop bounds). The
 // arithmetic is explicit (AND rows + additions), so no synthesis tool maps it
@@ -36,7 +42,10 @@ module jsm_fp_mul_core #(
   input  logic [W-1:0]    a,
   input  logic [W-1:0]    b,
   output logic [2*W-1:0]  p,
-  output logic            out_valid
+  output logic            out_valid,
+  output logic [2*W-1:0]  cs0,
+  output logic [2*W-1:0]  cs1,
+  output logic            cs_valid
 );
 
   localparam int PW = 2 * W;  // every level's row is a partial sum <= the product
@@ -131,6 +140,9 @@ module jsm_fp_mul_core #(
         end
       end
       assign p = p_reg[2*W-1:0];
+      assign cs0 = l4[0];
+      assign cs1 = (rcnt(4) > 1) ? l4[1] : '0;
+      assign cs_valid = va;
     end else begin : g_three_stage
       logic [PW-1:0] b_reg [0:W-1];
       logic          vb;
@@ -171,6 +183,9 @@ module jsm_fp_mul_core #(
         end
       end
       assign p = p_reg[2*W-1:0];
+      assign cs0 = l5[0];
+      assign cs1 = (rcnt(5) > 1) ? l5[1] : '0;
+      assign cs_valid = vb;
     end
   endgenerate
 

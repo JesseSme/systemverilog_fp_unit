@@ -11,7 +11,7 @@ OSS ?=
 SBY_PATH := $(if $(OSS),$(OSS)/bin:,)
 
 .PHONY: help lint regress regress-all smoke regress-axilite regress-axis regress-tops regress-exp \
-        exhaustive soak stream bf16 srt-diff coverage check-all check-iter check-ds3 \
+        exhaustive fma-equiv soak stream bf16 srt-diff coverage check-all check-iter check-ds3 \
         formal formal-equiv xsim-tops vivado vivado-top vivado-bd-check ip ip-check \
         metrics-area metrics-runtime metrics-latency metrics-compare clean
 
@@ -21,6 +21,7 @@ help:
 	@echo "  regress         cocotb regression, default format matrix (regress-all: 8 formats)"
 	@echo "  regress-axilite / regress-axis / regress-tops   wrapper and Verilog-top suites"
 	@echo "  exhaustive      every operand pair x rounding mode x opcode, all 8-bit formats"
+	@echo "  fma-equiv       FMA pipeline vs combinational FMA: every (rm,a,b,c), 8-bit formats; random, wider"
 	@echo "  soak | stream | bf16 | regress-exp | srt-diff | coverage"
 	@echo "  check-all       lint + all of the above for the default build"
 	@echo "  check-iter / check-ds3   the main suites for DIVSQRT_IMPL=2 / 3"
@@ -92,6 +93,9 @@ regress-exp:
 exhaustive:
 	uv run python tests/exhaustive.py
 
+fma-equiv:
+	uv run python tests/fma_equiv.py
+
 soak:
 	uv run python tests/soak.py
 
@@ -106,7 +110,7 @@ srt-diff:
 	uv run python verification/srt/run_diff.py
 	uv run python verification/srt/run_diff.py --param DPS=1 --param FOLD_STG=1
 
-check-all: lint regress-all regress-axilite regress-axis regress-tops regress-exp exhaustive soak stream srt-diff
+check-all: lint regress-all regress-axilite regress-axis regress-tops regress-exp exhaustive fma-equiv soak stream srt-diff
 
 check-iter:
 	FP_DIVSQRT_IMPL=2 uv run python tests/run_regression.py --all
@@ -138,15 +142,16 @@ coverage:
 # ------------------------------------------------------------------ formal
 FORMAL_PROPS := bmc_m6_b16 bmc_m6_e4m3 bmc_m6_e7m0 bmc_arith_e4m3 bmc_arith_e5m2 \
                 bmc_div_e4m3 bmc_div_e5m2 bmc_div_b16
-FORMAL_EQUIV := bmc_equiv_add_e4m3 bmc_equiv_mul_e4m3 bmc_equiv_add_bf16 bmc_equiv_mul_bf16 \
-                bmc_equiv_add_b16 bmc_equiv_mul_b16
+FORMAL_EQUIV := bmc_equiv_add_e4m3 bmc_equiv_mul_e4m3 bmc_equiv_fma_e4m3 bmc_equiv_fma_e5m2 \
+                bmc_equiv_fma_bf16 \
+                bmc_equiv_add_bf16 bmc_equiv_mul_bf16 bmc_equiv_add_b16 bmc_equiv_mul_b16
 
 # property proofs of the combinational datapaths (formal/*_props.sv)
 formal:
 	@export PATH="$(SBY_PATH)$$PATH"; for f in $(FORMAL_PROPS); do \
 	  echo "=== $$f ==="; (cd formal && sby -f $$f.sby) || exit 1; done
 
-# add/mul pipelines == combinational references (formal/fp_pipe_equiv.sv);
+# add/mul/fma pipelines == combinational references (formal/fp_pipe_equiv.sv);
 # binary16 mul takes ~13 min
 formal-equiv:
 	@export PATH="$(SBY_PATH)$$PATH"; for f in $(FORMAL_EQUIV); do \
@@ -195,5 +200,5 @@ metrics-compare:
 	uv run python tests/metrics.py --compare $(BEFORE) $(AFTER)
 
 clean:
-	rm -rf sim_build exhaustive_build soak_build latency_build stream_build bf16_build \
+	rm -rf sim_build exhaustive_build fma_equiv_build soak_build latency_build stream_build bf16_build \
 	       srt_diff_build xsim_build ip_repo syn/out coverage.dat coverage.info coverage_annotate

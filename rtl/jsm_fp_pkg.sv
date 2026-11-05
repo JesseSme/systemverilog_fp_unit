@@ -93,7 +93,7 @@ package jsm_fp_pkg;
   endfunction
 
   function automatic int lat_fma(input int w_mant);
-    lat_fma = (w_mant + 1 <= 32) ? 7 : 8;
+    lat_fma = (w_mant + 1 <= 32) ? 4 : 5;
   endfunction
 
   // jsm_fp_div_srt: NSTG + 2 + fold_stg with NSTG = ceil(NDIG / dps).

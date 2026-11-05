@@ -85,8 +85,8 @@ All parameters are integers in the Verilog and VHDL tops and in the IP.
 an undefined opcode: it is accepted, and after 1 cycle returns `y = 0` with
 the invalid flag. Shared datapaths are built if any of their opcodes is
 enabled: ADD/SUB, MIN/MAX, RNDINT/RNDINTX, and SGNJ/CLASS/NEXT/MINMAXNUM. For
-example, `OPS_EN = 0x0027` (ADD, SUB, MUL, FMA) cut binary16 from 33,637 to
-12,214 Yosys cells.
+example, `OPS_EN = 0x0027` (ADD, SUB, MUL, FMA) cut binary16 from 28,183 to
+10,616 Yosys cells (`synth -noabc`).
 
 Verified formats (`W_EXP`, `W_MANT`): every 8-bit format (1..7, 6..0), (4,3)
 E4M3, (5,2) E5M2, (5,10) binary16, (8,7) bfloat16, (6,16), (8,23) binary32,
@@ -298,12 +298,12 @@ They are independent of the operand values.
 
 | format | add/sub | mul | fma | div | sqrt | rndint/rndintx | min, max, cmp, totalOrder, sgnj, class, next, minmaxnum |
 |--------|--------:|----:|----:|----:|-----:|---------------:|--------:|
-| E4M3 | 3 | 4 | 7 | 4 | 5 | 2 | 1 |
-| E5M2 | 3 | 4 | 7 | 4 | 4 | 2 | 1 |
-| bfloat16 | 3 | 4 | 7 | 5 | 7 | 2 | 1 |
-| binary16 | 3 | 4 | 7 | 6 | 8 | 2 | 1 |
-| binary32 | 3 | 4 | 7 | 9 | 15 | 2 | 1 |
-| binary64 | 3 | 5 | 8 | 17 | 29 | 2 | 1 |
+| E4M3 | 3 | 4 | 4 | 4 | 5 | 2 | 1 |
+| E5M2 | 3 | 4 | 4 | 4 | 4 | 2 | 1 |
+| bfloat16 | 3 | 4 | 4 | 5 | 7 | 2 | 1 |
+| binary16 | 3 | 4 | 4 | 6 | 8 | 2 | 1 |
+| binary32 | 3 | 4 | 4 | 9 | 15 | 2 | 1 |
+| binary64 | 3 | 5 | 5 | 17 | 29 | 2 | 1 |
 | `W_MANT = 0` | 1 | 1 | 1 | 1 | 1 | 1 | 1 |
 
 div / sqrt with the other `DIVSQRT_IMPL` values:
@@ -588,25 +588,25 @@ registered):
 
 | `DIVSQRT_IMPL` | clock | WNS | CLB LUTs | registers | DSP / BRAM |
 |----------------|-------|-----|---------:|----------:|-----------|
-| 1 | 5.600 ns | +0.131 ns | 12,656 | 4,089 | 0 / 0 |
-| 3 | 4.000 ns | +0.001 ns | 13,368 | 5,143 | 0 / 0 |
-| 2 | 4.000 ns | +0.066 ns | 7,368 | 2,255 | 0 / 0 |
+| 1 | 5.600 ns | +0.046 ns | 11,965 | 3,764 | 0 / 0 |
+| 3 | 4.000 ns | +0.020 ns | 12,653 | 4,822 | 0 / 0 |
+| 2 | 4.000 ns | +0.099 ns | 6,641 | 1,936 | 0 / 0 |
 
 AXI4-Stream wrapper (`syn/vivado-top.tcl`, ports not registered, binary32,
 `TUSER_W = 1`):
 
 | `DIVSQRT_IMPL` | clock | WNS | CLB LUTs | registers | LUT-RAM |
 |----------------|-------|-----|---------:|----------:|--------:|
-| 1 | 5.800 ns | +0.160 ns | 12,868 | 4,239 | 26 |
-| 1 | 5.600 ns | -0.349 ns (default flow), -0.017 ns (`-directive Explore`) | | | |
-| 3 | 4.000 ns | +0.018 ns | 13,609 | 5,283 | 26 |
+| 1 | 5.600 ns | +0.029 ns | 12,172 | 3,906 | 26 |
+| 1 | 5.800 ns | -0.002 ns (one division-stage endpoint) | 12,198 | 3,912 | 26 |
+| 3 | 4.000 ns | +0.005 ns | 12,944 | 4,960 | 26 |
 
 The wrapper adds a few hundred LUTs and registers to the core. With
-`DIVSQRT_IMPL = 1` the two-digit division stage sets the clock and has
-about 0.1 ns of margin at 5.6 ns on its own, so a larger design around it
-can land at 5.6-5.8 ns; `DIVSQRT_IMPL = 3` has one digit per stage and
-closes 4.0 ns with the wrapper. For the fastest clock use
-`DIVSQRT_IMPL = 3`.
+`DIVSQRT_IMPL = 1` the two-digit division stage sets the clock and lands
+within a few tens of picoseconds of the target depending on placement (the
+two runs above), so plan for 5.6-5.8 ns in a larger design.
+`DIVSQRT_IMPL = 3` has one digit per stage and closes 4.0 ns with the
+wrapper. For the fastest clock use `DIVSQRT_IMPL = 3`.
 
 `OPS_EN` removes unused datapaths (section 2).
 
@@ -626,7 +626,9 @@ closes 4.0 ns with the wrapper. For the fastest clock use
   is shared by every test.
 - **Exhaustive**: every operand pair x 5 rounding modes x 16 opcodes for
   each 8-bit format, about 5.2 million vectors per format, for each
-  `DIVSQRT_IMPL`.
+  `DIVSQRT_IMPL`. The FMA pipeline separately: every (rounding mode, a, b,
+  c) of four 8-bit formats, about 84 million vectors each, against the
+  combinational FMA (`make fma-equiv`).
 - **Randomized**: cocotb at 8 formats (binary16/32/64, bfloat16, E4M3,
   (6,16), (10,40), `W_MANT = 0`) for the native core, both AXI wrappers and
   every Verilog top; C++ soaks of millions of vectors.
@@ -634,8 +636,9 @@ closes 4.0 ns with the wrapper. For the fastest clock use
   completion (native); random TVALID gaps and TREADY backpressure, output
   stalls, throughput and latency (AXI4-Stream).
 - **Formal** (SymbiYosys): the add and mul pipelines equal their
-  combinational references for all inputs at E4M3, bfloat16 and binary16;
-  algebraic properties of the other operations.
+  combinational references for all inputs at E4M3, bfloat16 and binary16,
+  the FMA pipeline at E4M3, E5M2 and bfloat16; algebraic properties of the
+  other operations.
 - **Vivado**: the Verilog and VHDL tops of all three interfaces run side by
   side in xsim against the reference model (`make xsim-tops`); every top is
   implemented as the design top; the packaged IP is instantiated, validated

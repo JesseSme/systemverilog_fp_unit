@@ -13,7 +13,7 @@ interfaces, and packaged Vivado IP.
 - All five rounding modes and exception flags, subnormals in and out;
   bit-exact against a Python reference model of IEEE 754-2019.
 - One operation per cycle with fixed latencies (binary32: add 3, mul 4,
-  fma 7, div 9, sqrt 15 cycles) at 5.6-5.8 ns, or at 4.0 ns (250 MHz) with
+  fma 4, div 9, sqrt 15 cycles) at 5.6-5.8 ns, or at 4.0 ns (250 MHz) with
   `DIVSQRT_IMPL = 3` (div 17, sqrt 16), on a Virtex UltraScale+ -2L; no DSPs,
   no block RAM.
 
