@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Exhaustive check of rtl/fp32_to_bf16_round.sv (binary32 -> bfloat16 RNE).
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+"""Exhaustive check of rtl/jsm_fp32_to_bf16_round.sv (binary32 -> bfloat16 RNE).
 
 Writes oracle records (tests/reference/ops.py:f32_to_bf16_rne) for every
 special/boundary encoding plus random inputs, then runs tests/bf16_main.cpp,
@@ -26,7 +28,7 @@ from reference.ops import f32_to_bf16_rne  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-SRC = os.path.join(ROOT, "rtl", "fp32_to_bf16_round.sv")
+SRC = os.path.join(ROOT, "rtl", "jsm_fp32_to_bf16_round.sv")
 HARNESS = os.path.join(HERE, "bf16_main.cpp")
 BUILD_DIR = os.path.join(ROOT, "bf16_build")
 
@@ -62,7 +64,7 @@ def main() -> int:
     env["PATH"] = "/usr/bin:/bin" + os.pathsep + env.get("PATH", "")
     subprocess.check_call([
         "verilator", "--cc", "--exe", "--build", "-O3",
-        "--top-module", "fp32_to_bf16_round",
+        "--top-module", "jsm_fp32_to_bf16_round",
         "--Mdir", BUILD_DIR, "-o", "fp_bf16", SRC, HARNESS,
     ], env=env, stdout=subprocess.DEVNULL)
     proc = subprocess.run([os.path.join(BUILD_DIR, "fp_bf16"), oracle, str(args.stride)],

@@ -1,9 +1,12 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Standalone Verilator C++ harness for the per-op latency probe.
 //
 // Drives a small set of representative vectors (normal, subnormal, zero, inf,
 // NaN) through every op and measures the in_valid -> out_valid cycle count.
 // All vectors of an op must show the same latency (fixed-latency contract).
-// The probe is driven by tests/latency.py, which builds one fp_unit model per
+// The probe is driven by tests/latency.py, which builds one jsm_fp_unit model per
 // width and prints the per-op cycle table.
 //
 // Usage: fp_latency <W_EXP> <W_MANT>
@@ -14,7 +17,7 @@
 //
 // Exit status is 0 iff every op has a constant latency across all vectors.
 
-#include "Vfp_unit.h"
+#include "Vjsm_fp_unit.h"
 #include "verilated.h"
 #ifndef NUM_OPS
 #error "NUM_OPS must be defined by the driver (-CFLAGS -DNUM_OPS=<n>)"
@@ -55,7 +58,7 @@ int main(int argc, char** argv) {
     const int NV = (int)(sizeof(va) / sizeof(va[0]));
 
     Verilated::commandArgs(argc, argv);
-    Vfp_unit* top = new Vfp_unit;
+    Vjsm_fp_unit* top = new Vjsm_fp_unit;
     top->clk = 0;
     top->rst_n = 0;
     top->in_valid = 0;
@@ -83,7 +86,7 @@ int main(int argc, char** argv) {
             top->a = va[v] & amask;
             top->b = vb[v] & amask;
             top->c = vc[v] & amask;
-            // Hold the request until fp_unit accepts it (in_ready at the edge);
+            // Hold the request until jsm_fp_unit accepts it (in_ready at the edge);
             // the latency is counted from the accepting edge.
             top->in_valid = 1;
             top->clk = 0;

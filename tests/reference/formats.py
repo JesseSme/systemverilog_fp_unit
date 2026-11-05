@@ -1,3 +1,6 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 """IEEE 754-2019 binary format model (clauses 3.2-3.7).
 
 This is the bit-exact oracle for the SystemVerilog DUT. Every value is kept

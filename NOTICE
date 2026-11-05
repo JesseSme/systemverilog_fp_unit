@@ -1,0 +1,7 @@
+jsm floating-point unit (systemverilog_fp_unit)
+Copyright 2026 Jesse Smedberg
+
+This product includes the jsm IEEE 754-2019 floating-point unit by
+Jesse Smedberg, https://github.com/JesseSme/systemverilog_fp_unit,
+licensed under the Solderpad Hardware License v2.1
+(SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1).

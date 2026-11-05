@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 """Streaming differential for the SRT div/sqrt pipelines.
 
-Builds one Verilator model per format (`fp_div_srt` vs combinational
-`fp_div`, `fp_sqrt_srt` vs combinational `fp_sqrt`), then streams one start
+Builds one Verilator model per format (`jsm_fp_div_srt` vs combinational
+`jsm_fp_div`, `jsm_fp_sqrt_srt` vs combinational `jsm_fp_sqrt`), then streams one start
 per cycle and compares every pipelined result against the combinational
 datapath evaluated on the operands that started it (FIFO-tracked in the C++
 harness). This is the check that caught the digit-selection, signed-cast and
@@ -23,12 +25,12 @@ from concurrent.futures import ProcessPoolExecutor
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 COMMON_RTL = [os.path.join(ROOT, "rtl", f) for f in
-              ("fp_pkg.sv", "fp_div.sv", "fp_sqrt.sv")]
+              ("jsm_fp_pkg.sv", "jsm_fp_div.sv", "jsm_fp_sqrt.sv")]
 BUILD = os.path.join(ROOT, "srt_diff_build")
 
 OPS = {
-    "div":  ("div_srt_diff_top",  "fp_div_srt.sv",  "div_diff_top.sv",  "div_diff_main.cpp"),
-    "sqrt": ("sqrt_srt_diff_top", "fp_sqrt_srt.sv", "sqrt_diff_top.sv", "sqrt_diff_main.cpp"),
+    "div":  ("div_srt_diff_top",  "jsm_fp_div_srt.sv",  "div_diff_top.sv",  "div_diff_main.cpp"),
+    "sqrt": ("sqrt_srt_diff_top", "jsm_fp_sqrt_srt.sv", "sqrt_diff_top.sv", "sqrt_diff_main.cpp"),
 }
 
 DEFAULT_FORMATS = [(5, 10), (8, 23), (4, 3), (5, 2), (8, 7), (11, 52), (10, 40)]

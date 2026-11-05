@@ -1,3 +1,6 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 """Exact rounding of rational values to a binary format (clauses 4.3, 7.4-7.6).
 
 This implements the specification-level rounding:

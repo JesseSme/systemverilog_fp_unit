@@ -1,7 +1,10 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Standalone Verilator C++ harness for the cross-width randomized soak.
 //
 // Replays a vector stream written by tests/soak.py (the bit-exact reference
-// oracle) through an fp_unit instance and compares the result. Operands are
+// oracle) through an jsm_fp_unit instance and compares the result. Operands are
 // stored alongside the expected (y, flags, cmp) so no PRNG needs to be shared
 // between Python and C++.
 //
@@ -12,7 +15,7 @@
 // where opbytes = ceil(width / 8) bytes per field (width <= 64); y is the
 // width-wide result.
 
-#include "Vfp_unit.h"
+#include "Vjsm_fp_unit.h"
 #include "verilated.h"
 #include "verilated_cov.h"
 #ifndef NUM_OPS
@@ -37,7 +40,7 @@ int main(int argc, char** argv) {
     const char* path = argv[1];
     const int w = atoi(argv[2]);
     const uint64_t C = strtoull(argv[3], nullptr, 10);  // 64-bit safe (binary64 FMA c)
-    // iter: fp_unit DIVSQRT_IMPL (informational; every request is held
+    // iter: jsm_fp_unit DIVSQRT_IMPL (informational; every request is held
     // until in_ready, so all implementations use the same drive loop).
     const int iter = (argc > 4) ? atoi(argv[4]) : 0;
     // Expected constant div/sqrt latency (0 = do not check): K+4 with
@@ -54,9 +57,9 @@ int main(int argc, char** argv) {
     const uint64_t rec = 3 * (uint64_t)opbytes + 4;
 
     Verilated::commandArgs(argc, argv);
-    Vfp_unit* top = new Vfp_unit;
+    Vjsm_fp_unit* top = new Vjsm_fp_unit;
     // Synchronous active-low reset (clears the pipeline valids and the
-    // fp_unit result-port reservation), released before the vectors.
+    // jsm_fp_unit result-port reservation), released before the vectors.
     top->clk = 0;
     top->rst_n = 0;
     top->in_valid = 0;
@@ -103,7 +106,7 @@ int main(int argc, char** argv) {
         top->a = a;
         top->b = b;
         top->c = C;
-        // Hold the request until fp_unit accepts it (in_ready at the edge);
+        // Hold the request until jsm_fp_unit accepts it (in_ready at the edge);
         // the latency is counted from the accepting edge.
         top->in_valid = 1;
         top->clk = 0;

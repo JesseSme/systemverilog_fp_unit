@@ -1,3 +1,6 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 # Out-of-context Vivado implementation of ONE datapath module (register-to-
 # register timing only: the module's input ports have no input delay, so the
 # unregistered setup logic of a pipeline is not timed; its pipeline stages and

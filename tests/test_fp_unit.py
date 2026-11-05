@@ -1,3 +1,6 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 """Cocotb tests for the IEEE 754-2019 FPU (add/sub milestone).
 
 Run via tests/run_regression.py, which instantiates the DUT at several
@@ -758,10 +761,10 @@ def _directed_sqrt_vectors(fmt):
             (OP_SQRT, MODE_RP,  m2, 0, 0x3DA9, ine, "sqrt(2) (RP)"),
         ]
 
-    # --- fp_sqrt_srt digit +4 (all eight selection compares true): the 3-bit
+    # --- jsm_fp_sqrt_srt digit +4 (all eight selection compares true): the 3-bit
     # compare counter used to wrap to 0 and select digit -4 instead. Found by
     # the SRT streaming differential (1 in 5M random binary64 / (10,40)
-    # radicands); expected values from the oracle and combinational fp_sqrt.
+    # radicands); expected values from the oracle and combinational jsm_fp_sqrt.
     if fmt.W_EXP == 11 and fmt.W_MANT == 52:
         v += [
             (OP_SQRT, MODE_RNA, 0x00050DBA2071B53C, 0, 0x1FF1FBF51ACCCE3B, ine,
@@ -1409,7 +1412,7 @@ async def test_boundary_stress(dut):
 @cocotb.test()
 async def test_reserved_encodings(dut):
     """Reserved rounding modes 5-7 behave as RNE for every op; opcodes
-    NUM_OPS..15 return y = 0 with the invalid flag (README "Semantics")."""
+    NUM_OPS..15 return y = 0 with the invalid flag (docs/user_guide.md, section 7)."""
     rng = random.Random(SEED ^ 0x5E5)
     for i in range(max(ITERS // 4, 20)):
         a, b = gen.pair_stream(rng, FMT, 1)[0]

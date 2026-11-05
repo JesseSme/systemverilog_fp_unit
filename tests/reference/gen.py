@@ -1,3 +1,6 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 """Random floating-point operand generators for cocotb tests.
 
 Distributions are chosen to stress the interesting corners of the format:

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Streaming / mixed-issue test of fp_unit (back-to-back requests).
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+"""Streaming / mixed-issue test of jsm_fp_unit (back-to-back requests).
 
-Every other fp_unit-level harness issues one operation and waits for its
+Every other jsm_fp_unit-level harness issues one operation and waits for its
 result. This one offers a request EVERY cycle (tests/stream_main.cpp) and
 matches results to requests through in_tag/out_tag, so it checks:
 
@@ -74,10 +76,10 @@ def build(wexp: int, wmant: int, params: list[str], tag: str) -> str:
         return binary
     subprocess.check_call([
         "verilator", "--cc", "--exe", "--build", "--timing", "--assert",
-        "--top-module", "fp_unit",
+        "--top-module", "jsm_fp_unit",
         "-CFLAGS", f"-DNUM_OPS={NUM_OPS}",
         f"-GW_EXP={wexp}", f"-GW_MANT={wmant}", "-GTAG_W=32", *params,
-        "--Mdir", build_dir, "--prefix", "Vfp_unit",
+        "--Mdir", build_dir, "--prefix", "Vjsm_fp_unit",
         "-o", "fp_stream",
         *RTL, HARNESS,
     ], env=_env(), stdout=subprocess.DEVNULL)
@@ -122,7 +124,7 @@ def run(job: tuple) -> bool:
         status = [ln for ln in out.splitlines() if ln.startswith("STREAM ") and "vectors" in ln]
         detail = [ln for ln in out.splitlines()
                   if ln.startswith(("MISMATCH", "LOST", "UNKNOWN", "UNEXPECTED", "STALL",
-                                    "NEVER", "%Error", "[")) or "fp_unit:" in ln]
+                                    "NEVER", "%Error", "[")) or "jsm_fp_unit:" in ln]
         print(f"[{wexp},{wmant}{tag}] " + (status[0] if status else f"rc={proc.returncode}"),
               flush=True)
         for ln in detail[:20]:
@@ -152,7 +154,7 @@ def main() -> int:
                     help="ops allowed to stall in same-op mode (e.g. div sqrt for "
                          "the iterative engine, DIVSQRT_IMPL=2)")
     ap.add_argument("--ops-en", type=lambda s: int(s, 0), default=0xFFFF,
-                    help="fp_unit OPS_EN mask; disabled ops must return the "
+                    help="jsm_fp_unit OPS_EN mask; disabled ops must return the "
                          "reserved-op result")
     ap.add_argument("--jobs", type=int, default=0)
     args = ap.parse_args()

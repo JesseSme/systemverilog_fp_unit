@@ -1,7 +1,10 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Standalone Verilator C++ harness for exhaustive add/sub/mul/div/sqrt/fma/
 // min/max/cmp/rndint/totalorder verification.
 //
-// Drives every (op, rm, a, b) combination of an fp_unit instance and compares
+// Drives every (op, rm, a, b) combination of an jsm_fp_unit instance and compares
 // the result against a precomputed expected file written by
 // tests/exhaustive.py (the bit-exact reference oracle). This path avoids the
 // cocotb VPI overhead, which would make an exhaustive 8-bit sweep
@@ -15,7 +18,7 @@
 // cmp is the 2-bit comparison condition code (OP_CMP) or the totalOrder
 // boolean (OP_TOTALORDER, cmp[0]); every other op drives cmp = 0.
 
-#include "Vfp_unit.h"
+#include "Vjsm_fp_unit.h"
 #include "verilated.h"
 #include "verilated_cov.h"
 #ifndef NUM_OPS
@@ -34,7 +37,7 @@ int main(int argc, char** argv) {
     const char* path = argv[1];
     const int w = atoi(argv[2]);
     const uint64_t C = strtoull(argv[3], nullptr, 10);  // 64-bit safe (binary64 FMA c)
-    // iter: fp_unit DIVSQRT_IMPL (informational; every request is held
+    // iter: jsm_fp_unit DIVSQRT_IMPL (informational; every request is held
     // until in_ready, so all implementations use the same drive loop).
     const int iter = (argc > 4) ? atoi(argv[4]) : 0;
     // Expected constant div/sqrt latency (0 = do not check): K+4 with
@@ -47,9 +50,9 @@ int main(int argc, char** argv) {
     const int A = 1 << w;  // values per operand
 
     Verilated::commandArgs(argc, argv);
-    Vfp_unit* top = new Vfp_unit;
+    Vjsm_fp_unit* top = new Vjsm_fp_unit;
     // Synchronous active-low reset (clears the pipeline valids and the
-    // fp_unit result-port reservation), released before the vectors.
+    // jsm_fp_unit result-port reservation), released before the vectors.
     top->clk = 0;
     top->rst_n = 0;
     top->in_valid = 0;
@@ -81,7 +84,7 @@ int main(int argc, char** argv) {
                 for (int b = 0; b < A; b++) {
                     top->b = b;
                     top->c = C;
-                    // Hold the request until fp_unit accepts it (in_ready at the edge);
+                    // Hold the request until jsm_fp_unit accepts it (in_ready at the edge);
                     // the latency is counted from the accepting edge.
                     top->in_valid = 1;
                     top->clk = 0;

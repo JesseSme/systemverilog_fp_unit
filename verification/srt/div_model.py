@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 """Final validated radix-4 SRT divider model (RTL-shaped).
 
 ND=5 divisor cells (1/32), estimate k = floor(64R) (1/16), one-sided +1
@@ -108,7 +110,7 @@ def run_mod(Num, Den, S_W, CSW):
     return Q >> 1, ((u != 0) or bool(Q & 1)), None
 
 
-# fixed carry-save width used by rtl/fp_div_srt.sv (CSW = S_W + CSW_MARGIN)
+# fixed carry-save width used by rtl/jsm_fp_div_srt.sv (CSW = S_W + CSW_MARGIN)
 CSW_MARGIN = 4
 
 

@@ -1,12 +1,15 @@
-"""cocotb tests for rtl/fp_exp_seq.sv (sequential fp32 exp).
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 
-fp_exp_seq computes y = exp(clamp(x, -16, 16)) by range reduction x/32, a
-degree-6 Horner polynomial and five squarings on two fp_unit instances (RNE).
+"""cocotb tests for rtl/jsm_fp_exp_seq.sv (sequential fp32 exp).
+
+jsm_fp_exp_seq computes y = exp(clamp(x, -16, 16)) by range reduction x/32, a
+degree-6 Horner polynomial and five squarings on two jsm_fp_unit instances (RNE).
 The reference is math.exp in double precision rounded to binary32; the
 result must lie within the per-|x|-band ULP bound ULP_BOUNDS (measured, see
-README).
+docs/user_guide.md).
 
-Run: uv run python tests/run_regression.py --top fp_exp_seq --tests test_fp_exp_seq --width 8 23
+Run: uv run python tests/run_regression.py --top jsm_fp_exp_seq --tests test_fp_exp_seq --width 8 23
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ SEED = int(os.environ.get("FP_SEED", "0x5eed"), 0)
 # The degree-6 polynomial on r = x/32 has a truncation error ~r^7/5040 and
 # the five squarings multiply the relative error of exp(r) by 32, so the
 # error is ~40 ulp (~5e-6 relative) for |x| <= 8 and grows to ~1.3k ulp
-# (~1.5e-4 relative) close to |x| = 16. See the fp_exp_seq header.
+# (~1.5e-4 relative) close to |x| = 16. See the jsm_fp_exp_seq header.
 ULP_BOUNDS = ((1.0, 48), (4.0, 64), (8.0, 64), (16.0, 1536))
 
 
@@ -88,7 +91,7 @@ async def run_exp(dut, x_bits: int) -> tuple[int, int]:
         cycles += 1
         if int(dut.done.value):
             break
-        assert cycles < 2000, "fp_exp_seq: done never asserted"
+        assert cycles < 2000, "jsm_fp_exp_seq: done never asserted"
     # done is registered with y; both valid in this cycle. done must be a
     # single-cycle pulse.
     y = int(dut.y.value)

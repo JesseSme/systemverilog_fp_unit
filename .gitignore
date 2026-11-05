@@ -46,3 +46,9 @@ session-ses_*.md
 
 # Vivado xsim builds of the Verilog/VHDL tops (tests/vivado/run_xsim.py)
 xsim_build/
+
+# Packaged Vivado IP (syn/package_ip.tcl, make ip)
+ip_repo/
+
+# metrics JSON written by make metrics-* (regenerate locally)
+metrics/*.json

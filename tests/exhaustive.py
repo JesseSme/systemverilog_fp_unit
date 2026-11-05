@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 """Exhaustive all-vectors verification of the FPU against the bit-exact
 reference oracle (tests/reference/ops.py).
 
@@ -114,11 +116,11 @@ def build(wexp: int, wmant: int, iter_mode: int) -> str:
     subprocess.check_call([
         "verilator", "--cc", "--exe", "--build", "--timing", "--assert",
         "--coverage", "--coverage-line", "--coverage-toggle",
-        "--top-module", "fp_unit",
+        "--top-module", "jsm_fp_unit",
         "-CFLAGS", f"-DNUM_OPS={N_OPS}",
         f"-GW_EXP={wexp}", f"-GW_MANT={wmant}",
         *([f"-GDIVSQRT_IMPL={iter_mode}"] if iter_mode != 1 else []),
-        "--Mdir", build_dir, "--prefix", "Vfp_unit",
+        "--Mdir", build_dir, "--prefix", "Vjsm_fp_unit",
         "-o", "fp_exhaustive",
         *RTL, HARNESS,
     ])
@@ -143,7 +145,7 @@ def run(wexp: int, wmant: int, keep: bool, iter_mode: int) -> bool:
     binary = build(wexp, wmant, iter_mode)
     print(f"  running {binary} ...")
     # The harness asserts a constant latency per op on its own (first value
-    # seen); fp_unit's out_valid == resv[0] assertion ties it to fp_pkg.
+    # seen); jsm_fp_unit's out_valid == resv[0] assertion ties it to jsm_fp_pkg.
     proc = subprocess.run([binary, expected, str(fmt.width), str(fma_c(fmt)),
                            str(iter_mode), "0"],
                           capture_output=True, text=True)
@@ -158,7 +160,7 @@ def main() -> None:
     ap.add_argument("--keep", action="store_true",
                     help="keep previously generated expected files")
     ap.add_argument("--divsqrt", type=int, choices=(0, 1, 2, 3), default=1,
-                    help="fp_unit DIVSQRT_IMPL: 1 SRT pipelines (default), "
+                    help="jsm_fp_unit DIVSQRT_IMPL: 1 SRT pipelines (default), "
                          "2 iterative engine, 3 SRT 250 MHz form, 0 combinational reference")
     ap.add_argument("--iter", action="store_true",
                     help="shorthand for --divsqrt 2 (iterative div/sqrt engine)")

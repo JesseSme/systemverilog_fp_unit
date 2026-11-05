@@ -1,6 +1,9 @@
-"""Cocotb tests for the AXI-Lite FPU wrapper (fp_unit_axilite).
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 
-Run via tests/run_regression.py --top fp_unit_axilite --tests test_fp_unit_axilite,
+"""Cocotb tests for the AXI-Lite FPU wrapper (jsm_fp_unit_axilite).
+
+Run via tests/run_regression.py --top jsm_fp_unit_axilite --tests test_fp_unit_axilite,
 which instantiates the DUT at several (W_EXP, W_MANT) widths and sets
 FP_W_EXP/FP_W_MANT/FP_ITERS/FP_SEED.
 
@@ -43,7 +46,7 @@ FMT = BinFormat(W_EXP, W_MANT)
 ITERS = int(os.environ.get("FP_ITERS", "100"))
 SEED = int(os.environ.get("FP_SEED", "0x5eed"), 0)
 
-# ---- Register map (mirrors rtl/fp_unit_axilite.sv) -------------------------
+# ---- Register map (mirrors rtl/jsm_fp_unit_axilite.sv) -------------------------
 W = 1 + W_EXP + W_MANT
 REG_W = 1 << (W - 1).bit_length()          # next power of two >= W
 WORDS = (REG_W + 31) // 32                  # 32-bit words per operand/result

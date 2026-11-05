@@ -1,7 +1,10 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 """Single source of truth for the RTL file lists used by every harness.
 
-The lists live in rtl/filelist.f (fp_unit and its datapaths, in compile
-order) and rtl/filelist_wrappers.f (wrappers/users of fp_unit). Paths in the
+The lists live in rtl/filelist.f (jsm_fp_unit and its datapaths, in compile
+order) and rtl/filelist_wrappers.f (wrappers/users of jsm_fp_unit). Paths in the
 .f files are relative to the repository root; blank lines and '#' comments
 are ignored.
 """
@@ -23,7 +26,7 @@ def _read(name: str) -> list[Path]:
 
 
 def rtl_files(wrappers: bool = False) -> list[Path]:
-    """fp_unit + datapaths; with wrappers=True also the wrapper modules."""
+    """jsm_fp_unit + datapaths; with wrappers=True also the wrapper modules."""
     files = _read("filelist.f")
     if wrappers:
         files += _read("filelist_wrappers.f")

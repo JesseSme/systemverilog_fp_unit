@@ -1,7 +1,11 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 # Block-design (IP integrator) check of the Verilog/VHDL tops: each top is
 # added to a block design as a module reference, its parameters are set
 # through CONFIG.*, and the inferred interfaces are listed (the AXI tops must
-# show one AXI4-Lite slave S_AXI with its clock and reset associated).
+# show one AXI4-Lite slave S_AXI, the AXI4-Stream tops S_AXIS and M_AXIS,
+# with their clock and reset associated).
 #
 #   vivado -mode batch -source syn/vivado-bd-check.tcl
 #
@@ -30,10 +34,12 @@ update_compile_order -fileset sources_1
 create_bd_design fpu_bd
 set errors 0
 foreach {cell ref cfg} {
-  u_axi_vhd fp_unit_axilite_vhd {CONFIG.W_EXP 5 CONFIG.W_MANT 10}
-  u_axi_v   fp_unit_axilite_top {CONFIG.W_EXP 8 CONFIG.W_MANT 23 CONFIG.DIVSQRT_IMPL 3}
-  u_fpu_vhd fp_unit_vhd         {CONFIG.W_EXP 11 CONFIG.W_MANT 52 CONFIG.TAG_W 4}
-  u_fpu_v   fp_unit_top         {CONFIG.W_EXP 8 CONFIG.W_MANT 7 CONFIG.OPS_EN 39}
+  u_axi_vhd jsm_fp_unit_axilite_vhd {CONFIG.W_EXP 5 CONFIG.W_MANT 10}
+  u_axi_v   jsm_fp_unit_axilite_top {CONFIG.W_EXP 8 CONFIG.W_MANT 23 CONFIG.DIVSQRT_IMPL 3}
+  u_fpu_vhd jsm_fp_unit_vhd         {CONFIG.W_EXP 11 CONFIG.W_MANT 52 CONFIG.TAG_W 4}
+  u_fpu_v   jsm_fp_unit_top         {CONFIG.W_EXP 8 CONFIG.W_MANT 7 CONFIG.OPS_EN 39}
+  u_axis_vhd jsm_fp_unit_axis_vhd    {CONFIG.W_EXP 11 CONFIG.W_MANT 52 CONFIG.TUSER_W 8}
+  u_axis_v  jsm_fp_unit_axis_top    {CONFIG.W_EXP 5 CONFIG.W_MANT 10 CONFIG.DIVSQRT_IMPL 3}
 } {
   create_bd_cell -type module -reference $ref $cell
   set_property -dict $cfg [get_bd_cells $cell]
@@ -48,7 +54,11 @@ foreach {cell ref cfg} {
     lappend rsts "[get_property NAME $p] ([get_property CONFIG.POLARITY $p])"
   }
   puts "BD CELL $cell ($ref): intf {$intf} clk {$clks} rst {$rsts} [join $cfg { }]"
-  if {[string match *axilite* $ref]} {
+  if {[string match *axis* $ref]} {
+    if {$intf ne "M_AXIS S_AXIS"} { incr errors; puts "ERROR: $cell: interfaces {$intf}, want {M_AXIS S_AXIS}" }
+    set tw [get_property CONFIG.TDATA_NUM_BYTES [get_bd_intf_pins $cell/S_AXIS]]
+    puts "BD CELL $cell S_AXIS TDATA bytes $tw, M_AXIS TDATA bytes [get_property CONFIG.TDATA_NUM_BYTES [get_bd_intf_pins $cell/M_AXIS]]"
+  } elseif {[string match *axilite* $ref]} {
     if {$intf ne "S_AXI"} { incr errors; puts "ERROR: $cell: no S_AXI interface" }
     set proto [get_property CONFIG.PROTOCOL [get_bd_intf_pins $cell/S_AXI]]
     puts "BD CELL $cell S_AXI protocol $proto"

@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 #include "Vsqrt_srt_diff_top.h"
 #include "verilated.h"
 #include <cstdint>

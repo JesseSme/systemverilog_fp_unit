@@ -1,0 +1,35 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
+# SymbiYosys BMC property check of the M6 datapaths at F8 E4M3 (4,3).
+#
+# Depth-0 BMC over free a/b/c/rm inputs proves every property for all 2^16
+# operand pairs. Run in formal/:  sby -f bmc_m6_e4m3.sby
+
+[tasks]
+bmc
+
+[options]
+mode bmc
+depth 1
+expect pass
+
+[engines]
+smtbmc
+
+[script]
+read_verilog -sv jsm_fp_pkg.sv
+read_verilog -sv jsm_fp_cmp.sv
+read_verilog -sv jsm_fp_totalorder.sv
+read_verilog -sv jsm_fp_roundint.sv
+read_verilog -sv jsm_fp_minmax.sv
+read_verilog -sv fp_m6_props.sv
+prep -top fp_m6_props_e4m3
+
+[files]
+../rtl/jsm_fp_pkg.sv
+../rtl/jsm_fp_cmp.sv
+../rtl/jsm_fp_totalorder.sv
+../rtl/jsm_fp_roundint.sv
+../rtl/jsm_fp_minmax.sv
+fp_m6_props.sv

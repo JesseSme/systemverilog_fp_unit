@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 """Build and run the cocotb regression across all format widths.
 
 Usage:
@@ -39,7 +41,7 @@ from rtl_files import rtl_files  # noqa: E402
 RTL = rtl_files(wrappers=True)
 
 # Toplevels that take no W_EXP/W_MANT parameters.
-FIXED_FORMAT_TOPS = {"fp_exp_seq"}
+FIXED_FORMAT_TOPS = {"jsm_fp_exp_seq"}
 
 # (W_EXP, W_MANT) matrix: standard interchange formats plus FP8/BF16/E8M0.
 # Default = the formats the user exercises routinely; --all adds odd sizes.
@@ -154,8 +156,8 @@ def main() -> int:
                     help="run the full width matrix (6 widths)")
     ap.add_argument("--tests", default="test_fp_unit",
                     help="cocotb test module (default: test_fp_unit)")
-    ap.add_argument("--top", default="fp_unit",
-                    help="hdl toplevel DUT (default: fp_unit; fp_unit_axilite "
+    ap.add_argument("--top", default="jsm_fp_unit",
+                    help="hdl toplevel DUT (default: jsm_fp_unit; jsm_fp_unit_axilite "
                          "for the AXI-Lite wrapper tests)")
     ap.add_argument("--retries", type=int, default=3,
                     help="attempts per width when the sim times out (default 3)")
@@ -167,13 +169,13 @@ def main() -> int:
     tests_dir = Path(__file__).resolve().parent
     _patch_verilator_helper()
 
-    # FP_DIVSQRT_IMPL selects fp_unit's DIVSQRT_IMPL (1 = SRT pipelines,
+    # FP_DIVSQRT_IMPL selects jsm_fp_unit's DIVSQRT_IMPL (1 = SRT pipelines,
     # the default; 2 = iterative engine; 0 = combinational reference). Every
     # test honors in_ready/out_valid, so all three run the same tests.
     impl = int(os.environ.get("FP_DIVSQRT_IMPL", "1"))
     failures = 0
     for wexp, wmant in widths:
-        # Tops without format parameters (fp_exp_seq is fixed binary32).
+        # Tops without format parameters (jsm_fp_exp_seq is fixed binary32).
         params = {} if args.top in FIXED_FORMAT_TOPS else {"W_EXP": wexp, "W_MANT": wmant}
         if impl != 1 and args.top not in FIXED_FORMAT_TOPS:
             params["DIVSQRT_IMPL"] = impl
@@ -181,7 +183,7 @@ def main() -> int:
         # forces a full rebuild on every switch.
         build_dir = ROOT / "sim_build" / (
             f"exp{wexp}_mant{wmant}" + ("" if impl == 1 else f"_ds{impl}")
-            + ("" if args.top == "fp_unit" else f"_{args.top}"))
+            + ("" if args.top == "jsm_fp_unit" else f"_{args.top}"))
         env = _sim_env(tests_dir, wexp, wmant)
         print(f"=== width W_EXP={wexp} W_MANT={wmant} ===", flush=True)
         runner = get_runner("verilator")
@@ -211,7 +213,7 @@ def main() -> int:
                           flush=True)
                     failures += failed
                     for line in log.splitlines():
-                        if "ERROR" in line and "cocotb.fp_unit" in line:
+                        if "ERROR" in line and "cocotb.jsm_fp_unit" in line:
                             print("    " + line.strip(), flush=True)
                     break
             if rc == 124:

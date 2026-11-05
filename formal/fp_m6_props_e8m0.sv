@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Formal property checks for the E8M0 (W_MANT = 0) M6 datapaths: the
 // dedicated roundToIntegral (5.9) plus the format-generic quiet comparison
 // (5.11) and totalOrder (5.10) at a microscaling width. E7M0 is used here.
@@ -10,7 +13,7 @@ module fp_m6_props_e8m0 #(
 ) (
   input logic [W_EXP:0]    a,
   input logic [W_EXP:0]    b,
-  input fp_pkg::rounding_t rm
+  input jsm_fp_pkg::rounding_t rm
 );
 
   localparam int EXP_ALL = (1 << W_EXP) - 1;
@@ -24,14 +27,14 @@ module fp_m6_props_e8m0 #(
   // ---------------------------------------------- roundToIntegral (5.9)
   logic [W_EXP:0] r_y, r_y2;
   logic [4:0]     r_f, r_f2;
-  fp_roundint_e8m0 #(.W_EXP(W_EXP)) u_r  (.a(a), .rm(rm), .exact(1'b0), .y(r_y), .flags(r_f));
-  fp_roundint_e8m0 #(.W_EXP(W_EXP)) u_r2 (.a(r_y), .rm(rm), .exact(1'b0), .y(r_y2), .flags(r_f2));
+  jsm_fp_roundint_e8m0 #(.W_EXP(W_EXP)) u_r  (.a(a), .rm(rm), .exact(1'b0), .y(r_y), .flags(r_f));
+  jsm_fp_roundint_e8m0 #(.W_EXP(W_EXP)) u_r2 (.a(r_y), .rm(rm), .exact(1'b0), .y(r_y2), .flags(r_f2));
   // roundToIntegralExact: same result; inexact iff the result differs from a.
   logic [W_EXP:0] rx_y;
   logic [4:0]     rx_f;
-  fp_roundint_e8m0 #(.W_EXP(W_EXP)) u_rx (.a(a), .rm(rm), .exact(1'b1), .y(rx_y), .flags(rx_f));
+  jsm_fp_roundint_e8m0 #(.W_EXP(W_EXP)) u_rx (.a(a), .rm(rm), .exact(1'b1), .y(rx_y), .flags(rx_f));
   assert property (rx_y == r_y);
-  assert property (rx_f == ((rx_y != a) ? (5'd1 << fp_pkg::FLAG_INEXACT) : 5'd0));
+  assert property (rx_f == ((rx_y != a) ? (5'd1 << jsm_fp_pkg::FLAG_INEXACT) : 5'd0));
 
   // Idempotent.
   assert property (r_y == r_y2);
@@ -49,29 +52,29 @@ module fp_m6_props_e8m0 #(
   logic [W_EXP:0] cmp_y_ab, cmp_y_ba;
   logic [1:0]     cmp_ab, cmp_ba;
   logic [4:0]     cmp_f_ab, cmp_f_ba;
-  fp_cmp #(.W_EXP(W_EXP), .W_MANT(0)) u_cmp_ab (
+  jsm_fp_cmp #(.W_EXP(W_EXP), .W_MANT(0)) u_cmp_ab (
     .a(a), .b(b), .rm(rm), .y(cmp_y_ab), .cmp(cmp_ab), .flags(cmp_f_ab));
-  fp_cmp #(.W_EXP(W_EXP), .W_MANT(0)) u_cmp_ba (
+  jsm_fp_cmp #(.W_EXP(W_EXP), .W_MANT(0)) u_cmp_ba (
     .a(b), .b(a), .rm(rm), .y(cmp_y_ba), .cmp(cmp_ba), .flags(cmp_f_ba));
 
   // No NaN encodings: never unordered, never invalid.
-  assert property (cmp_ab != fp_pkg::CMP_UN);
+  assert property (cmp_ab != jsm_fp_pkg::CMP_UN);
   assert property (cmp_f_ab == 5'd0);
   // LT/GT antisymmetric, EQ symmetric.
-  assert property ((cmp_ab == fp_pkg::CMP_LT) == (cmp_ba == fp_pkg::CMP_GT));
-  assert property ((cmp_ab == fp_pkg::CMP_EQ) == (cmp_ba == fp_pkg::CMP_EQ));
+  assert property ((cmp_ab == jsm_fp_pkg::CMP_LT) == (cmp_ba == jsm_fp_pkg::CMP_GT));
+  assert property ((cmp_ab == jsm_fp_pkg::CMP_EQ) == (cmp_ba == jsm_fp_pkg::CMP_EQ));
   // Zeros (both signs) compare equal.
-  assert property (!(a_zero && b_zero) || (cmp_ab == fp_pkg::CMP_EQ));
+  assert property (!(a_zero && b_zero) || (cmp_ab == jsm_fp_pkg::CMP_EQ));
 
   // ------------------------------------------------ totalOrder (5.10)
   logic [1:0] t_ab, t_ba, t_aa;
   logic [W_EXP:0] t_y [3];
   logic [4:0]     t_f [3];
-  fp_totalorder #(.W_EXP(W_EXP), .W_MANT(0)) u_t_ab (
+  jsm_fp_totalorder #(.W_EXP(W_EXP), .W_MANT(0)) u_t_ab (
     .a(a), .b(b), .rm(rm), .y(t_y[0]), .cmp(t_ab), .flags(t_f[0]));
-  fp_totalorder #(.W_EXP(W_EXP), .W_MANT(0)) u_t_ba (
+  jsm_fp_totalorder #(.W_EXP(W_EXP), .W_MANT(0)) u_t_ba (
     .a(b), .b(a), .rm(rm), .y(t_y[1]), .cmp(t_ba), .flags(t_f[1]));
-  fp_totalorder #(.W_EXP(W_EXP), .W_MANT(0)) u_t_aa (
+  jsm_fp_totalorder #(.W_EXP(W_EXP), .W_MANT(0)) u_t_aa (
     .a(a), .b(a), .rm(rm), .y(t_y[2]), .cmp(t_aa), .flags(t_f[2]));
 
   // Reflexive, total, antisymmetric-up-to-encoding.
@@ -81,14 +84,14 @@ module fp_m6_props_e8m0 #(
   // -0 precedes +0.
   assert property (!(a_zero && b_zero && a[W_EXP] && ~b[W_EXP]) || (t_ab[0] && ~t_ba[0]));
   // LT implies totalOrder order.
-  assert property ((cmp_ab != fp_pkg::CMP_LT) || (t_ab[0] && ~t_ba[0]));
+  assert property ((cmp_ab != jsm_fp_pkg::CMP_LT) || (t_ab[0] && ~t_ba[0]));
 
 endmodule
 
 // Concrete E7M0 top-level wrapper.
 module fp_m6_props_e7m0 (
   input logic [7:0] a, b,
-  input fp_pkg::rounding_t rm
+  input jsm_fp_pkg::rounding_t rm
 );
   fp_m6_props_e8m0 #(.W_EXP(7)) u (a, b, rm);
 endmodule
