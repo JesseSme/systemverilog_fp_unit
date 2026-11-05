@@ -1,10 +1,14 @@
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 # Out-of-context Vivado implementation with one of the Verilog/VHDL tops
 # (rtl/top/) as the design top, to check that each wrapper elaborates and
 # synthesizes in Vivado's mixed-language flow.
 #
 #   vivado -mode batch -source syn/vivado-top.tcl -tclargs <top> [period_ns] [GEN=VAL ...]
 #
-# <top>: jsm_fp_unit_vhd, jsm_fp_unit_axilite_vhd, jsm_fp_unit_top or jsm_fp_unit_axilite_top.
+# <top>: any of the Verilog/VHDL tops in rtl/top/ (jsm_fp_unit_vhd, jsm_fp_unit_top,
+# jsm_fp_unit_axilite_vhd/_top, jsm_fp_unit_axis_vhd/_top).
 # GEN=VAL arguments become -generic overrides (W_EXP=8 W_MANT=23 ...).
 # The design ports are not registered (unlike syn/vivado-impl.tcl), so the
 # timing report covers register-to-register paths only.
@@ -42,7 +46,8 @@ read_vhdl [read_list $root filelist_vhdl.f]
 set g {}
 foreach kv $gens { lappend g -generic $kv }
 synth_design -top $top -part $part -mode out_of_context {*}$g
-set clk [expr {[llength [get_ports -quiet clk]] ? "clk" : "s_axi_aclk"}]
+set clk ""
+foreach c {clk aclk s_axi_aclk} { if {$clk eq "" && [llength [get_ports -quiet $c]]} { set clk $c } }
 create_clock -period $period -name clk [get_ports $clk]
 opt_design
 place_design

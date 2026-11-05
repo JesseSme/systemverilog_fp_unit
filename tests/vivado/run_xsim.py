@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright 2026 Jesse Smedberg
+# SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
 """Vivado xsim check of the Verilog and VHDL tops (rtl/top/).
 
 Compiles the SystemVerilog core, the Verilog-2001 tops and the VHDL tops
@@ -9,10 +11,12 @@ against the bit-exact oracle (tests/vivado/gen_vectors.py):
   * tb_fp_unit_tops: jsm_fp_unit_top.v + jsm_fp_unit_vhd.vhd, streaming requests
     with random gaps, in_ready backpressure, out-of-order completion by tag;
   * tb_fp_unit_axilite_tops: jsm_fp_unit_axilite_top.v + jsm_fp_unit_axilite_vhd.vhd
-    through an AXI4-Lite master.
+    through an AXI4-Lite master;
+  * tb_fp_unit_axis_tops: jsm_fp_unit_axis_top.v + jsm_fp_unit_axis_vhd.vhd,
+    random TVALID gaps and M_AXIS backpressure, results in request order.
 
-Needs Vivado (xvlog/xvhdl/xelab/xsim): on PATH, or found via VIVADO_SETTINGS
-(path to settings64.sh; default /media/lfs/2026.1.1/Vivado/settings64.sh).
+Needs Vivado (xvlog/xvhdl/xelab/xsim): on PATH, or VIVADO_SETTINGS set to the
+path of Vivado's settings64.sh.
 
 Usage:
     uv run python tests/vivado/run_xsim.py            # default matrix
@@ -29,7 +33,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 HERE = Path(__file__).resolve().parent
 BUILD = ROOT / "xsim_build"
-SETTINGS = os.environ.get("VIVADO_SETTINGS", "/media/lfs/2026.1.1/Vivado/settings64.sh")
+SETTINGS = os.environ.get("VIVADO_SETTINGS", "")   # path to Vivado's settings64.sh
 
 sys.path.insert(0, str(ROOT / "tests"))
 from rtl_files import rtl_files  # noqa: E402
@@ -46,12 +50,19 @@ MATRIX = [
     ("tb_fp_unit_axilite_tops", 8, 23, 1, None, 300),
     ("tb_fp_unit_axilite_tops", 4, 3, 3, None, 300),
     ("tb_fp_unit_axilite_tops", 11, 52, 1, None, 200),
+    ("tb_fp_unit_axis_tops", 8, 23, 1, 0xFFFF, 3000),
+    ("tb_fp_unit_axis_tops", 11, 52, 3, 0xFFFF, 1500),
+    ("tb_fp_unit_axis_tops", 4, 3, 2, 0xFFFF, 2000),
+    ("tb_fp_unit_axis_tops", 8, 0, 1, 0xFFFF, 2000),
+    ("tb_fp_unit_axis_tops", 5, 10, 1, 0x0027, 2000),  # OPS_EN subset
 ]
-QUICK = [MATRIX[0], MATRIX[7]]
+QUICK = [MATRIX[0], MATRIX[7], MATRIX[10]]
 
 
 def sh(cmd: str, cwd: Path, log: Path) -> int:
     """Run cmd in bash with the Vivado environment; output to log."""
+    if not shutil.which("xvlog") and not SETTINGS:
+        sys.exit("xvlog not found: source Vivado's settings64.sh or set VIVADO_SETTINGS")
     prefix = "" if shutil.which("xvlog") else f"source {SETTINGS} >/dev/null; "
     env = dict(os.environ)
     env["PATH"] = "/usr/bin:/bin" + os.pathsep + env.get("PATH", "")
@@ -69,7 +80,8 @@ def main() -> int:
     BUILD.mkdir(exist_ok=True)
     files = rtl_files(wrappers=True)
     sv = [str(p) for p in files if p.suffix == ".sv"]
-    sv += [str(HERE / "tb_fp_unit_tops.sv"), str(HERE / "tb_fp_unit_axilite_tops.sv")]
+    sv += [str(HERE / f) for f in ("tb_fp_unit_tops.sv", "tb_fp_unit_axilite_tops.sv",
+                                   "tb_fp_unit_axis_tops.sv")]
     v = [str(p) for p in files if p.suffix == ".v"]
     vhd = [str(ROOT / line.split("#")[0].strip())
            for line in (ROOT / "rtl" / "filelist_vhdl.f").read_text().splitlines()

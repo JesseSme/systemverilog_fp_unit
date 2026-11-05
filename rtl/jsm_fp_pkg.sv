@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // IEEE 754-2019 floating-point helper definitions.
 //
 // Types and constants shared by the datapath modules. The bit positions of
@@ -120,6 +123,31 @@ package jsm_fp_pkg;
 
   function automatic int max_int(input int x, input int y);
     max_int = (x > y) ? x : y;
+  endfunction
+
+  // SRT configuration per DIVSQRT_IMPL (jsm_fp_unit): radix-4 digits per
+  // division stage and the optional register after the final fold.
+  function automatic int srt_div_dps(input int divsqrt_impl);
+    srt_div_dps = (divsqrt_impl == 3) ? 1 : 2;
+  endfunction
+
+  function automatic int srt_fold_stg(input int divsqrt_impl);
+    srt_fold_stg = (divsqrt_impl == 3) ? 1 : 0;
+  endfunction
+
+  // Longest latency of jsm_fp_unit with every operation enabled (a safe
+  // upper bound for any OPS_EN). Wrappers size their buffers from it.
+  function automatic int max_latency(input int w_mant, input int divsqrt_impl);
+    int l, ds;
+    l = max_int(max_int(LAT_ADD, LAT_RNDINT), max_int(lat_mul(w_mant), lat_fma(w_mant)));
+    if (divsqrt_impl == 1 || divsqrt_impl == 3)
+      ds = max_int(lat_div_srt(w_mant, srt_div_dps(divsqrt_impl), srt_fold_stg(divsqrt_impl)),
+                   lat_sqrt_srt(w_mant, 1, srt_fold_stg(divsqrt_impl)));
+    else if (divsqrt_impl == 2)
+      ds = lat_divsqrt_iter(w_mant);
+    else
+      ds = 1;
+    max_latency = (w_mant == 0) ? 1 : max_int(l, ds);
   endfunction
 
 endpackage

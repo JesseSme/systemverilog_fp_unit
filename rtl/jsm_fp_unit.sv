@@ -1,9 +1,12 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // IEEE 754-2019 floating-point unit top level.
 //
 // Parameterized by the format: W_EXP exponent bits and W_MANT fraction bits
 // (3.3, 3.7 "extendable precision"). Every operation runs on its own
 // pipeline with a fixed, input-independent latency (jsm_fp_pkg::lat_* and the
-// README latency table); the pipelines share one result port.
+// docs/user_guide.md latency table); the pipelines share one result port.
 //
 // Handshake (valid/ready, AXI-stream style):
 //   * A request is accepted in a cycle with in_valid && in_ready ("fire").
@@ -28,7 +31,7 @@
 //   OP_MIN/OP_MAX jsm_fp_minmax_pipe; OP_CMP jsm_fp_cmp_pipe; OP_TOTALORDER
 //   jsm_fp_totalorder_pipe; OP_SGNJ/OP_CLASS/OP_NEXT/OP_MINMAXNUM jsm_fp_misc_pipe.
 //   The non-rounding ops OP_SGNJ, OP_NEXT and OP_MINMAXNUM take their
-//   variant from the `rm` field (see jsm_fp_misc_pipe.sv / README).
+//   variant from the `rm` field (see jsm_fp_misc_pipe.sv / docs/user_guide.md).
 // `cmp` carries the 2-bit comparison condition code for OP_CMP
 // (jsm_fp_pkg::CMP_*) and, for OP_TOTALORDER, cmp[0] = totalOrder(a, b); every
 // other op drives cmp = 0.
@@ -37,9 +40,9 @@
 // sub-op selector); an opcode disabled by OPS_EN returns y = 0 with the
 // invalid flag after 1 cycle.
 //
-// W_MANT = 0 selects the dedicated E8M0 datapaths (1 + W_EXP + 0 bits,
-// microscaling shared-exponent format; combinational, registered once here,
-// so every E8M0 op has latency 1): the generic datapaths cannot be
+// W_MANT = 0 selects the dedicated *_e8m0 datapaths (1 + W_EXP + 0 bits: a
+// signed power-of-two format with infinity and no NaN, not the unsigned OCP
+// MX E8M0; combinational, registered once here, so every op has latency 1): the generic datapaths cannot be
 // elaborated at that width by Verilator 5.020, and the p = 1 tie rules are
 // implemented explicitly in the *_e8m0 modules.
 
@@ -57,7 +60,7 @@ module jsm_fp_unit #(
   //   3: the SRT pipelines in their 250 MHz form (one radix-4 digit per
   //     stage, carry-save across the stage boundaries, a register after
   //     the final fold): one start per cycle like 1, closes 4.0 ns on
-  //     VU9P-2L, more cycles of latency (README table).
+  //     VU9P-2L, more cycles of latency (docs/user_guide.md).
   //   0: the combinational reference datapaths (jsm_fp_div / jsm_fp_sqrt)
   //     registered once (latency 1, very long critical path; reference and
   //     formal only).
@@ -121,9 +124,9 @@ module jsm_fp_unit #(
   localparam bit P_COMBDS = GENERIC && (DIVSQRT_IMPL == 0) && (EN_DIV || EN_SQRT);
   // SRT configuration: radix-4 digits per stage, and the optional register
   // after the final carry-save fold (see jsm_fp_div_srt / jsm_fp_sqrt_srt)
-  localparam int DIV_DPS  = (DIVSQRT_IMPL == 3) ? 1 : 2;
+  localparam int DIV_DPS  = jsm_fp_pkg::srt_div_dps(DIVSQRT_IMPL);
   localparam int SQRT_DPS = 1;
-  localparam int SRT_FOLD_STG = (DIVSQRT_IMPL == 3) ? 1 : 0;
+  localparam int SRT_FOLD_STG = jsm_fp_pkg::srt_fold_stg(DIVSQRT_IMPL);
 
   // ---------------------------------------------- parameter checks
   // Elaboration-time errors (Vivado, Verilator and Yosys stop with the
@@ -160,6 +163,11 @@ module jsm_fp_unit #(
   localparam int MAXLAT   = jsm_fp_pkg::max_int(jsm_fp_pkg::max_int(jsm_fp_pkg::max_int(LAT_ADD, LAT_MUL),
                                                             jsm_fp_pkg::max_int(LAT_FMA, LAT_DIV)),
                                              jsm_fp_pkg::max_int(LAT_SQRT, LAT_RND));
+
+  // jsm_fp_pkg::max_latency is what wrappers size their buffers from
+  if (MAXLAT > jsm_fp_pkg::max_latency(W_MANT, DIVSQRT_IMPL)) begin : g_chk_maxlat
+    $error("jsm_fp_unit: MAXLAT %0d exceeds jsm_fp_pkg::max_latency", MAXLAT);
+  end
 
   int lat_sel;
   always_comb begin

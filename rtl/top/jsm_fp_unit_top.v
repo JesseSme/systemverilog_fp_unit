@@ -1,3 +1,6 @@
+// Copyright 2026 Jesse Smedberg
+// SPDX-License-Identifier: Apache-2.0 WITH SHL-2.1
+
 // Verilog-2001 top-level wrapper of the floating-point unit (jsm_fp_unit).
 //
 // Plain Verilog ports and integer parameters only, so this file can be the
@@ -7,7 +10,7 @@
 // the SystemVerilog core files (rtl/filelist.f) plus rtl/top/jsm_fp_unit_flat.sv
 // to the project as well.
 //
-// Interface summary (docs/fp_unit_core.md has the full description):
+// Interface summary (docs/user_guide.md has the full description):
 //   * A request is accepted on a rising clk edge with in_valid && in_ready.
 //     Hold mode/rm/a/b/c/in_tag while in_valid && !in_ready. in_ready depends
 //     on mode only (combinationally), never on in_valid.
@@ -20,7 +23,7 @@
 //   W_EXP, W_MANT  format: 1 sign + W_EXP exponent + W_MANT fraction bits
 //                  (e.g. 8/23 binary32, 11/52 binary64, 5/10 binary16,
 //                  8/7 bfloat16, 4/3 E4M3, 5/2 E5M2, 8/0 E8M0; verified
-//                  formats are listed in docs/fp_unit_core.md)
+//                  formats are listed in docs/user_guide.md)
 //   DIVSQRT_IMPL   1 SRT pipelines (default, 5.6 ns on VU9P-2L),
 //                  3 SRT pipelines in the 4.0 ns form (more cycles),
 //                  2 iterative engine (4.0 ns, one div/sqrt in flight),
@@ -34,7 +37,7 @@ module jsm_fp_unit_top #(
   parameter integer W_MANT       = 23,
   parameter integer DIVSQRT_IMPL = 1,
   parameter integer TAG_W        = 1,
-  parameter integer OPS_EN       = 32'h0000FFFF
+  parameter integer OPS_EN       = 65535          // 0xFFFF: all operations
 ) (
   (* X_INTERFACE_INFO = "xilinx.com:signal:clock:1.0 clk CLK" *)
   (* X_INTERFACE_PARAMETER = "ASSOCIATED_RESET rst_n" *)
