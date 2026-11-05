@@ -47,6 +47,11 @@ end entity fp_unit_axilite_vhd;
 
 architecture wrapper of fp_unit_axilite_vhd is
 
+  -- Vivado interface attributes (IP integrator infers the clock, reset and
+  -- bus interfaces from them). Vivado reads them only here, in the
+  -- architecture, although VHDL puts port attribute specifications in the
+  -- entity: strict tools need a relaxed mode for this file (GHDL:
+  -- -frelaxed), and can also simply ignore the attributes.
   attribute X_INTERFACE_INFO : string;
   attribute X_INTERFACE_PARAMETER : string;
   attribute X_INTERFACE_INFO of s_axi_aclk : signal is "xilinx.com:signal:clock:1.0 s_axi_aclk CLK";

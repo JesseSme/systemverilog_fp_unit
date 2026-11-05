@@ -536,10 +536,10 @@ module fp_sqrt_srt #(
           a16 = CSW'(sv << 4);
           b16 = CSW'(cv << 4) | CSW'(xv[RE-5-4*t -: 4]);
           case (d)
-            4'sd1:  begin t1 = ~CSW'({qv, 3'd1});        t2 = '0;                       inj1 = 1'b1; inj2 = 1'b0; end
-            4'sd2:  begin t1 = ~CSW'({qv, 3'd2, 1'b0});  t2 = '0;                       inj1 = 1'b1; inj2 = 1'b0; end
-            4'sd3:  begin t1 = ~CSW'({qv, 3'd3});        t2 = ~CSW'({qv, 3'd3, 1'b0});  inj1 = 1'b1; inj2 = 1'b1; end
-            4'sd4:  begin t1 = ~CSW'({qv, 3'd4, 2'b0});  t2 = '0;                       inj1 = 1'b1; inj2 = 1'b0; end
+            4'sd1:  begin t1 = ~(CSW'({qv, 3'd1}));        t2 = '0;                       inj1 = 1'b1; inj2 = 1'b0; end
+            4'sd2:  begin t1 = ~(CSW'({qv, 3'd2, 1'b0}));  t2 = '0;                       inj1 = 1'b1; inj2 = 1'b0; end
+            4'sd3:  begin t1 = ~(CSW'({qv, 3'd3}));        t2 = ~(CSW'({qv, 3'd3, 1'b0}));  inj1 = 1'b1; inj2 = 1'b1; end
+            4'sd4:  begin t1 = ~(CSW'({qv, 3'd4, 2'b0}));  t2 = '0;                       inj1 = 1'b1; inj2 = 1'b0; end
             -4'sd1: begin t1 = CSW'({qmv, 3'd7});        t2 = '0;                       inj1 = 1'b0; inj2 = 1'b0; end
             -4'sd2: begin t1 = CSW'({qmv, 3'd6, 1'b0});  t2 = '0;                       inj1 = 1'b0; inj2 = 1'b0; end
             -4'sd3: begin t1 = CSW'({qmv, 3'd5});        t2 = CSW'({qmv, 3'd5, 1'b0});  inj1 = 1'b0; inj2 = 1'b0; end

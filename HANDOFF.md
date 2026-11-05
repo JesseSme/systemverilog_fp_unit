@@ -659,7 +659,7 @@ The regression is now fast (~1 s for the full 8-width matrix at
   DPS/FOLD_STG/STAGE_FOLD branches a given build does not select).
   `make coverage` now deletes old `coverage.dat` files first: merging data
   from build directories it does not rerun (e.g. `*_iter`) mixed in stale
-  line numbers (an unfiltered merge today read 84.9 %). The formal suite runs 8 configs; the arithmetic laws
+  line numbers (an unfiltered merge today read 84.9 %). The formal suite runs 8 property configs plus 6 pipe-equivalence configs (`make formal-equiv`); the arithmetic laws
   at binary16 (2^32 pairs, fma wide accumulator) remain too heavy for the SMT
   solver to close in reasonable time.
 
@@ -982,3 +982,12 @@ vs. M5 FMA + min/max)
 | tests | cocotb suites through the Verilog tops (`make regress-tops`, 24/24 and 3/3 at all 8 widths); `tests/vivado/` xsim testbenches run the Verilog and VHDL tops side by side against the oracle (`make xsim-tops`: streaming with backpressure and out-of-order tags at binary32 x3 DIVSQRT_IMPL, binary16, binary64, W_MANT=0 and an OPS_EN subset; AXI at binary32, E4M3, binary64) |
 | Vivado | `syn/vivado-top.tcl` (implementation with a top as the design top: `fp_unit_vhd` binary32 5.6 ns +0.109, `DIVSQRT_IMPL=3` 4.0 ns +0.031; `fp_unit_axilite_vhd` 5.6 ns +0.060; `fp_unit_top` binary16 OPS_EN 0x27 +1.288) and `syn/vivado-bd-check.tcl` (module references in a block design: AXI tops show one AXI4-Lite S_AXI with its clock and active-low reset, parameters propagate; PASS). The AXI X_INTERFACE VLNV is `xilinx.com:interface:aximm:1.0` |
 | docs | `docs/fp_unit_core.md`: user guide (parameters, ports, handshake, latency, opcodes, flags, formats incl. the IEEE-style E4M3/E5M2 and the W_MANT=0 format vs OCP, AXI register map and C sequence, Vivado file sets / Tcl / block design, resources, verification, limitations) |
+
+## Change summary (integration review, 2026-11-05)
+
+| Item | Change |
+|------|--------|
+| Yosys | The merged RTL no longer parsed in Yosys 0.68 (`make metrics-area` and any open-source flow): `~CSW'(...)` in `fp_sqrt_srt` (Yosys applies `~` to the size; now `~(CSW'(...))`); module-level `fp_pkg::op_t` variables and package constants in a parameter override (`fp_exp_seq`, `fp_unit_axilite`: plain vectors / literal masks, cast at the `fp_unit` ports); assignment patterns, `return` and a block-local initialized declaration in `fp_unit_axilite`. The core, the AXI wrapper, both Verilog tops and `fp_exp_seq` now elaborate in Yosys |
+| checks | Elaboration-time `$error` in `fp_unit` for `DIVSQRT_IMPL` not 0-3 (it used to build without div/sqrt), `TAG_W < 1`, `W_EXP < 1`, `W_MANT < 0`; the AXI `ADDR_WIDTH` check was an `initial $fatal` (simulation only) and is now an elaboration `$error` (stops synthesis too). Verified to fire in Verilator, Yosys and Vivado |
+| VHDL | GHDL rejects the port attribute specifications in the architecture (VHDL wants them in the entity), but Vivado only reads `X_INTERFACE_*` from the architecture (moving them broke the block-design interface inference). Kept in the architecture, documented: GHDL analyzes the tops as VHDL-93/2008 with `-frelaxed` |
+| docs | User guide: quick start, tool-support table, parameter checks, ADDR_WIDTH minimum (5 for W <= 32), binary128 not supported (Verilator cannot build the multiplier at W_MANT = 112), generic module names as a limitation. `metrics/vivado-*.rpt` replaced with the current Vivado 2026.1.1 reports (the old ones were from Vivado 2025.2, Oct 7, before Phases 0-4); pyproject description |

@@ -39,6 +39,21 @@ fp_unit_vhd (VHDL) -> fp_unit_top (Verilog-2001) -> fp_unit_flat (SV, casts) -> 
 fp_unit_axilite_vhd (VHDL) -> fp_unit_axilite_top (Verilog-2001) -> fp_unit_axilite (SV) -> fp_unit
 ```
 
+### Quick start
+
+1. Pick a top: AXI4-Lite (`fp_unit_axilite_vhd` / `fp_unit_axilite_top`)
+   for software access, or streaming (`fp_unit_vhd` / `fp_unit_top`) for a
+   hardware datapath.
+2. Add the files of section 8.1 (SystemVerilog core, then the Verilog and
+   VHDL tops), with `rtl/fp_pkg.sv` first.
+3. Set `W_EXP` / `W_MANT` for the format and `DIVSQRT_IMPL` for the clock
+   target: 1 for 5.6 ns, 3 (pipelined) or 2 (smaller) for 4.0 ns, on
+   VU9P-2L.
+4. Constrain the single clock; the reset is synchronous and active low.
+5. Streaming top: hold the request while `in_ready` is low, and take each
+   result in its `out_valid` cycle (there is no output backpressure).
+   Match results by `out_tag` if more than one request can be in flight.
+
 ## 2. Parameters
 
 All parameters are integers in the Verilog and VHDL tops.
@@ -50,7 +65,7 @@ All parameters are integers in the Verilog and VHDL tops.
 | `DIVSQRT_IMPL` | 1 | div/sqrt implementation, see below |
 | `TAG_W` | 1 | streaming top only: request tag width, >= 1 |
 | `OPS_EN` | 65535 (0xFFFF) | streaming top only: operation enable mask, bit i = opcode i |
-| `ADDR_WIDTH` | 6 | AXI top only: AXI address width, >= 6 |
+| `ADDR_WIDTH` | 6 | AXI top only: AXI address width; at least 5 for W <= 32, 6 for W <= 64 |
 
 `DIVSQRT_IMPL`:
 
@@ -70,8 +85,15 @@ example, `OPS_EN = 0x0027` (ADD, SUB, MUL, FMA) cut binary16 from 33,637 to
 
 Verified formats (`W_EXP`, `W_MANT`): every 8-bit format (1..7, 6..0), (4,3)
 E4M3, (5,2) E5M2, (5,10) binary16, (8,7) bfloat16, (6,16), (8,23) binary32,
-(10,40), (11,52) binary64, and (8,0). Other widths use the same
-parameterized RTL but have not been simulated.
+(10,40), (11,52) binary64, and (8,0). Other widths up to binary64 use the
+same parameterized RTL but have not been simulated. binary128 (15,112) is
+not supported: Verilator cannot build the multiplier at that width, and it
+has never been tested.
+
+Invalid parameter values stop elaboration with an error message in Vivado,
+Verilator and Yosys: `DIVSQRT_IMPL` other than 0-3, `TAG_W < 1`,
+`W_EXP < 1`, `W_MANT < 0`, and an `ADDR_WIDTH` too small for the register
+map.
 
 ## 3. Streaming interface (`fp_unit_top` / `fp_unit_vhd`)
 
@@ -473,7 +495,17 @@ registered; same part, 2026-11-04), all of these meet timing:
   (`syn/vivado-top.tcl`), and the block-design module-reference check is
   `syn/vivado-bd-check.tcl`.
 
-## 10. Limitations
+## 10. Tool support
+
+| tool | use | tested |
+|------|-----|--------|
+| Vivado 2026.1.1 | synthesis, implementation, xsim (SV core, Verilog and VHDL tops), block-design module references | yes |
+| Verilator 5.020 | lint (-Wall clean), cocotb and C++ simulation | yes |
+| Yosys 0.68 | reads and elaborates the core, the AXI wrapper, both Verilog tops and `fp_exp_seq` (used for area metrics and the formal proofs) | yes |
+| GHDL (oss-cad-suite) | the VHDL tops analyze as VHDL-93 and VHDL-2008 with `-frelaxed` (the Vivado interface attributes sit in the architecture, where Vivado reads them, not in the entity as the VHDL standard wants); simulation needs a mixed-language simulator, since they instantiate the Verilog tops | analysis only |
+| Questa, VCS, Xcelium, Quartus, Synplify | should work (synthesizable SystemVerilog-2012 subset, no vendor primitives) | not tested |
+
+## 11. Limitations
 
 - One operation per cycle at most, and one result port. Operations that
   would complete together are serialized by `in_ready` at issue.
@@ -484,3 +516,7 @@ registered; same part, 2026-11-04), all of these meet timing:
   scaleB/logB, signaling comparisons. Design notes are in `docs/proposals/`.
 - The AXI4-Lite wrapper processes one operation at a time and has no
   interrupt; software polls STATUS.VALID.
+- Module names are generic (`fp_pkg`, `fp_add`, `fp_mul`, `fp_div`, `fp_cmp`,
+  `fp_unit`, ...) and share the global module namespace. If the
+  surrounding design already has modules or a package with the same names,
+  rename one side.

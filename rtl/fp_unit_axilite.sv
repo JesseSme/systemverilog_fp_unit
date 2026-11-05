@@ -86,15 +86,11 @@ module fp_unit_axilite #(
   localparam int ADDR_CMP    = ADDR_RESULT + 4 * WORDS;
   localparam int TOTAL_BYTES = ADDR_CMP + 4;
 
-  generate
-    if (TOTAL_BYTES > (1 << ADDR_WIDTH)) begin : g_addr_check
-      initial begin
-        $display("fp_unit_axilite: ADDR_WIDTH=%0d too small for %0d-byte register map",
-                 ADDR_WIDTH, TOTAL_BYTES);
-        $fatal(1);
-      end
-    end
-  endgenerate
+  // Elaboration-time check (stops synthesis too, not only simulation).
+  if (TOTAL_BYTES > (1 << ADDR_WIDTH)) begin : g_addr_check
+    $error("fp_unit_axilite: ADDR_WIDTH = %0d is too small for the %0d-byte register map",
+           ADDR_WIDTH, TOTAL_BYTES);
+  end
 
   localparam logic [1:0] AXI_OKAY   = 2'b00;
   localparam logic [1:0] AXI_DECERR = 2'b11;
@@ -118,54 +114,63 @@ module fp_unit_axilite #(
     logic [7:0] word;
   } dec_t;
 
+  // (Written without `return` and assignment patterns so that Yosys can
+  // read this file as well as Vivado and Verilator.)
   function automatic dec_t decode(input logic [ADDR_WIDTH-1:0] addr);
     dec_t d;
-    int a;
-  begin
-    d  = '{valid: 1'b0, sel: DEC_NONE, word: 8'd0};
-    a  = int'(addr);
-    if (addr[1:0] != 2'b00) return d;
-    if      (a == ADDR_CTRL)              d = '{valid: 1'b1, sel: DEC_CTRL,   word: 8'd0};
-    else if (a == ADDR_OPCODE)            d = '{valid: 1'b1, sel: DEC_OPCODE, word: 8'd0};
-    else if (a >= ADDR_A && a < ADDR_A + 4 * WORDS)
-                                          d = '{valid: 1'b1, sel: DEC_A,      word: 8'((a - ADDR_A) >> 2)};
-    else if (a >= ADDR_B && a < ADDR_B + 4 * WORDS)
-                                          d = '{valid: 1'b1, sel: DEC_B,      word: 8'((a - ADDR_B) >> 2)};
-    else if (a >= ADDR_C && a < ADDR_C + 4 * WORDS)
-                                          d = '{valid: 1'b1, sel: DEC_C,      word: 8'((a - ADDR_C) >> 2)};
-    else if (a == ADDR_STATUS)            d = '{valid: 1'b1, sel: DEC_STATUS, word: 8'd0};
-    else if (a >= ADDR_RESULT && a < ADDR_RESULT + 4 * WORDS)
-                                          d = '{valid: 1'b1, sel: DEC_RESULT, word: 8'((a - ADDR_RESULT) >> 2)};
-    else if (a == ADDR_CMP)               d = '{valid: 1'b1, sel: DEC_CMP,    word: 8'd0};
-    return d;
-  end
+    int   a;
+    a       = int'(addr);
+    d.valid = 1'b1;
+    d.sel   = DEC_NONE;
+    d.word  = 8'd0;
+    if (addr[1:0] != 2'b00)               d.valid = 1'b0;
+    else if (a == ADDR_CTRL)              d.sel = DEC_CTRL;
+    else if (a == ADDR_OPCODE)            d.sel = DEC_OPCODE;
+    else if (a >= ADDR_A && a < ADDR_A + 4 * WORDS) begin
+      d.sel  = DEC_A;
+      d.word = 8'((a - ADDR_A) >> 2);
+    end else if (a >= ADDR_B && a < ADDR_B + 4 * WORDS) begin
+      d.sel  = DEC_B;
+      d.word = 8'((a - ADDR_B) >> 2);
+    end else if (a >= ADDR_C && a < ADDR_C + 4 * WORDS) begin
+      d.sel  = DEC_C;
+      d.word = 8'((a - ADDR_C) >> 2);
+    end else if (a == ADDR_STATUS)        d.sel = DEC_STATUS;
+    else if (a >= ADDR_RESULT && a < ADDR_RESULT + 4 * WORDS) begin
+      d.sel  = DEC_RESULT;
+      d.word = 8'((a - ADDR_RESULT) >> 2);
+    end else if (a == ADDR_CMP)           d.sel = DEC_CMP;
+    else                                  d.valid = 1'b0;
+    decode = d;
   endfunction
 
   // ---- Byte / word write helpers ----------------------------------------------
   function automatic logic [31:0] wr_bytes(
     input logic [31:0] old, input logic [31:0] d, input logic [3:0] s);
+    logic [31:0] r;
+    r = old;
     for (int i = 0; i < 4; i++)
-      if (s[i]) old[i*8 +: 8] = d[i*8 +: 8];
-    return old;
+      if (s[i]) r[i*8 +: 8] = d[i*8 +: 8];
+    wr_bytes = r;
   endfunction
 
   function automatic logic [REG_W-1:0] wr_wide(
     input logic [REG_W-1:0] old, input logic [7:0] w,
     input logic [31:0] d, input logic [3:0] s);
+    logic [REG_W-1:0] r;
+    r = old;
     for (int i = 0; i < 4; i++)
       if (s[i] && (w*32 + i*8 + 8 <= REG_W))
-        old[w*32 + i*8 +: 8] = d[i*8 +: 8];
-    return old;
+        r[w*32 + i*8 +: 8] = d[i*8 +: 8];
+    wr_wide = r;
   endfunction
 
   // Word w (little-endian) of a REG_W-bit value, zero-padded above REG_W so the
   // variable-indexed part select never leaves the vector.
   function automatic logic [31:0] rd_wide(input logic [REG_W-1:0] v, input logic [7:0] w);
     logic [REG_W+31:0] padded;
-    begin
-      padded = {{32{1'b0}}, v};
-      return padded[w*32 +: 32];
-    end
+    padded  = {{32{1'b0}}, v};
+    rd_wide = padded[w*32 +: 32];
   endfunction
 
   // ---- Register file ------------------------------------------------------------
@@ -187,8 +192,8 @@ module fp_unit_axilite #(
   logic [W-1:0]      a_w;
   logic [W-1:0]      b_w;
   logic [W-1:0]      c_w;
-  fp_pkg::op_t       mode_w;
-  fp_pkg::rounding_t rm_w;
+  logic [3:0]        mode_w;   // opcode / rounding mode as plain vectors (cast at
+  logic [2:0]        rm_w;     // the fp_unit ports; keeps the file readable by Yosys)
   logic              go_d;
   logic              go_rise;
   assign go_rise = reg_ctrl[0] && !go_d;
@@ -223,8 +228,8 @@ module fp_unit_axilite #(
       a_w        <= '0;
       b_w        <= '0;
       c_w        <= '0;
-      mode_w     <= fp_pkg::OP_ADD;
-      rm_w       <= fp_pkg::RM_RNE;
+      mode_w     <= 4'd0;
+      rm_w       <= 3'd0;
       reg_result <= '0;
       reg_flags  <= 5'd0;
       reg_cmp    <= 32'd0;
@@ -236,8 +241,8 @@ module fp_unit_axilite #(
             a_w    <= reg_a[W-1:0];
             b_w    <= reg_b[W-1:0];
             c_w    <= reg_c[W-1:0];
-            mode_w <= fp_pkg::op_t'(reg_opcode[3:0]);
-            rm_w   <= fp_pkg::rounding_t'(reg_opcode[6:4]);
+            mode_w <= reg_opcode[3:0];
+            rm_w   <= reg_opcode[6:4];
             start_req <= 1'b1;
             busy   <= 1'b1;
             valid  <= 1'b0;
@@ -280,6 +285,8 @@ module fp_unit_axilite #(
   logic [1:0]            wstate;
   logic                  werr;
   logic                  bvalid;
+  dec_t                  wdec;
+  assign wdec = decode(s_axi_awaddr);
 
   always_ff @(posedge s_axi_aclk) begin
     if (!s_axi_aresetn) begin
@@ -297,11 +304,10 @@ module fp_unit_axilite #(
         // (a master may hold BREADY high before BVALID, AXI A3.3.1).
         W_IDLE: begin
           if (s_axi_awvalid && s_axi_wvalid) begin
-            dec_t d = decode(s_axi_awaddr);
-            werr   <= ~d.valid;
+            werr   <= ~wdec.valid;
             bvalid <= 1'b1;
             wstate <= W_RESP;
-            write_regs(d.sel, d.word, s_axi_wdata, s_axi_wstrb);
+            write_regs(wdec.sel, wdec.word, s_axi_wdata, s_axi_wstrb);
           end
         end
         W_RESP: begin
@@ -401,8 +407,8 @@ module fp_unit_axilite #(
     .rst_n     (s_axi_aresetn),
     .in_valid  (fpu_in_valid),
     .in_ready  (fpu_in_ready),
-    .mode      (mode_w),
-    .rm        (rm_w),
+    .mode      (fp_pkg::op_t'(mode_w)),
+    .rm        (fp_pkg::rounding_t'(rm_w)),
     .a         (a_w),
     .b         (b_w),
     .c         (c_w),

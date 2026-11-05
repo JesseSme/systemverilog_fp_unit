@@ -19,7 +19,8 @@
 //
 // Parameters:
 //   W_EXP, W_MANT  format (see fp_unit_top.v)
-//   ADDR_WIDTH     AXI address width (>= 6; 6 covers binary64)
+//   ADDR_WIDTH     AXI address width (>= 5 for W <= 32, >= 6 for W <= 64;
+//                  checked at elaboration)
 //   DIVSQRT_IMPL   see fp_unit_top.v
 
 module fp_unit_axilite_top #(
